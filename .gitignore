@@ -1,0 +1,23 @@
+# Build artifacts
+bin/
+obj/
+out/
+
+# User-specific files
+*.user
+*.suo
+
+# Rider / VS
+.vs/
+.idea/
+
+# Logs, local state DB, and anything else the running service creates locally on a
+# given machine - these are runtime data, not source, and differ per environment.
+*.log
+*.db
+*.db-shm
+*.db-wal
+
+# OS cruft
+.DS_Store
+Thumbs.db
