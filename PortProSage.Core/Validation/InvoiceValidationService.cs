@@ -34,6 +34,10 @@ public class InvoiceValidationService
         {
             result.Errors.Add("Invoice has no pricing/charge lines to import.");
         }
+        else if (result.ResolvedItemCodesByChargeName.Count == 0 && result.ResolvedTaxCode is not null)
+        {
+            result.Errors.Add("Invoice's only charge(s) resolved as tax, with no revenue line for Sage 50 to apply the tax code to.");
+        }
 
         return result;
     }
@@ -82,6 +86,37 @@ public class InvoiceValidationService
             {
                 result.Errors.Add("A charge line is missing a name/description.");
                 continue;
+            }
+
+            if (TryGetTaxAbbreviation(line.Name, out var taxAbbreviation))
+            {
+                if (_settings.TaxCodesByAbbreviation.TryGetValue(taxAbbreviation, out var taxCode))
+                {
+                    // Resolved: this charge isn't a real line item - it's applied to the
+                    // invoice's revenue lines as a Sage 50 tax code instead (see
+                    // Sage50Settings.TaxCodesByAbbreviation), so Sage 50 calculates and
+                    // posts the tax itself. Skip item/account resolution for this line.
+                    if (result.ResolvedTaxCode is not null && result.ResolvedTaxCode != taxCode)
+                    {
+                        result.Warnings.Add(
+                            $"Invoice has multiple different tax charges ('{result.ResolvedTaxCode}' and '{taxCode}') - " +
+                            "only the first was applied; this combination hasn't been seen before and needs manual review.");
+                    }
+                    else
+                    {
+                        result.ResolvedTaxCode ??= taxCode;
+                    }
+
+                    continue;
+                }
+
+                var message = $"Charge '{line.Name}' looks like a {taxAbbreviation} tax line, but no Sage 50 tax code " +
+                               $"is configured for '{taxAbbreviation}' in Sage50Settings.TaxCodesByAbbreviation - it will " +
+                               "be imported as an ordinary service item/revenue line instead of through Sage 50's real " +
+                               "tax mechanism. Add a mapping (see Setup > Settings > Company > Sales Taxes > Tax Codes " +
+                               "in Sage 50) once you know the right code.";
+                result.Warnings.Add(message);
+                _logger.LogWarning("Invoice {Ref}: {Message}", invoice.ReferenceNumber, message);
             }
 
             var existingItem = await _sage50.FindItemByCodeOrDescriptionAsync(line.Name, ct);
@@ -141,5 +176,23 @@ public class InvoiceValidationService
     {
         var cleaned = new string(chargeName.Where(char.IsLetterOrDigit).ToArray());
         return cleaned.Length <= 12 ? cleaned.ToUpperInvariant() : cleaned.Substring(0, 12).ToUpperInvariant();
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex TaxChargeNamePattern =
+        new(@"\b(HST|GST|PST|QST)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Matches against the charge NAME (e.g. "HST (13 %)"), not the "description"
+    /// field - description turned out to be free-text notes (locations, timing
+    /// details) with no reliable structure, confirmed 2026-08-04 against real data;
+    /// the Canadian tax abbreviation showing up in the charge name itself is the
+    /// only consistent signal PortPro provides. Returns the abbreviation in
+    /// upper-case (e.g. "HST") for use as a Sage50Settings.TaxCodesByAbbreviation key.
+    /// </summary>
+    private static bool TryGetTaxAbbreviation(string chargeName, out string abbreviation)
+    {
+        var match = TaxChargeNamePattern.Match(chargeName);
+        abbreviation = match.Success ? match.Groups[1].Value.ToUpperInvariant() : string.Empty;
+        return match.Success;
     }
 }

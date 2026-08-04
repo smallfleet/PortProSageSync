@@ -10,6 +10,12 @@ namespace PortProSage.Core.Models;
 /// </summary>
 public class PortProInvoice
 {
+    /// <summary>
+    /// Not present on the wire at this level (see PortProLoadEnvelope) - populated
+    /// by PortProClient.GetInvoicesAsync from the enclosing envelope's "_id" after
+    /// deserialization. Left as a JsonPropertyName mapping too in case a future
+    /// API version moves it here directly.
+    /// </summary>
     [JsonPropertyName("_id")]
     public string Id { get; set; } = string.Empty;
 
@@ -45,10 +51,14 @@ public class PortProInvoice
     [JsonPropertyName("completedDate")]
     public DateTimeOffset? CompletedDate { get; set; }
 
+    /// <summary>Not present on the wire at this level - see Id's comment above.</summary>
     [JsonPropertyName("createdAt")]
     public DateTimeOffset? CreatedAt { get; set; }
 
-    /// <summary>Last modified timestamp - used for the "last changed date" filter.</summary>
+    /// <summary>
+    /// Last modified timestamp - used for the "last changed date" filter. Not
+    /// present on the wire at this level - see Id's comment above.
+    /// </summary>
     [JsonPropertyName("updatedAt")]
     public DateTimeOffset? UpdatedAt { get; set; }
 
@@ -91,8 +101,16 @@ public class PortProPricingLine
     [JsonPropertyName("finalAmount")]
     public string FinalAmount { get; set; } = "0";
 
+    /// <summary>
+    /// Unlike finalAmount (a quoted string, e.g. "300.00"), the real API returns
+    /// this as a bare JSON number - confirmed live 2026-08-04 via a JsonException
+    /// ("Cannot get the value of a token type 'Number' as a string") once actual
+    /// production invoices flowed through (the earlier 0-invoice test windows
+    /// never hit this). Not currently used elsewhere in the codebase (business
+    /// logic uses FinalAmount), kept for completeness.
+    /// </summary>
     [JsonPropertyName("amount")]
-    public string? Amount { get; set; }
+    public decimal? Amount { get; set; }
 
     [JsonPropertyName("glCode")]
     public string? GlCode { get; set; }
@@ -109,7 +127,34 @@ public class PortProInvoiceListResponse
     public int Count { get; set; }
 
     [JsonPropertyName("data")]
-    public List<PortProInvoice> Data { get; set; } = new();
+    public List<PortProLoadEnvelope> Data { get; set; } = new();
+}
+
+/// <summary>
+/// Each element of the list response's "data" array is NOT itself a flat
+/// invoice - confirmed live 2026-08-04 (a 3080-invoice dry run came back with
+/// every single ReferenceNumber/Caller/Pricing empty until this was fixed). The
+/// real shape wraps one load: "_id"/"createdAt"/"updatedAt" live here, while
+/// reference_number/pricing/caller/billingDate/etc. live one level deeper, in
+/// "invoice" (an array - only ever observed with exactly one element so far,
+/// but modeled as a list since nothing in the payload guarantees exactly one).
+/// PortProClient.GetInvoicesAsync flattens this into plain PortProInvoice
+/// objects so nothing downstream (orchestrator, validator, state tracking)
+/// needs to know about this wrapper.
+/// </summary>
+public class PortProLoadEnvelope
+{
+    [JsonPropertyName("_id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("invoice")]
+    public List<PortProInvoice> Invoice { get; set; } = new();
+
+    [JsonPropertyName("createdAt")]
+    public DateTimeOffset? CreatedAt { get; set; }
+
+    [JsonPropertyName("updatedAt")]
+    public DateTimeOffset? UpdatedAt { get; set; }
 }
 
 /// <summary>

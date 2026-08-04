@@ -51,14 +51,23 @@ public class PortProClient
             var body = await response.Content.ReadFromJsonAsync<PortProInvoiceListResponse>(cancellationToken: ct)
                 ?? new PortProInvoiceListResponse();
 
+            // Each "data" entry wraps one load - the actual invoice fields (reference
+            // number, pricing, caller, ...) live one level deeper in its "invoice"
+            // array. Flatten here so nothing downstream deals with the wrapper.
+            var pageInvoices = body.Data.SelectMany(load => load.Invoice.Select(inv =>
+            {
+                inv.Id = load.Id;
+                inv.CreatedAt = load.CreatedAt;
+                inv.UpdatedAt = load.UpdatedAt;
+                return inv;
+            }));
+
             if (request.FilterType == FilterType.InvoiceNumberRange)
             {
-                all.AddRange(body.Data.Where(inv => IsInInvoiceNumberRange(inv.ReferenceNumber, request.StartInvoiceNumber, request.EndInvoiceNumber)));
+                pageInvoices = pageInvoices.Where(inv => IsInInvoiceNumberRange(inv.ReferenceNumber, request.StartInvoiceNumber, request.EndInvoiceNumber));
             }
-            else
-            {
-                all.AddRange(body.Data);
-            }
+
+            all.AddRange(pageInvoices);
 
             if (body.Data.Count < _settings.PageSize)
             {

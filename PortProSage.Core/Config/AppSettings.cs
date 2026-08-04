@@ -117,6 +117,43 @@ public class Sage50Settings
     /// validation logic) before the first real write to a Sage 50 company file.
     /// </summary>
     public bool DryRun { get; set; } = false;
+
+    /// <summary>
+    /// Account numbers that are confirmed to exist in Sage 50 but that
+    /// AccountLedger.LoadByAccountNumber/LoadByAccountDisplayString/LoadByAccountName
+    /// cannot verify - confirmed live 2026-08-04 specifically for this company's
+    /// currency-paired accounts (4100 "Sales Revenue-CDN" / 4110 "Sales Revenue-USD"):
+    /// every ordinary single-currency account tested loaded correctly via
+    /// LoadByAccountNumber, but these two consistently returned false regardless of
+    /// lookup method, format, or call order - a real SDK limitation with
+    /// currency-paired accounts, not a code bug we can fix by calling something
+    /// differently. AccountExistsAsync treats any account number listed here as
+    /// existing without asking the SDK. Only add an account here after confirming
+    /// directly in Sage 50 (Setup > Settings > Company > General (Accounts)) that it
+    /// genuinely exists - this bypasses real verification for exactly the accounts
+    /// listed, nothing else.
+    /// </summary>
+    public List<string> AccountsUnverifiableBySdk { get; set; } = new();
+
+    /// <summary>
+    /// Maps a Canadian tax abbreviation (HST/GST/PST/QST) detected in a PortPro
+    /// charge name (e.g. "HST (13 %)") to the corresponding Sage 50 tax code string
+    /// from Setup > Settings > Company > Sales Taxes > Tax Codes - e.g. {"HST": "H"}.
+    /// Confirmed 2026-08-04 for this company: code "H" = "HST13%", posting to GL
+    /// 2310 ("GST Charged on Sales" - shared by both GST and HST in this company's
+    /// tax setup).
+    ///
+    /// A PortPro charge whose detected abbreviation has an entry here is NOT
+    /// imported as its own line item/service - InvoiceValidationService resolves it
+    /// to this code instead, and Sage50Client applies it to the invoice's other
+    /// (revenue) lines via SetTaxCodeString, so Sage 50 calculates and posts the tax
+    /// itself rather than trusting PortPro's stated dollar amount (the two models
+    /// don't match: PortPro sends tax as an explicit line amount, Sage 50 computes
+    /// it from a per-line tax code). Abbreviations with no entry here fall back to
+    /// the old warn-and-import-as-item behaviour - safe default for tax types not
+    /// yet confirmed against this company's real tax code setup.
+    /// </summary>
+    public Dictionary<string, string> TaxCodesByAbbreviation { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public class SyncSettings

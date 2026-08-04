@@ -168,14 +168,19 @@ public class SyncOrchestrator
 
         foreach (var line in invoice.Pricing)
         {
+            // Lines absent here were resolved as a tax charge (see ValidationResult.
+            // ResolvedTaxCode/InvoiceValidationService.TryGetTaxAbbreviation) - they
+            // aren't real line items, so they don't become an invoice line at all;
+            // the resolved tax code is applied to the real revenue lines below instead.
+            if (!validation.ResolvedItemCodesByChargeName.TryGetValue(line.Name, out var itemCode))
+            {
+                continue;
+            }
+
             if (!decimal.TryParse(line.FinalAmount, out var amount))
             {
                 amount = 0m;
             }
-
-            var itemCode = validation.ResolvedItemCodesByChargeName.TryGetValue(line.Name, out var code)
-                ? code
-                : line.Name;
 
             sageInvoice.Lines.Add(new Sage50InvoiceLine
             {
@@ -183,7 +188,8 @@ public class SyncOrchestrator
                 Description = line.Name,
                 Quantity = 1,
                 UnitPrice = amount,
-                RevenueAccount = !string.IsNullOrWhiteSpace(line.GlCode) ? line.GlCode! : validation.ResolvedRevenueAccount ?? string.Empty
+                RevenueAccount = !string.IsNullOrWhiteSpace(line.GlCode) ? line.GlCode! : validation.ResolvedRevenueAccount ?? string.Empty,
+                TaxCode = validation.ResolvedTaxCode
             });
         }
 

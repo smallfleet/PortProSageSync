@@ -274,13 +274,26 @@ public class Sage50Client : ISage50Client
 
         if (string.IsNullOrWhiteSpace(accountNumber)) return Task.FromResult(false);
 
+        // Confirmed-but-SDK-unverifiable accounts (currency-paired accounts like this
+        // company's 4100/4110 - see AccountsUnverifiableBySdk's doc comment) bypass
+        // the SDK lookup entirely, since it's confirmed to always return false for them
+        // regardless of method/format/call order.
+        if (_settings.AccountsUnverifiableBySdk.Contains(accountNumber, StringComparer.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(true);
+        }
+
         var ledger = SDKInstanceManager.Instance.OpenAccountLedger();
         try
         {
+            // LoadByAccountNumber, not LoadByAccountDisplayString - confirmed live
+            // 2026-08-04 by testing both against 9 real accounts from this company's
+            // actual chart of accounts: LoadByAccountDisplayString returned false for
+            // every single one (including accounts LoadByAccountNumber correctly
+            // found), so it's not usable here in whatever form we tried.
             var found = int.TryParse(accountNumber, out var numeric)
                 ? ledger.LoadByAccountNumber(numeric)
                 : ledger.LoadByAccountDisplayString(accountNumber);
-
             return Task.FromResult(found);
         }
         finally
@@ -313,7 +326,7 @@ public class Sage50Client : ISage50Client
             _logger.LogInformation(
                 "DRY RUN: would create invoice {FakeNumber} for customer {Customer}, date {Date}, lines: {Lines}",
                 fakeInvoiceNumber, invoice.CustomerCode, invoice.InvoiceDate.ToShortDateString(),
-                string.Join("; ", invoice.Lines.Select(l => $"{l.ItemCode} x{l.Quantity} @ {l.UnitPrice:C} -> {l.RevenueAccount}")));
+                string.Join("; ", invoice.Lines.Select(l => $"{l.ItemCode} x{l.Quantity} @ {l.UnitPrice:C} -> {l.RevenueAccount}" + (string.IsNullOrWhiteSpace(l.TaxCode) ? "" : $" [tax:{l.TaxCode}]"))));
             return Task.FromResult(fakeInvoiceNumber);
         }
 

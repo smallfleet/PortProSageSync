@@ -64,4 +64,12 @@ public class ValidationResult
     public string? ResolvedSage50CustomerCode { get; set; }
     public Dictionary<string, string> ResolvedItemCodesByChargeName { get; } = new();
     public string? ResolvedRevenueAccount { get; set; }
+
+    /// <summary>
+    /// Sage 50 tax code (e.g. "H" for HST13%) resolved from a PortPro charge that
+    /// matched Sage50Settings.TaxCodesByAbbreviation - applied to the invoice's
+    /// revenue lines instead of importing the tax charge as its own line item.
+    /// Null if no tax charge was present or none matched a configured mapping.
+    /// </summary>
+    public string? ResolvedTaxCode { get; set; }
 }
