@@ -59,8 +59,21 @@ public class SyncStateRepository
         return value is null ? null : DateTimeOffset.Parse(value);
     }
 
+    /// <summary>
+    /// Advances the watermark - but only forward. Called immediately after each
+    /// invoice is processed (not batched at the end of a run) so that if the
+    /// process is killed mid-run (see Sage50Client.TerminateOnFatalWriteError),
+    /// everything already processed before the failure is durably reflected here.
+    /// The "only forward" guard exists because PortPro doesn't guarantee invoices
+    /// come back ordered by updatedAt, so a later invoice in the same page can have
+    /// an earlier updatedAt than one already recorded - never let that regress the
+    /// anchor backward.
+    /// </summary>
     public void SetLastChangedWatermark(DateTimeOffset value)
     {
+        var current = GetLastChangedWatermark();
+        if (current is not null && value <= current) return;
+
         using var conn = new SqliteConnection(_connectionString);
         conn.Open();
 
@@ -88,8 +101,17 @@ public class SyncStateRepository
         return cmd.ExecuteScalar() as string;
     }
 
+    /// <summary>
+    /// Advances the last-processed-invoice-number - but only forward (ordinal string
+    /// comparison, matching how invoices are sorted before processing - see
+    /// SyncOrchestrator.RunAsync). Same "only forward, update per-invoice not batched"
+    /// reasoning as SetLastChangedWatermark above.
+    /// </summary>
     public void SetLastProcessedInvoiceNumber(string value)
     {
+        var current = GetLastProcessedInvoiceNumber();
+        if (current is not null && string.CompareOrdinal(value, current) <= 0) return;
+
         using var conn = new SqliteConnection(_connectionString);
         conn.Open();
 

@@ -1,0 +1,20 @@
+{
+  "_comment": "Template for appsettings.Local.json - the real, per-install secrets file. Copy this to appsettings.Local.json in the same folder (next to the .exe) and fill in real values for this specific client's deployment. appsettings.Local.json is git-ignored and must never be committed - it's the only place real credentials live. Applies in every environment (Development and Production alike) and overrides anything set in appsettings.json / appsettings.{Environment}.json.",
+  "PortProSage": {
+    "PortPro": {
+      "AccessToken": "REPLACE_WITH_REAL_ACCESS_TOKEN",
+      "RefreshToken": "REPLACE_WITH_REAL_REFRESH_TOKEN"
+    },
+    "Sage50": {
+      "CompanyDataPath": "REPLACE_WITH_REAL_SAI_PATH",
+      "UserName": "REPLACE_WITH_REAL_SAGE50_USERNAME",
+      "Password": "REPLACE_WITH_REAL_SAGE50_PASSWORD"
+    },
+    "Email": {
+      "SmtpHost": "",
+      "Username": "",
+      "Password": "",
+      "RecipientAddressesCsv": ""
+    }
+  }
+}

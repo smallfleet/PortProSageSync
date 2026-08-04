@@ -21,6 +21,13 @@ out/
 /dev/
 /failed-transactions/
 
+# Per-install real secrets (PortPro tokens, Sage50 password, and any other
+# per-client values) - see Program.cs's AddJsonFile("appsettings.Local.json", ...).
+# Every client deployment creates its own copy of this file locally; it must
+# never be committed, since the same repo/build is shared across clients.
+appsettings.Local.json
+appsettings.*.Local.json
+
 # OS cruft
 .DS_Store
 Thumbs.db

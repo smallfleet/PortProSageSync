@@ -119,25 +119,47 @@ public class InvoiceValidationService
                 _logger.LogWarning("Invoice {Ref}: {Message}", invoice.ReferenceNumber, message);
             }
 
-            var existingItem = await _sage50.FindItemByCodeOrDescriptionAsync(line.Name, ct);
+            // Look up by the same derived code CreateServiceItemAsync would create it
+            // under (see MakeItemCode) - looking up by the raw PortPro charge name
+            // instead (as this used to) never matches an already-created item, since
+            // its actual Sage 50 code is the sanitized/truncated/prefixed form, not
+            // the raw name. That mismatch meant every previously-created item was
+            // "not found" on every later run, triggering a duplicate-code create
+            // attempt that Sage 50 rejects with an opaque SDK error - confirmed live
+            // 2026-08-04 against the real PICKUPDELIVE item.
+            var itemCode = MakeItemCode(line.Name);
+            var existingItem = await _sage50.FindItemByCodeOrDescriptionAsync(itemCode, ct);
             string revenueAccount;
 
             if (existingItem is not null)
             {
-                revenueAccount = !string.IsNullOrWhiteSpace(existingItem.RevenueAccount)
-                    ? existingItem.RevenueAccount
-                    : ResolveAccountForCharge(line);
+                if (!string.IsNullOrWhiteSpace(existingItem.RevenueAccount))
+                {
+                    // Trust the account already configured on the existing Sage 50 item
+                    // over anything we'd otherwise resolve - it may have been set up
+                    // deliberately (e.g. by hand in Sage 50), and re-deriving it from
+                    // ChargeAccountMap/glCode/default here would silently discard that.
+                    revenueAccount = existingItem.RevenueAccount!;
+                }
+                else if (!TryResolveAccountForCharge(line, out revenueAccount, out var resolveError))
+                {
+                    result.Errors.Add(resolveError!);
+                    continue;
+                }
 
                 result.ResolvedItemCodesByChargeName[line.Name] = existingItem.Code;
             }
             else if (_settings.AutoCreateItems)
             {
+                if (!TryResolveAccountForCharge(line, out revenueAccount, out var resolveError))
+                {
+                    result.Errors.Add(resolveError!);
+                    continue;
+                }
+
                 try
                 {
-                    var code = MakeItemCode(line.Name);
-                    revenueAccount = ResolveAccountForCharge(line);
-
-                    var created = await _sage50.CreateServiceItemAsync(code, line.Name, revenueAccount, ct);
+                    var created = await _sage50.CreateServiceItemAsync(itemCode, line.Name, revenueAccount, ct);
                     result.ResolvedItemCodesByChargeName[line.Name] = created.Code;
                     result.Warnings.Add($"Service item '{line.Name}' did not exist in Sage 50 and was auto-created (code {created.Code}).");
                 }
@@ -154,7 +176,6 @@ public class InvoiceValidationService
                 continue;
             }
 
-            revenueAccount = ResolveAccountForCharge(line);
             if (!await _sage50.AccountExistsAsync(revenueAccount, ct))
             {
                 result.Errors.Add($"Revenue account '{revenueAccount}' for charge '{line.Name}' does not exist in Sage 50's chart of accounts.");
@@ -173,24 +194,61 @@ public class InvoiceValidationService
     /// accounts needs no mapping at all, while a client whose glCode values don't
     /// match (or aren't set) can redirect specific charges without PortPro's data
     /// needing to change.
+    ///
+    /// Returns false (with an error message, no account) if none of those three
+    /// resolve to anything - confirmed 2026-08-04 this genuinely happens: PortPro's
+    /// earliest historical invoices carry no glCode at all, so a charge with no
+    /// ChargeAccountMap entry either would otherwise silently fall through to an
+    /// empty string. Rather than let that reach AccountExistsAsync("") (which
+    /// would still correctly error, just with a less specific message), this
+    /// fails fast with a clear reason.
     /// </summary>
-    private string ResolveAccountForCharge(PortProPricingLine line)
+    private bool TryResolveAccountForCharge(PortProPricingLine line, out string account, out string? error)
     {
+        error = null;
+
         var mapping = _settings.ChargeAccountMap.FirstOrDefault(
             m => string.Equals(m.PortProChargeName, line.Name, StringComparison.OrdinalIgnoreCase));
 
         if (mapping is not null && !string.IsNullOrWhiteSpace(mapping.Sage50AccountNumber))
         {
-            return mapping.Sage50AccountNumber;
+            account = mapping.Sage50AccountNumber;
+            return true;
         }
 
-        return !string.IsNullOrWhiteSpace(line.GlCode) ? line.GlCode! : _settings.DefaultRevenueAccount;
+        if (!string.IsNullOrWhiteSpace(line.GlCode))
+        {
+            account = line.GlCode!;
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(_settings.DefaultRevenueAccount))
+        {
+            account = string.Empty;
+            error = $"Charge '{line.Name}' has no ChargeAccountMap entry, no PortPro glCode, and " +
+                    "Sage50Settings.DefaultRevenueAccount is not configured - cannot resolve a GL account to post to.";
+            return false;
+        }
+
+        account = _settings.DefaultRevenueAccount;
+        return true;
     }
 
+    /// <summary>
+    /// "PP_" prefixed so an auto-created item's code can never collide with
+    /// anything created before this scheme existed (or anything a client might
+    /// enter by hand under the plain charge name) - confirmed live 2026-08-04 that
+    /// a bare derived code (no prefix) can collide with a legacy/dangling Sage 50
+    /// item code and cause a duplicate-code create failure. Total length kept at
+    /// the same conservative 12 characters as before, prefix included.
+    /// </summary>
     private static string MakeItemCode(string chargeName)
     {
+        const string prefix = "PP_";
         var cleaned = new string(chargeName.Where(char.IsLetterOrDigit).ToArray());
-        return cleaned.Length <= 12 ? cleaned.ToUpperInvariant() : cleaned.Substring(0, 12).ToUpperInvariant();
+        var maxBodyLength = 12 - prefix.Length;
+        var body = cleaned.Length <= maxBodyLength ? cleaned : cleaned.Substring(0, maxBodyLength);
+        return prefix + body.ToUpperInvariant();
     }
 
     private static readonly System.Text.RegularExpressions.Regex TaxChargeNamePattern =

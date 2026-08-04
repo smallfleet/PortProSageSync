@@ -68,7 +68,34 @@ public class SyncOrchestrator
             var invoices = await _portPro.GetInvoicesAsync(request, ct);
             result.InvoicesFetched = invoices.Count;
 
-            foreach (var invoice in invoices)
+            // Only invoices with a positive total are eligible for import - a
+            // zero/negative-amount invoice has nothing to post and is silently
+            // skipped (not an error, not counted as imported).
+            var zeroOrNegative = invoices.Where(i => i.TotalAmount <= 0m).ToList();
+            if (zeroOrNegative.Count > 0)
+            {
+                result.InvoicesSkippedZeroOrNegativeAmount = zeroOrNegative.Count;
+                foreach (var skipped in zeroOrNegative)
+                {
+                    _logger.LogInformation(
+                        "Skipping invoice {Ref} (id={Id}) - total amount {Amount} is not greater than zero.",
+                        skipped.ReferenceNumber, skipped.Id, skipped.TotalAmount);
+                }
+                invoices = invoices.Where(i => i.TotalAmount > 0m).ToList();
+            }
+
+            // Process strictly in ascending invoice-number order (ordinal string
+            // comparison - correctly orders this account's consistent "PREFIX_NNNNNN"
+            // reference numbers) so the anchor updated below is always monotonic
+            // within a run: once N is processed, every invoice still to come is
+            // guaranteed to be numbered higher than N. This is what makes it safe to
+            // advance the anchor per-invoice instead of only once at the end of the
+            // whole batch.
+            var orderedInvoices = invoices
+                .OrderBy(i => i.ReferenceNumber, StringComparer.Ordinal)
+                .ToList();
+
+            foreach (var invoice in orderedInvoices)
             {
                 ct.ThrowIfCancellationRequested();
                 var outcome = await ProcessOneInvoiceAsync(invoice, ct);
@@ -89,36 +116,41 @@ public class SyncOrchestrator
                 {
                     result.InvoicesFailedImport++;
                 }
+
+                // Only a watermark-driven run ("continue from where we left off")
+                // advances persisted state - an explicit range is a one-time override
+                // that leaves both markers exactly as they were, so the next
+                // no-range run picks up from here, not from the explicit range's edge.
+                // Advanced immediately after EACH invoice (success or failure - a
+                // permanently-failing invoice must not be re-attempted forever), not
+                // batched until the end of the loop: if the process is killed mid-run
+                // (see Sage50Client.TerminateOnFatalWriteError), everything already
+                // handled before the failure must already be durably anchored, and
+                // nothing after it should be. SetLastChangedWatermark/
+                // SetLastProcessedInvoiceNumber only ever move forward, so this is
+                // safe even if a value here were ever out of order.
+                if (request.UseWatermark)
+                {
+                    if (invoice.UpdatedAt is not null)
+                    {
+                        _state.SetLastChangedWatermark(invoice.UpdatedAt.Value);
+                    }
+
+                    if (!string.IsNullOrEmpty(invoice.ReferenceNumber))
+                    {
+                        _state.SetLastProcessedInvoiceNumber(invoice.ReferenceNumber);
+                        result.LastProcessedInvoiceNumberAfterRun = invoice.ReferenceNumber;
+                    }
+                }
             }
 
-            // Only a watermark-driven run ("continue from where we left off")
-            // advances persisted state - an explicit range is a one-time override
-            // that leaves both markers exactly as they were, so the next
-            // no-range run picks up from here, not from the explicit range's edge.
-            if (request.UseWatermark && invoices.Count > 0)
+            if (request.UseWatermark && orderedInvoices.Count > 0 && request.To is not null)
             {
-                // Only up to the latest updatedAt actually seen, so a slow-running
-                // batch can't skip invoices changed mid-run.
-                var maxUpdatedAt = invoices.Max(i => i.UpdatedAt) ?? request.To;
-                if (maxUpdatedAt is not null)
-                {
-                    _state.SetLastChangedWatermark(maxUpdatedAt.Value);
-                }
-
-                // Display/audit only - ordinal string comparison, which correctly
-                // orders this account's reference numbers (consistent "PREFIX_NNNNNN"
-                // shape); doesn't drive the actual query - see SyncRequest.UseWatermark.
-                var maxReferenceNumber = invoices
-                    .Select(i => i.ReferenceNumber)
-                    .Where(r => !string.IsNullOrEmpty(r))
-                    .OrderBy(r => r, StringComparer.Ordinal)
-                    .LastOrDefault();
-
-                if (maxReferenceNumber is not null)
-                {
-                    _state.SetLastProcessedInvoiceNumber(maxReferenceNumber);
-                    result.LastProcessedInvoiceNumberAfterRun = maxReferenceNumber;
-                }
+                // Also fold in the run's own "to" boundary so the date watermark
+                // covers the whole fetched window, not just up to the last invoice's
+                // own updatedAt (which may be earlier than "to" if nothing changed
+                // right at the edge of the window).
+                _state.SetLastChangedWatermark(request.To.Value);
             }
         }
         catch (Exception ex)
@@ -133,9 +165,9 @@ public class SyncOrchestrator
 
         result.FinishedAtUtc = DateTimeOffset.UtcNow;
         _logger.LogInformation(
-            "Finished sync {RequestId}: fetched={Fetched} imported={Imported} skipped={Skipped} failedValidation={FailedVal} failedImport={FailedImp}",
+            "Finished sync {RequestId}: fetched={Fetched} imported={Imported} alreadyImported={Skipped} zeroAmount={ZeroAmount} failedValidation={FailedVal} failedImport={FailedImp}",
             request.RequestId, result.InvoicesFetched, result.InvoicesImported, result.InvoicesSkippedAlreadyImported,
-            result.InvoicesFailedValidation, result.InvoicesFailedImport);
+            result.InvoicesSkippedZeroOrNegativeAmount, result.InvoicesFailedValidation, result.InvoicesFailedImport);
 
         // Every run with at least one failure (automatic or manual - not just manual
         // triggers, which are the only path that already writes a result.json) gets

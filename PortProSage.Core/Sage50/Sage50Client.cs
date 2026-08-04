@@ -48,6 +48,11 @@ public class Sage50Client : ISage50Client
 
         LogSdkVersion();
 
+        // Must be set before OpenDatabase - the default SDKAlert implementation
+        // throws for every alert, including ordinary Yes/No confirmations Sage 50's
+        // desktop UI would show as a dialog to a human. See HeadlessSdkAlert.
+        SDKInstanceManager.Instance.SetAlertImplementation(new HeadlessSdkAlert(_logger));
+
         if (string.IsNullOrWhiteSpace(_settings.AppId) || string.IsNullOrWhiteSpace(_settings.AppName))
         {
             throw new InvalidOperationException(
@@ -205,6 +210,11 @@ public class Sage50Client : ISage50Client
 
             return Task.FromResult(new Sage50Customer { Code = name, Name = name, ReceivableAccount = receivableAccount });
         }
+        catch (Exception ex)
+        {
+            TerminateOnFatalWriteError($"creating customer '{name}'", ex);
+            throw; // unreachable - TerminateOnFatalWriteError never returns
+        }
         finally
         {
             SDKInstanceManager.Instance.CloseCustomerLedger();
@@ -227,7 +237,7 @@ public class Sage50Client : ISage50Client
             {
                 Code = ledger.Number,
                 Description = ledger.Name,
-                RevenueAccount = ledger.RevenueAccount,
+                RevenueAccount = ExtractAccountNumber(ledger.RevenueAccount),
                 IsService = ledger.IsServiceType
             });
         }
@@ -270,9 +280,14 @@ public class Sage50Client : ISage50Client
             {
                 Code = ledger.Number,
                 Description = ledger.Name,
-                RevenueAccount = ledger.RevenueAccount,
+                RevenueAccount = ExtractAccountNumber(ledger.RevenueAccount),
                 IsService = true
             });
+        }
+        catch (Exception ex)
+        {
+            TerminateOnFatalWriteError($"creating service item '{code}' ('{description}')", ex);
+            throw; // unreachable - TerminateOnFatalWriteError never returns
         }
         finally
         {
@@ -314,6 +329,23 @@ public class Sage50Client : ISage50Client
         }
     }
 
+    /// <summary>
+    /// Reading an account back off an existing ledger record (e.g. InventoryLedger.
+    /// RevenueAccount) returns the SDK's display string "NUMBER NAME" (e.g. "4100
+    /// Sales Revenue-CDN"), not the bare number - confirmed live 2026-08-04, and it
+    /// broke both AccountExistsAsync's AccountsUnverifiableBySdk bypass (an exact-
+    /// string match against bare "4100") and SetLineAccount (whose SDK docs say it
+    /// takes "account number in string", not a display string). Strips everything
+    /// from the first space onward so callers consistently see the bare number.
+    /// </summary>
+    private static string ExtractAccountNumber(string? accountDisplayString)
+    {
+        var value = accountDisplayString ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var spaceIndex = value.IndexOf(' ');
+        return spaceIndex < 0 ? value : value.Substring(0, spaceIndex);
+    }
+
     public Task<bool> InvoiceAlreadyExistsAsync(string externalReference, CancellationToken ct)
     {
         // In practice, checking Sage 50 itself for a prior import is slow, so the
@@ -345,8 +377,37 @@ public class Sage50Client : ISage50Client
         var journal = SDKInstanceManager.Instance.OpenSalesJournal();
         try
         {
-            journal.SelectAPARLedger(invoice.CustomerCode);
-            journal.SetReferenceNumber(invoice.ExternalReference);
+            // SelectTransType must be called before anything else - InvoiceJournal is
+            // a combined Quote/Order/Invoice journal (see get_IsInvoice/get_IsOrder/
+            // get_IsQuote) and defaults to a mode where SetReferenceNumber and other
+            // invoice-specific fields throw SimplyNoAccessException ("not accessible
+            // under current circumstance") - confirmed live 2026-08-04 and against the
+            // SDK's own shipped XML docs: 0 = Invoice, 1 = Order, 2 = Quote. This was
+            // the root cause of the original incident's SetReferenceNumber failure.
+            journal.SelectTransType((short)0);
+
+            // Returns the selected customer's ID, or a non-positive value if the name
+            // didn't resolve to an actual customer - confirmed via the SDK's own docs
+            // ("ID of the vendor or customer selected"). Not checking this let the
+            // journal continue in an invalid state on a bad customer name instead of
+            // failing with a clear error immediately.
+            var selectedCustomerId = journal.SelectAPARLedger(invoice.CustomerCode);
+            if (selectedCustomerId <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"Sage 50 did not select a valid customer for '{invoice.CustomerCode}' (SelectAPARLedger returned {selectedCustomerId}) - cannot post invoice for external ref '{invoice.ExternalReference}'.");
+            }
+
+            // NOT SetReferenceNumber - per the SDK's own docs that method is "the
+            // reference number for the prepayment or deposit", an unrelated field.
+            // InvoiceNumber is the actual Sage 50 invoice number (a settable string
+            // property, not necessarily auto-incrementing) - setting it directly to
+            // PortPro's reference achieves the traceability this was meant for, and
+            // matches CreateInvoiceAsync's existing return value below. Confirmed
+            // live 2026-08-04: SetReferenceNumber was the root cause of both the
+            // original incident's failure and this canary's repeated failures - it
+            // throws SimplyNoAccessException for a plain invoice with no prepayment.
+            journal.InvoiceNumber = invoice.ExternalReference;
             journal.SetJournalDate(invoice.InvoiceDate.ToString("yyyy-MM-dd"));
 
             var line = 1;
@@ -377,6 +438,11 @@ public class Sage50Client : ISage50Client
 
             return Task.FromResult(journal.InvoiceNumber);
         }
+        catch (Exception ex)
+        {
+            TerminateOnFatalWriteError($"posting invoice for external ref '{invoice.ExternalReference}'", ex);
+            throw; // unreachable - TerminateOnFatalWriteError never returns
+        }
         finally
         {
             SDKInstanceManager.Instance.CloseSalesJournal();
@@ -389,6 +455,46 @@ public class Sage50Client : ISage50Client
         {
             throw new InvalidOperationException("Sage50Client.ConnectAsync must succeed before calling this method.");
         }
+    }
+
+    /// <summary>
+    /// Terminates the whole process immediately - deliberate, not a bug. Confirmed
+    /// live 2026-08-05: a real Save()/Post() failure here (a SimplyNoAccessException
+    /// on SetReferenceNumber, root cause still not understood) left the SDK session
+    /// itself in a bad state - every subsequent SDK call in the same session started
+    /// throwing a generic "Sage 50 will now shut down" error too, yet the caller
+    /// (InvoiceValidationService/SyncOrchestrator) was catching each failure
+    /// per-invoice and continuing on to the next one regardless, cascading through
+    /// ~30 more invoices against an already-compromised session with no way to tell
+    /// from the logs alone which of those "succeeded" for real.
+    ///
+    /// Rather than try to classify which write failures are "safe to continue past"
+    /// (we don't have enough evidence to know), ANY exception from a real (non-
+    /// DryRun) Create*/Post call now kills the process outright. This also gives
+    /// correct watermark/last-processed-invoice-number behaviour for free: that
+    /// tracking only advances in a batch at the very end of SyncOrchestrator.RunAsync,
+    /// after the per-invoice loop - dying mid-loop means it's never reached, so nothing
+    /// this run touched successfully-but-unrecorded gets silently skipped by a later
+    /// run. Invoices individually completed before the failure are already durably
+    /// recorded via SyncStateRepository.MarkImported (which happens immediately per
+    /// invoice, not batched), so a restart cleanly resumes at the point of failure -
+    /// nothing already-imported gets reprocessed, nothing unprocessed gets skipped.
+    /// </summary>
+    private void TerminateOnFatalWriteError(string operation, Exception ex)
+    {
+        _logger.LogCritical(ex,
+            "FATAL: Sage 50 write failed while {Operation}. Terminating the process immediately rather than " +
+            "continuing against a possibly-compromised SDK session - restart the service to resume; already-" +
+            "imported invoices won't be reprocessed, and nothing after this point in the current run was recorded " +
+            "as processed.", operation);
+
+        // Redundant, unbuffered channel in addition to the logger above, in case the
+        // Serilog file sink hasn't flushed by the time Environment.Exit tears down
+        // the process.
+        Console.Error.WriteLine($"FATAL: Sage 50 write failed while {operation}: {ex}");
+        Console.Error.Flush();
+
+        Environment.Exit(1);
     }
 
     public void Dispose()
