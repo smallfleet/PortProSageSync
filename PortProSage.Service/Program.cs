@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using PortProSage.Core.Config;
 using PortProSage.Core.Data;
 using PortProSage.Core.Fixyee;
+using PortProSage.Core.Notifications;
 using PortProSage.Core.PortPro;
 using PortProSage.Core.Sage50;
 using PortProSage.Core.Sync;
@@ -41,6 +42,7 @@ builder.Services.AddSingleton(appSettings.PortPro);
 builder.Services.AddSingleton(appSettings.Sage50);
 builder.Services.AddSingleton(appSettings.Sync);
 builder.Services.AddSingleton(appSettings.Fixyee); // placeholder for the future Fixyee integration
+builder.Services.AddSingleton(appSettings.Email);
 
 Directory.CreateDirectory(appSettings.Sync.LogFolder);
 
@@ -68,6 +70,7 @@ builder.Services.AddHttpClient<FixyeeClient>(); // placeholder - not called anyw
 builder.Services.AddSingleton<SyncStateRepository>();
 builder.Services.AddSingleton<ISage50Client, Sage50Client>();
 builder.Services.AddSingleton<InvoiceValidationService>();
+builder.Services.AddSingleton<EmailService>();
 builder.Services.AddSingleton<SyncOrchestrator>();
 
 builder.Services.AddHostedService<Worker>();

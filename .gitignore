@@ -17,6 +17,9 @@ out/
 *.db
 *.db-shm
 *.db-wal
+*.csv
+/dev/
+/failed-transactions/
 
 # OS cruft
 .DS_Store

@@ -2,9 +2,17 @@ using PortProSage.Core.Models;
 using PortProSage.Core.Sync;
 
 // Usage examples:
+//   PortProSage.Trigger.exe --folder "C:\PortProSageSync\requests"
+//     (no --mode: "continue from where we left off" - same watermark-driven
+//     lastchanged query the automatic poll uses. This is the default.)
 //   PortProSage.Trigger.exe --folder "C:\PortProSageSync\requests" --mode lastchanged --from 2026-07-01 --to 2026-08-01
 //   PortProSage.Trigger.exe --folder "C:\PortProSageSync\requests" --mode invoicerange --start INV-1000 --end INV-1050
 //   PortProSage.Trigger.exe --folder "C:\PortProSageSync\requests" --mode completedate --from 2026-07-15 --to 2026-07-31
+//
+// An explicit --mode (any value other than omitted/"continue") is a one-time
+// override - it never touches the persisted watermark, so the next no-mode run
+// still continues from wherever the automatic poll (or a previous no-mode run)
+// had gotten to, unaffected by this one.
 //
 // This tool only writes a request file for the running PortProSage.Service to pick up
 // (it polls its trigger folder roughly every 15 seconds) - it does not talk to PortPro
@@ -20,16 +28,18 @@ if (!args_.TryGetValue("folder", out var folder))
     return 1;
 }
 
-if (!args_.TryGetValue("mode", out var mode))
-{
-    Console.Error.WriteLine("Missing required --mode lastchanged|invoicerange|completedate argument.");
-    return 1;
-}
+args_.TryGetValue("mode", out var mode);
+mode ??= "continue";
 
 var request = new SyncRequest();
 
 switch (mode.ToLowerInvariant())
 {
+    case "continue":
+        request.FilterType = FilterType.LastChangedDate;
+        request.UseWatermark = true;
+        break;
+
     case "lastchanged":
         request.FilterType = FilterType.LastChangedDate;
         request.From = ParseDate(args_, "from");
@@ -51,7 +61,7 @@ switch (mode.ToLowerInvariant())
         break;
 
     default:
-        Console.Error.WriteLine($"Unknown --mode '{mode}'. Expected lastchanged, invoicerange, or completedate.");
+        Console.Error.WriteLine($"Unknown --mode '{mode}'. Expected continue, lastchanged, invoicerange, or completedate.");
         return 1;
 }
 

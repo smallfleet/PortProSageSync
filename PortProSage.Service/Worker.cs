@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PortProSage.Core.Config;
-using PortProSage.Core.Data;
 using PortProSage.Core.Models;
 using PortProSage.Core.Sync;
 
@@ -10,7 +9,6 @@ namespace PortProSage.Service;
 public class Worker : BackgroundService
 {
     private readonly SyncOrchestrator _orchestrator;
-    private readonly SyncStateRepository _state;
     private readonly SyncSettings _syncSettings;
     private readonly ILogger<Worker> _logger;
 
@@ -18,10 +16,9 @@ public class Worker : BackgroundService
     // since they represent an operator actively waiting on a result.
     private static readonly TimeSpan TriggerPollInterval = TimeSpan.FromSeconds(15);
 
-    public Worker(SyncOrchestrator orchestrator, SyncStateRepository state, SyncSettings syncSettings, ILogger<Worker> logger)
+    public Worker(SyncOrchestrator orchestrator, SyncSettings syncSettings, ILogger<Worker> logger)
     {
         _orchestrator = orchestrator;
-        _state = state;
         _syncSettings = syncSettings;
         _logger = logger;
     }
@@ -57,18 +54,16 @@ public class Worker : BackgroundService
 
     private async Task RunAutomaticLastChangedSyncAsync(CancellationToken ct)
     {
-        var watermark = _state.GetLastChangedWatermark()
-            ?? DateTimeOffset.UtcNow.AddDays(-Math.Max(1, _syncSettings.InitialLookbackDays));
-
+        // From/To resolved inside SyncOrchestrator.RunAsync from the persisted
+        // watermark - same "continue from where we left off" resolution a manual
+        // trigger run with no --mode also uses, so there's one code path for it.
         var request = new SyncRequest
         {
             FilterType = FilterType.LastChangedDate,
-            From = watermark,
-            To = DateTimeOffset.UtcNow,
+            UseWatermark = true,
             RequestedBy = "auto-poll"
         };
 
-        _logger.LogInformation("Running automatic sync for invoices changed since {Watermark}", watermark);
         await _orchestrator.RunAsync(request, ct);
     }
 

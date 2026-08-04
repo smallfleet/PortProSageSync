@@ -73,6 +73,35 @@ public class SyncStateRepository
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>
+    /// Highest PortPro reference number seen across any watermark-driven run, for
+    /// display/audit purposes - see SyncRequest.UseWatermark's doc comment for why
+    /// this doesn't actually drive the sync query (the date watermark does).
+    /// </summary>
+    public string? GetLastProcessedInvoiceNumber()
+    {
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT value FROM watermark WHERE key = 'last_processed_invoice_number';";
+        return cmd.ExecuteScalar() as string;
+    }
+
+    public void SetLastProcessedInvoiceNumber(string value)
+    {
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO watermark (key, value) VALUES ('last_processed_invoice_number', $value)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+            """;
+        cmd.Parameters.AddWithValue("$value", value);
+        cmd.ExecuteNonQuery();
+    }
+
     public bool IsAlreadyImported(string portProInvoiceId)
     {
         using var conn = new SqliteConnection(_connectionString);

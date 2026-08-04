@@ -15,6 +15,50 @@ public class AppSettings
     /// FixyeeClient against their real API.
     /// </summary>
     public FixyeeSettings Fixyee { get; set; } = new();
+
+    /// <summary>
+    /// Failure-notification email - not wired up with real credentials yet, same
+    /// placeholder pattern as PortPro/Sage50 secrets. See EmailSettings.
+    /// </summary>
+    public EmailSettings Email { get; set; } = new();
+}
+
+/// <summary>
+/// SMTP settings for emailing a CSV of failed transactions after any sync run
+/// (automatic or manual) that has at least one failure - see
+/// FailedTransactionReport and SyncOrchestrator. All placeholder/blank by
+/// default; fill in via user-secrets/environment variables
+/// (PortProSage__Email__Password, etc.), same as PortPro/Sage50 secrets - don't
+/// put real credentials in the committed appsettings.json.
+/// </summary>
+public class EmailSettings
+{
+    /// <summary>SMTP server hostname, e.g. smtp.office365.com.</summary>
+    public string SmtpHost { get; set; } = string.Empty;
+
+    /// <summary>SMTP server port, e.g. 587 for STARTTLS.</summary>
+    public int SmtpPort { get; set; } = 587;
+
+    /// <summary>Whether to use SSL/TLS for the SMTP connection.</summary>
+    public bool UseSsl { get; set; } = true;
+
+    /// <summary>"From" address on the notification email.</summary>
+    public string FromAddress { get; set; } = string.Empty;
+
+    /// <summary>SMTP authentication username (often the same as FromAddress).</summary>
+    public string Username { get; set; } = string.Empty;
+
+    /// <summary>SMTP authentication password.</summary>
+    public string Password { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Comma-separated list of recipient addresses for failed-transaction
+    /// notifications, e.g. "ops@example.com,accounting@example.com".
+    /// </summary>
+    public string RecipientAddressesCsv { get; set; } = string.Empty;
+
+    /// <summary>Set to true once SmtpHost/FromAddress/credentials are filled in for real.</summary>
+    public bool Enabled { get; set; } = false;
 }
 
 public class FixyeeSettings
@@ -215,6 +259,14 @@ public class SyncSettings
 
     /// <summary>Folder for rolling log files.</summary>
     public string LogFolder { get; set; } = "C:\\PortProSageSync\\logs";
+
+    /// <summary>
+    /// Folder for per-run CSV files listing failed transactions (see
+    /// FailedTransactionReport) - one file per sync run that had at least one
+    /// failure, named with a microsecond-precision timestamp so concurrent/rapid
+    /// runs never collide.
+    /// </summary>
+    public string FailedTransactionsFolder { get; set; } = "C:\\PortProSageSync\\failed-transactions";
 
     /// <summary>
     /// Minimum Serilog level: Verbose, Debug, Information, Warning, Error, or Fatal.

@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging;
+using PortProSage.Core.Config;
 using PortProSage.Core.Data;
 using PortProSage.Core.Models;
+using PortProSage.Core.Notifications;
 using PortProSage.Core.PortPro;
 using PortProSage.Core.Sage50;
 using PortProSage.Core.Validation;
@@ -13,6 +15,8 @@ public class SyncOrchestrator
     private readonly ISage50Client _sage50;
     private readonly InvoiceValidationService _validator;
     private readonly SyncStateRepository _state;
+    private readonly EmailService _email;
+    private readonly SyncSettings _syncSettings;
     private readonly ILogger<SyncOrchestrator> _logger;
 
     public SyncOrchestrator(
@@ -20,12 +24,16 @@ public class SyncOrchestrator
         ISage50Client sage50,
         InvoiceValidationService validator,
         SyncStateRepository state,
+        EmailService email,
+        SyncSettings syncSettings,
         ILogger<SyncOrchestrator> logger)
     {
         _portPro = portPro;
         _sage50 = sage50;
         _validator = validator;
         _state = state;
+        _email = email;
+        _syncSettings = syncSettings;
         _logger = logger;
     }
 
@@ -37,9 +45,21 @@ public class SyncOrchestrator
             StartedAtUtc = DateTimeOffset.UtcNow
         };
 
+        // "Continue from where we left off" (no explicit range given, whether this
+        // is the automatic poll or a manual trigger run with no --mode) - resolve
+        // From/To from the persisted date watermark. An explicit range (UseWatermark
+        // false) uses exactly what the caller specified and never touches this or
+        // any other persisted state - see SyncRequest.UseWatermark's doc comment.
+        if (request.UseWatermark)
+        {
+            request.From = _state.GetLastChangedWatermark()
+                ?? DateTimeOffset.UtcNow.AddDays(-Math.Max(1, _syncSettings.InitialLookbackDays));
+            request.To = DateTimeOffset.UtcNow;
+        }
+
         _logger.LogInformation(
-            "Starting sync {RequestId} ({FilterType}, From={From}, To={To}, StartNo={StartNo}, EndNo={EndNo})",
-            request.RequestId, request.FilterType, request.From, request.To, request.StartInvoiceNumber, request.EndInvoiceNumber);
+            "Starting sync {RequestId} ({FilterType}, UseWatermark={UseWatermark}, From={From}, To={To}, StartNo={StartNo}, EndNo={EndNo})",
+            request.RequestId, request.FilterType, request.UseWatermark, request.From, request.To, request.StartInvoiceNumber, request.EndInvoiceNumber);
 
         try
         {
@@ -71,15 +91,33 @@ public class SyncOrchestrator
                 }
             }
 
-            // Advance the watermark only for the automatic "last changed date" flow,
-            // and only up to the latest updatedAt actually seen, so a slow-running
-            // batch can't skip invoices changed mid-run.
-            if (request.FilterType == FilterType.LastChangedDate && invoices.Count > 0)
+            // Only a watermark-driven run ("continue from where we left off")
+            // advances persisted state - an explicit range is a one-time override
+            // that leaves both markers exactly as they were, so the next
+            // no-range run picks up from here, not from the explicit range's edge.
+            if (request.UseWatermark && invoices.Count > 0)
             {
+                // Only up to the latest updatedAt actually seen, so a slow-running
+                // batch can't skip invoices changed mid-run.
                 var maxUpdatedAt = invoices.Max(i => i.UpdatedAt) ?? request.To;
                 if (maxUpdatedAt is not null)
                 {
                     _state.SetLastChangedWatermark(maxUpdatedAt.Value);
+                }
+
+                // Display/audit only - ordinal string comparison, which correctly
+                // orders this account's reference numbers (consistent "PREFIX_NNNNNN"
+                // shape); doesn't drive the actual query - see SyncRequest.UseWatermark.
+                var maxReferenceNumber = invoices
+                    .Select(i => i.ReferenceNumber)
+                    .Where(r => !string.IsNullOrEmpty(r))
+                    .OrderBy(r => r, StringComparer.Ordinal)
+                    .LastOrDefault();
+
+                if (maxReferenceNumber is not null)
+                {
+                    _state.SetLastProcessedInvoiceNumber(maxReferenceNumber);
+                    result.LastProcessedInvoiceNumberAfterRun = maxReferenceNumber;
                 }
             }
         }
@@ -98,6 +136,24 @@ public class SyncOrchestrator
             "Finished sync {RequestId}: fetched={Fetched} imported={Imported} skipped={Skipped} failedValidation={FailedVal} failedImport={FailedImp}",
             request.RequestId, result.InvoicesFetched, result.InvoicesImported, result.InvoicesSkippedAlreadyImported,
             result.InvoicesFailedValidation, result.InvoicesFailedImport);
+
+        // Every run with at least one failure (automatic or manual - not just manual
+        // triggers, which are the only path that already writes a result.json) gets
+        // a CSV of the failures and an email notification. A failure writing/emailing
+        // this report must never fail the sync itself - the sync's own outcome is
+        // already final by this point.
+        try
+        {
+            var reportPath = FailedTransactionReport.WriteIfAnyFailures(result, _syncSettings.FailedTransactionsFolder);
+            if (reportPath is not null)
+            {
+                await _email.SendFailedTransactionsAsync(reportPath, result, ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to write/email the failed-transactions report for sync {RequestId}", request.RequestId);
+        }
 
         return result;
     }

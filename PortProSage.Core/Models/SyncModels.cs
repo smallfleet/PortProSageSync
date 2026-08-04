@@ -28,6 +28,17 @@ public class SyncRequest
     public string? StartInvoiceNumber { get; set; }
     public string? EndInvoiceNumber { get; set; }
 
+    /// <summary>
+    /// True for the "continue from where we left off" default (no explicit range
+    /// given) - used by both the automatic poll and a manual trigger run with no
+    /// --mode specified. SyncOrchestrator resolves From/To from the persisted
+    /// watermark when this is true, and only advances the watermark/last-processed-
+    /// invoice-number tracking for requests with this set - an explicit range
+    /// (UseWatermark false) is a one-time override that never touches persisted
+    /// state, exactly as before/after this run.
+    /// </summary>
+    public bool UseWatermark { get; set; }
+
     public DateTimeOffset RequestedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public string RequestedBy { get; set; } = Environment.UserName;
 }
@@ -43,6 +54,15 @@ public class SyncResult
     public int InvoicesFailedValidation { get; set; }
     public int InvoicesFailedImport { get; set; }
     public List<InvoiceProcessingOutcome> Outcomes { get; set; } = new();
+
+    /// <summary>
+    /// The highest PortPro reference number seen across all fetched invoices this
+    /// run, if this was a watermark-driven ("continue from last processed") run -
+    /// null for an explicit-range run, which never updates this tracking. For
+    /// display/audit only; see SyncRequest.UseWatermark's doc comment for why the
+    /// date-based watermark, not this number, is what actually drives the query.
+    /// </summary>
+    public string? LastProcessedInvoiceNumberAfterRun { get; set; }
 }
 
 public class InvoiceProcessingOutcome
