@@ -11,14 +11,13 @@ out/
 .vs/
 .idea/
 
-# Logs, local state DB, and anything else the running service creates locally on a
-# given machine - these are runtime data, not source, and differ per environment.
+# Logs, local state DB, and anything else the running service creates locally -
+# runtime data, not source.
 *.log
 *.db
 *.db-shm
 *.db-wal
 *.csv
-/dev/
 /failed-transactions/
 
 # Per-install real secrets (PortPro tokens, Sage50 password, and any other

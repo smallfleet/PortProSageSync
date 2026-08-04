@@ -20,10 +20,7 @@ param(
 
     [string]$ServiceName = "PortProSageSync",
     [string]$BinPath,
-    [string]$DisplayName = "PortPro to Sage 50 Invoice Sync",
-
-    [ValidateSet("Development", "Production")]
-    [string]$Environment = "Production"
+    [string]$DisplayName = "PortPro to Sage 50 Invoice Sync"
 )
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -36,13 +33,7 @@ switch ($Action) {
         if (-not $BinPath) { throw "-BinPath is required for Install (path to PortProSage.Service.exe)." }
         New-Service -Name $ServiceName -BinaryPathName $BinPath -DisplayName $DisplayName -StartupType Automatic
 
-        # Windows services do NOT inherit the logged-in user's environment variables,
-        # so DOTNET_ENVIRONMENT must be set on the service itself (as opposed to via
-        # setx/System Properties) for appsettings.{Environment}.json to be picked up.
-        $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
-        Set-ItemProperty -Path $regPath -Name "Environment" -Value @("DOTNET_ENVIRONMENT=$Environment")
-
-        Write-Host "Service '$ServiceName' installed with DOTNET_ENVIRONMENT=$Environment."
+        Write-Host "Service '$ServiceName' installed."
         Write-Host "Start it with: .\install-service.ps1 -Action Start"
     }
     "Uninstall" {

@@ -37,12 +37,6 @@
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="appsettings.Development.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="appsettings.Production.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
     <!-- appsettings.Local.json.example is checked in (the template for a new
          client deployment); appsettings.Local.json is this server's own real,
          git-ignored copy - "Update" doesn't error when a file is absent, so this

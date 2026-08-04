@@ -15,12 +15,12 @@ using Serilog;
 
 // ContentRootPath must be pinned to the executable's own directory, not the
 // process's current working directory (Host.CreateApplicationBuilder's default) -
-// confirmed live 2026-08-04 that this matters: appsettings.json/appsettings.
-// {Environment}.json are looked up relative to ContentRootPath, silently
-// contribute nothing if not found there (AddJsonFile's default optional:true),
-// and the app falls back to hardcoded C# property defaults with no error. This
-// would also break for real under the Service Control Manager, which launches
-// services with an unrelated CWD (typically System32), not this app's folder.
+// confirmed live 2026-08-04 that this matters: appsettings.json is looked up
+// relative to ContentRootPath, silently contributes nothing if not found there
+// (AddJsonFile's default optional:true), and the app falls back to hardcoded C#
+// property defaults with no error. This would also break for real under the
+// Service Control Manager, which launches services with an unrelated CWD
+// (typically System32), not this app's folder.
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
 {
     Args = args,
@@ -39,12 +39,11 @@ builder.Services.AddWindowsService(options =>
 // client deployment) as plain JSON - not dotnet user-secrets (dev-machine-profile
 // only, invisible/inconvenient on a client's server) and not environment
 // variables (has to be re-set per machine, doesn't travel with the deployment).
-// This file is per-server, git-ignored (see .gitignore), and applies in every
-// environment (Development and Production alike) - each client's install gets
-// its own copy created locally when the product is deployed to them; the
-// checked-in appsettings*.json files never contain real secret values, only the
+// This file is per-server, git-ignored (see .gitignore) - each client's install
+// gets its own copy created locally when the product is deployed to them; the
+// checked-in appsettings.json never contains real secret values, only the
 // shared/generic structure and defaults. Loaded last so it overrides
-// appsettings.json/appsettings.{Environment}.json for anything it sets.
+// appsettings.json for anything it sets.
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
 var appSettings = new AppSettings();
@@ -67,12 +66,11 @@ builder.Services.AddSerilog((services, loggerConfig) =>
 {
     loggerConfig
         .MinimumLevel.Is(logLevel)
-        .Enrich.WithProperty("Environment", builder.Environment.EnvironmentName)
         .WriteTo.File(
             Path.Combine(appSettings.Sync.LogFolder, "portpro-sage-sync-.log"),
             rollingInterval: RollingInterval.Day,
             retainedFileCountLimit: 30,
-            outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] ({Environment}) {Message:lj}{NewLine}{Exception}")
+            outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
         .WriteTo.Console();
 });
 
@@ -88,13 +86,23 @@ builder.Services.AddSingleton<SyncOrchestrator>();
 
 builder.Services.AddHostedService<Worker>();
 
-var host = builder.Build();
+// MUST be disposed before the process exits, on every code path below (including
+// every early "return exitCode" from the one-off command branches) - ISage50Client
+// is a DI singleton, and its Dispose() is what calls SDKInstanceManager.Instance.
+// CloseDatabase(). Confirmed live 2026-08-04: every one-off command (--set-anchor,
+// --real-transfer, --create-test-item) used to just "return exitCode" directly
+// without ever disposing the host, so CloseDatabase() was never called - real
+// writes appeared to succeed (Post()/Save() returned true, no exception) but were
+// never durably committed to the actual company file. host.Run()'s long-running
+// path already disposes internally on graceful shutdown; this "using" doesn't
+// change that; it only fixes the one-off command paths, which is where the
+// disposal was actually missing.
+using var host = builder.Build();
 
 var startupLogger = host.Services.GetRequiredService<ILogger<Program>>();
 startupLogger.LogInformation(
-    "PortProSageSync starting in {Environment} environment. Sage50 company file: {CompanyPath}. " +
+    "PortProSageSync starting. Sage50 company file: {CompanyPath}. " +
     "PortPro base URL: {PortProUrl}. Trigger folder: {TriggerFolder}.",
-    builder.Environment.EnvironmentName,
     appSettings.Sage50.CompanyDataPath,
     appSettings.PortPro.BaseUrl,
     appSettings.Sync.TriggerFolder);
@@ -134,6 +142,28 @@ if (realTransferIndex >= 0 && realTransferIndex + 2 < args.Length)
         return 1;
     }
     var exitCode = await Diagnostics.RealTransferAsync(afterInvoiceNumber, count, scope.ServiceProvider, startupLogger, CancellationToken.None);
+    return exitCode;
+}
+
+// --clear-false-imports <StartRef> <EndRef> : remove false-positive
+// imported_invoice records for a reference-number range, then exit. Local state
+// correction only - PortPro/Sage 50 not touched. See Diagnostics.ClearFalseImports.
+var clearFalseImportsIndex = Array.IndexOf(args, "--clear-false-imports");
+if (clearFalseImportsIndex >= 0 && clearFalseImportsIndex + 2 < args.Length)
+{
+    using var scope = host.Services.CreateScope();
+    var exitCode = Diagnostics.ClearFalseImports(args[clearFalseImportsIndex + 1], args[clearFalseImportsIndex + 2], scope.ServiceProvider, startupLogger);
+    return exitCode;
+}
+
+// --mark-imported-range <StartRef> <EndRef> : mark every invoice in a reference-
+// number range as imported (using its own reference as the Sage 50 number), then
+// exit. PortPro read-only; Sage 50 not touched. See Diagnostics.MarkImportedRangeAsync.
+var markImportedRangeIndex = Array.IndexOf(args, "--mark-imported-range");
+if (markImportedRangeIndex >= 0 && markImportedRangeIndex + 2 < args.Length)
+{
+    using var scope = host.Services.CreateScope();
+    var exitCode = await Diagnostics.MarkImportedRangeAsync(args[markImportedRangeIndex + 1], args[markImportedRangeIndex + 2], scope.ServiceProvider, startupLogger, CancellationToken.None);
     return exitCode;
 }
 

@@ -160,4 +160,34 @@ public class SyncStateRepository
             "Recorded import: PortPro invoice {PortProId} ({RefNo}) -> Sage 50 invoice {SageNo}",
             portProInvoiceId, referenceNumber, sage50InvoiceNumber);
     }
+
+    /// <summary>
+    /// Removes imported_invoice records whose reference_number falls in [start, end]
+    /// (ordinal, inclusive) - for correcting false-positive MarkImported records,
+    /// e.g. confirmed live 2026-08-04: a missing host disposal meant CloseDatabase()
+    /// was never called after real-transfer/create-test-item commands, so writes
+    /// that appeared to succeed (Post()/Save() returned true) were recorded as
+    /// imported here without ever being durably committed to Sage 50. Returns the
+    /// number of rows removed.
+    /// </summary>
+    public int RemoveImportedInReferenceRange(string startReferenceNumber, string endReferenceNumber)
+    {
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            DELETE FROM imported_invoice
+            WHERE reference_number >= $start AND reference_number <= $end;
+            """;
+        cmd.Parameters.AddWithValue("$start", startReferenceNumber);
+        cmd.Parameters.AddWithValue("$end", endReferenceNumber);
+        var removed = cmd.ExecuteNonQuery();
+
+        _logger.LogWarning(
+            "Removed {Count} imported_invoice record(s) with reference_number in [{Start}, {End}].",
+            removed, startReferenceNumber, endReferenceNumber);
+
+        return removed;
+    }
 }

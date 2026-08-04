@@ -257,6 +257,53 @@ public static class Diagnostics
     }
 
     /// <summary>
+    /// Removes false-positive imported_invoice records for a reference-number range -
+    /// see SyncStateRepository.RemoveImportedInReferenceRange. PortPro/Sage 50 not
+    /// touched at all; purely a local state correction.
+    /// </summary>
+    public static int ClearFalseImports(string startReferenceNumber, string endReferenceNumber, IServiceProvider services, ILogger logger)
+    {
+        var state = services.GetRequiredService<SyncStateRepository>();
+        var removed = state.RemoveImportedInReferenceRange(startReferenceNumber, endReferenceNumber);
+        logger.LogWarning("Cleared {Count} false-positive import record(s) in range {Start}..{End}.", removed, startReferenceNumber, endReferenceNumber);
+        return 0;
+    }
+
+    /// <summary>
+    /// Marks every PortPro invoice in [startReferenceNumber, endReferenceNumber]
+    /// (ordinal, inclusive) as imported, using each invoice's own reference number
+    /// as the recorded Sage 50 invoice number - for restoring local tracking after
+    /// confirming directly in Sage 50 that invoices already exist for real (e.g.
+    /// after CreateInvoiceAsync's return-value bug caused a false "nothing was
+    /// saved" scare and the records were incorrectly cleared via
+    /// --clear-false-imports). PortPro read-only; Sage 50 not touched.
+    /// </summary>
+    public static async Task<int> MarkImportedRangeAsync(string startReferenceNumber, string endReferenceNumber, IServiceProvider services, ILogger logger, CancellationToken ct)
+    {
+        var portPro = services.GetRequiredService<PortProClient>();
+        var state = services.GetRequiredService<SyncStateRepository>();
+
+        var lookup = new SyncRequest
+        {
+            FilterType = FilterType.InvoiceNumberRange,
+            StartInvoiceNumber = startReferenceNumber,
+            EndInvoiceNumber = endReferenceNumber,
+            RequestedBy = "mark-imported-range"
+        };
+
+        var invoices = await portPro.GetInvoicesAsync(lookup, ct);
+        var marked = 0;
+        foreach (var invoice in invoices)
+        {
+            state.MarkImported(invoice.Id, invoice.ReferenceNumber, invoice.ReferenceNumber);
+            marked++;
+        }
+
+        logger.LogWarning("Marked {Count} invoice(s) as imported in range {Start}..{End}.", marked, startReferenceNumber, endReferenceNumber);
+        return 0;
+    }
+
+    /// <summary>
     /// Isolated diagnostic: create exactly one throwaway service item (real write,
     /// not DryRun - forced off in-memory for this process only) under a caller-
     /// supplied, never-before-used code, to distinguish "this specific revenue

@@ -436,7 +436,13 @@ public class Sage50Client : ISage50Client
                 throw new InvalidOperationException("Sage 50 SalesJournal.Post() returned false.");
             }
 
-            return Task.FromResult(journal.InvoiceNumber);
+            // NOT journal.InvoiceNumber - confirmed live 2026-08-04 that re-reading
+            // it after Post() returns an unreliable value unrelated to the real,
+            // correctly-saved invoice number (verified directly in Sage 50: the
+            // actual "Invoice No." field matches invoice.ExternalReference exactly,
+            // e.g. "RSRE_000102", not whatever journal.InvoiceNumber echoed back).
+            // What we set before Post() is what's actually saved, so return that.
+            return Task.FromResult(invoice.ExternalReference);
         }
         catch (Exception ex)
         {
