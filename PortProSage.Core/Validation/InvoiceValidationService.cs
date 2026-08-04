@@ -140,6 +140,6 @@ public class InvoiceValidationService
     private static string MakeItemCode(string chargeName)
     {
         var cleaned = new string(chargeName.Where(char.IsLetterOrDigit).ToArray());
-        return cleaned.Length <= 12 ? cleaned.ToUpperInvariant() : cleaned[..12].ToUpperInvariant();
+        return cleaned.Length <= 12 ? cleaned.ToUpperInvariant() : cleaned.Substring(0, 12).ToUpperInvariant();
     }
 }

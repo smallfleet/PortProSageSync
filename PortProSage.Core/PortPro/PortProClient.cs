@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
@@ -24,19 +25,25 @@ public class PortProClient
 
     /// <summary>
     /// Fetches every invoice matching the given request, transparently paging
-    /// through PortPro's list endpoint using the configured page size.
+    /// through PortPro's list endpoint via skip/limit.
+    ///
+    /// PortPro has no confirmed server-side reference-number filter (verified
+    /// 2026-08-04 against the production connector's own logs/binary, which
+    /// fetches every invoice via skip/limit and filters client-side rather than
+    /// asking the API for a range) - so FilterType.InvoiceNumberRange fetches
+    /// every page and filters by ReferenceNumber locally.
     /// </summary>
     public async Task<List<PortProInvoice>> GetInvoicesAsync(SyncRequest request, CancellationToken ct)
     {
         var all = new List<PortProInvoice>();
-        var page = 1;
+        var skip = 0;
 
         while (true)
         {
-            var query = BuildQueryString(request, page);
+            var query = BuildQueryString(request, skip);
             var url = $"{_settings.BaseUrl}{_settings.InvoiceEndpoint}?{query}";
 
-            _logger.LogInformation("Requesting PortPro invoices page {Page} ({FilterType})", page, request.FilterType);
+            _logger.LogInformation("Requesting PortPro invoices skip={Skip} limit={Limit} ({FilterType})", skip, _settings.PageSize, request.FilterType);
 
             using var response = await SendWithAuthAsync(HttpMethod.Get, url, ct);
             response.EnsureSuccessStatusCode();
@@ -44,18 +51,33 @@ public class PortProClient
             var body = await response.Content.ReadFromJsonAsync<PortProInvoiceListResponse>(cancellationToken: ct)
                 ?? new PortProInvoiceListResponse();
 
-            all.AddRange(body.Invoice);
+            if (request.FilterType == FilterType.InvoiceNumberRange)
+            {
+                all.AddRange(body.Data.Where(inv => IsInInvoiceNumberRange(inv.ReferenceNumber, request.StartInvoiceNumber, request.EndInvoiceNumber)));
+            }
+            else
+            {
+                all.AddRange(body.Data);
+            }
 
-            if (body.Invoice.Count < _settings.PageSize)
+            if (body.Data.Count < _settings.PageSize)
             {
                 break; // last page
             }
 
-            page++;
+            skip += _settings.PageSize;
         }
 
         _logger.LogInformation("Fetched {Count} invoice(s) from PortPro for request {RequestId}", all.Count, request.RequestId);
         return all;
+    }
+
+    private static bool IsInInvoiceNumberRange(string referenceNumber, string? start, string? end)
+    {
+        if (string.IsNullOrEmpty(referenceNumber)) return false;
+        if (!string.IsNullOrWhiteSpace(start) && string.CompareOrdinal(referenceNumber, start) < 0) return false;
+        if (!string.IsNullOrWhiteSpace(end) && string.CompareOrdinal(referenceNumber, end) > 0) return false;
+        return true;
     }
 
     /// <summary>
@@ -101,34 +123,35 @@ public class PortProClient
         return await _http.SendAsync(request, ct);
     }
 
-    // NOTE: query parameter names below (updatedAtFrom/To, completedDateFrom/To,
-    // referenceNumberFrom/To) are still a best-guess convention - the reference
-    // connector's settings screen confirmed the base URL and token endpoints, but
-    // not the exact filter parameter names for GET /invoices. Confirm these against
-    // your PortPro API reference or a Postman test before relying on them.
-    private string BuildQueryString(SyncRequest request, int page)
+    // Query parameter names confirmed 2026-08-04 by extracting string literals
+    // from the production connector's compiled binary (PostProConnector.exe) and
+    // live-testing them against the real API: skip/limit pagination,
+    // updatedFrom/updatedTo for last-changed filtering, billingFrom/billingTo for
+    // billing-date filtering (the closest analog PortPro exposes to "completed
+    // date"). No server-side reference-number filter exists - InvoiceNumberRange
+    // is applied client-side in GetInvoicesAsync instead.
+    private string BuildQueryString(SyncRequest request, int skip)
     {
         var parts = new List<string>
         {
-            $"page={page}",
+            $"skip={skip}",
             $"limit={_settings.PageSize}"
         };
 
         switch (request.FilterType)
         {
             case FilterType.LastChangedDate:
-                if (request.From is not null) parts.Add($"updatedAtFrom={Uri.EscapeDataString(request.From.Value.ToString("O"))}");
-                if (request.To is not null) parts.Add($"updatedAtTo={Uri.EscapeDataString(request.To.Value.ToString("O"))}");
+                if (request.From is not null) parts.Add($"updatedFrom={Uri.EscapeDataString(request.From.Value.ToString("O"))}");
+                if (request.To is not null) parts.Add($"updatedTo={Uri.EscapeDataString(request.To.Value.ToString("O"))}");
                 break;
 
             case FilterType.CompletedDateRange:
-                if (request.From is not null) parts.Add($"completedDateFrom={Uri.EscapeDataString(request.From.Value.ToString("O"))}");
-                if (request.To is not null) parts.Add($"completedDateTo={Uri.EscapeDataString(request.To.Value.ToString("O"))}");
+                if (request.From is not null) parts.Add($"billingFrom={Uri.EscapeDataString(request.From.Value.ToString("O"))}");
+                if (request.To is not null) parts.Add($"billingTo={Uri.EscapeDataString(request.To.Value.ToString("O"))}");
                 break;
 
             case FilterType.InvoiceNumberRange:
-                if (!string.IsNullOrWhiteSpace(request.StartInvoiceNumber)) parts.Add($"referenceNumberFrom={Uri.EscapeDataString(request.StartInvoiceNumber)}");
-                if (!string.IsNullOrWhiteSpace(request.EndInvoiceNumber)) parts.Add($"referenceNumberTo={Uri.EscapeDataString(request.EndInvoiceNumber)}");
+                // No server-side param - see GetInvoicesAsync's client-side filter.
                 break;
         }
 

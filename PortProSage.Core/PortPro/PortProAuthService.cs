@@ -1,5 +1,7 @@
+using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PortProSage.Core.Config;
 using PortProSage.Core.Models;
@@ -15,9 +17,12 @@ namespace PortProSage.Core.PortPro;
 /// PortPro account rep. Paste the current pair into PortProSettings.AccessToken /
 /// RefreshToken to start. From then on, this service uses the access token as
 /// a Bearer token until it's rejected or nears expiry, then calls
-/// PortProSettings.NewTokenEndpoint (e.g. /generate-new-token) with the refresh
-/// token to get a new pair - mirroring the "New Tokens Endpoint" field seen in
-/// the reference connector tool's settings screen.
+/// PortProSettings.NewTokenEndpoint (e.g. /generate-new-token) to get a new pair.
+///
+/// Confirmed live 2026-08-04 (by testing against the real API with the
+/// production connector's own working credentials): this is a GET request with
+/// the refresh token itself sent as the Bearer credential, not a POST with a
+/// JSON body - PortPro returns 404 for POST on this route.
 /// </summary>
 public class PortProAuthService
 {
@@ -88,31 +93,60 @@ public class PortProAuthService
 
             _logger.LogInformation("Requesting a fresh PortPro access token via {Endpoint}", _settings.NewTokenEndpoint);
 
-            var payload = new { refresh_token = _cachedRefreshToken };
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_settings.BaseUrl}{_settings.NewTokenEndpoint}");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _cachedRefreshToken);
 
-            using var response = await _http.PostAsJsonAsync($"{_settings.BaseUrl}{_settings.NewTokenEndpoint}", payload, ct);
+            using var response = await _http.SendAsync(request, ct);
             response.EnsureSuccessStatusCode();
 
-            var token = await response.Content.ReadFromJsonAsync<PortProTokenResponse>(cancellationToken: ct)
+            var envelope = await response.Content.ReadFromJsonAsync<PortProTokenEnvelope>(cancellationToken: ct);
+            var data = envelope?.Data
                 ?? throw new InvalidOperationException($"PortPro {_settings.NewTokenEndpoint} returned an empty response.");
 
-            _cachedAccessToken = token.AccessToken;
-            _cachedTokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(token.ExpiresInSeconds > 0 ? token.ExpiresInSeconds - 30 : 3300);
+            _cachedAccessToken = data.Token;
+            // PortPro doesn't return an expires_in field - decode the JWT's own "exp"
+            // claim instead; fall back to a conservative 1-hour reuse window if that fails.
+            _cachedTokenExpiresAt = TryGetJwtExpiry(data.Token)?.AddSeconds(-30) ?? DateTimeOffset.UtcNow.AddHours(1);
 
-            if (!string.IsNullOrWhiteSpace(token.RefreshToken))
+            if (!string.IsNullOrWhiteSpace(data.RefreshToken))
             {
                 // NOTE: only updates the in-memory value for this process's lifetime.
                 // If PortPro rotates refresh tokens, persist the new value (e.g. via
                 // SyncStateRepository) so a service restart doesn't fall back to a
                 // stale one from appsettings.json.
-                _cachedRefreshToken = token.RefreshToken;
+                _cachedRefreshToken = data.RefreshToken;
             }
 
+            _logger.LogInformation("Token updated and saved.");
             return _cachedAccessToken;
         }
         finally
         {
             _lock.Release();
         }
+    }
+
+    private static DateTimeOffset? TryGetJwtExpiry(string jwt)
+    {
+        try
+        {
+            var parts = jwt.Split('.');
+            if (parts.Length < 2) return null;
+
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+
+            using var doc = JsonDocument.Parse(Convert.FromBase64String(payload));
+            if (doc.RootElement.TryGetProperty("exp", out var expProp) && expProp.TryGetInt64(out var expUnix))
+            {
+                return DateTimeOffset.FromUnixTimeSeconds(expUnix);
+            }
+        }
+        catch (Exception)
+        {
+            // Malformed/unexpected JWT shape - caller falls back to a conservative default.
+        }
+
+        return null;
     }
 }

@@ -68,7 +68,7 @@ static Dictionary<string, string> ParseArgs(string[] args)
     {
         if (args[i].StartsWith("--"))
         {
-            result[args[i][2..]] = args[i + 1];
+            result[args[i].Substring(2)] = args[i + 1];
         }
     }
     return result;

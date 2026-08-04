@@ -2,11 +2,15 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- Must match PortProSage.Core's TargetFramework (net48) - see that project for why. -->
+    <TargetFramework>net48</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
     <RootNamespace>PortProSage.Trigger</RootNamespace>
     <AssemblyName>PortProSage.Trigger</AssemblyName>
+    <!-- Must match PortProSage.Core's PlatformTarget (x86) - see that project for why. -->
+    <PlatformTarget>x86</PlatformTarget>
   </PropertyGroup>
 
   <ItemGroup>

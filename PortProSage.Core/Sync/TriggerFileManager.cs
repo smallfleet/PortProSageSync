@@ -55,7 +55,11 @@ public static class TriggerFileManager
 
         var fileName = Path.GetFileName(requestFilePath);
         var destRequest = Path.Combine(processedFolder, fileName);
-        File.Move(requestFilePath, destRequest, overwrite: true);
+        if (File.Exists(destRequest))
+        {
+            File.Delete(destRequest);
+        }
+        File.Move(requestFilePath, destRequest);
 
         var resultFileName = fileName.Replace(".request.json", ".result.json");
         var destResult = Path.Combine(processedFolder, resultFileName);

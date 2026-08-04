@@ -1,34 +1,39 @@
-using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using PortProSage.Core.Config;
+using SimplySDK;
 
 namespace PortProSage.Core.Sage50;
 
 /// <summary>
-/// Talks to the Sage 50 Canadian Edition SDK.
+/// Talks to the Sage 50 Canadian Edition SDK ("SimplySDK" namespace, ships as
+/// Sage_SA.SDK.dll).
 ///
-/// IMPORTANT - READ BEFORE USING IN PRODUCTION:
-/// The Sage 50 CA SDK is a COM component whose exact ProgID, object model, and method
-/// names depend on the SDK version installed on this server (it ships with the Sage 50
-/// Accounting Partner Program installer and its own help file / sample apps - consult
-/// those for your version). Because that surface can't be verified from here, this class
-/// uses *late-bound* COM calls (`dynamic`) against a ProgID you configure, with the calls
-/// structured around the SDK's typical shape (a Session object you Connect/Open a company
-/// with, then Customers/Items/Invoices collections off it). Two things to do before go-live:
-///   1. Confirm Sage50Settings.SdkProgId against your installed SDK (check the SDK's
-///      registered COM classes, or the ProgID used in its C#/VB sample projects).
-///   2. Once confirmed, consider adding a proper COM/Interop reference to the SDK's
-///      type library in this project and swapping the `dynamic` calls below for
-///      strongly-typed ones - you'll get compile-time checking and IntelliSense.
-/// Everything else in this application (PortPro client, validation, orchestration,
-/// state tracking) is independent of this class and won't need to change.
+/// Confirmed 2026-08-04 against the SDK's own shipped XML documentation
+/// (extracted from the working "Sage50-PortPro connector" tool's install) and
+/// cross-checked live via ConnectAsync/FindCustomerByNameAsync against this
+/// server's real dev company file:
+///   - This is a plain managed .NET assembly, NOT a COM component - there is no
+///     ProgID to resolve. SDKInstanceManager.Instance is a singleton; call
+///     OpenDatabase(...) once, then OpenXxxLedger()/OpenXxxJournal() to get
+///     working ledger/journal objects, then CloseDatabase() when done.
+///   - Ledgers (CustomerLedger, AccountLedger, InventoryLedger, ...) share a
+///     common LedgerBase: LoadByXxx(...) for lookup, InitializeNew()+Save() to
+///     create.
+///   - SalesJournal is a "mimic the on-screen Sales Journal form" API: select
+///     the customer, set each line's item/qty/price/account, then Post().
+///
+/// What's still unconfirmed (no real write has been attempted against this SDK
+/// yet - see README's staged testing plan, stage 5): the exact CreateCustomerAsync
+/// /CreateServiceItemAsync/CreateInvoiceAsync sequences below are built from the
+/// SDK's documented method signatures (so the shapes and types are real, and the
+/// compiler enforces them against the actual assembly), but haven't been
+/// exercised end-to-end against a real write. Confirm with a small manual test
+/// (DryRun off, one invoice) before trusting a batch.
 /// </summary>
 public class Sage50Client : ISage50Client
 {
     private readonly Sage50Settings _settings;
     private readonly ILogger<Sage50Client> _logger;
-    private dynamic? _session;
-    private dynamic? _company;
     private bool _connected;
 
     public Sage50Client(Sage50Settings settings, ILogger<Sage50Client> logger)
@@ -41,45 +46,56 @@ public class Sage50Client : ISage50Client
     {
         if (_connected) return Task.CompletedTask;
 
-        _logger.LogInformation("Connecting to Sage 50 via SDK ProgID {ProgId}", _settings.SdkProgId);
+        LogSdkVersion();
 
-        VerifySdkInstallation();
+        if (string.IsNullOrWhiteSpace(_settings.AppId) || string.IsNullOrWhiteSpace(_settings.AppName))
+        {
+            throw new InvalidOperationException(
+                "Sage50:AppId (the SDK's 'TPAppCode' - max 6 characters) and Sage50:AppName (the SDK's " +
+                "'TPAppName') must be set before connecting.");
+        }
 
-        var comType = Type.GetTypeFromProgID(_settings.SdkProgId)
-            ?? throw new InvalidOperationException(
-                $"Could not resolve COM ProgID '{_settings.SdkProgId}'. Confirm the Sage 50 SDK is " +
-                "installed on this server and that the ProgID matches your SDK version.");
+        if (_settings.AppId.Length > 6)
+        {
+            throw new InvalidOperationException(
+                $"Sage50:AppId '{_settings.AppId}' is {_settings.AppId.Length} characters - the Sage 50 SDK's " +
+                "TPAppCode parameter accepts a maximum of 6.");
+        }
 
-        _session = Activator.CreateInstance(comType)
-            ?? throw new InvalidOperationException("Failed to instantiate the Sage 50 SDK session object.");
+        _logger.LogInformation("Opening Sage 50 company file {Path}", _settings.CompanyDataPath);
 
-        // --- TODO: adjust to match your SDK's real connect/login sequence. Typical shape ---
-        // (this mirrors the Sage 50 / "Peachtree" SDK pattern, where the calling app
-        // registers itself via Begin(appId, appName) before it can open a company -
-        // Sage 50 prompts the user, inside Sage 50 itself, to grant that app access
-        // the first time it connects; the reference connector tool's "Sage App Name" /
-        // "Sage App ID" fields are exactly this):
-        // _session.Begin(_settings.AppId, _settings.AppName);
-        // _company = _session.Open(_settings.CompanyDataPath, _settings.UserName, _settings.Password);
+        bool opened;
         try
         {
-            if (string.IsNullOrWhiteSpace(_settings.AppId) || string.IsNullOrWhiteSpace(_settings.AppName))
-            {
-                throw new InvalidOperationException(
-                    "Sage50:AppId and Sage50:AppName must be set before connecting - the SDK registers the " +
-                    "calling application under these before it will open a company file.");
-            }
-
-            _session.Begin(_settings.AppId, _settings.AppName);
-            _company = _session.Open(_settings.CompanyDataPath, _settings.UserName, _settings.Password);
+            // openMultiUserMode: false (exclusive/single-user), NOT a preference -
+            // multi-user mode's "ping the Remote Data Access connection manager" step
+            // (Simply.ConnectionManagerServiceClient.RegisterChannels) uses .NET
+            // Remoting (System.Runtime.Remoting), which was permanently removed in
+            // .NET Core/.NET 5+ with no replacement - confirmed live 2026-08-04
+            // (FileNotFoundException for System.Runtime.Remoting). Single-user mode
+            // takes an exclusive lock on the company file for the duration of the
+            // connection, so avoid holding it open longer than necessary.
+            opened = SDKInstanceManager.Instance.OpenDatabase(
+                _settings.CompanyDataPath,
+                _settings.UserName,
+                _settings.Password,
+                false,
+                _settings.AppName,
+                _settings.AppId,
+                1);
         }
         catch (Exception ex)
         {
             throw new InvalidOperationException(
-                "Failed to connect/open the Sage 50 company file. Verify CompanyDataPath, UserName, " +
-                "Password, AppId, AppName, and that no other exclusive-mode session is blocking access. " +
-                "If this is the first time this AppId has connected, check Sage 50 itself for an access " +
-                "prompt/dialog that may be waiting for a response.", ex);
+                "Failed to open the Sage 50 company file. Verify Sage50:CompanyDataPath/UserName/Password/AppId/" +
+                "AppName in appsettings, and confirm no other exclusive-mode session is blocking access.", ex);
+        }
+
+        if (!opened)
+        {
+            throw new InvalidOperationException(
+                "Sage 50 OpenDatabase returned false. Verify CompanyDataPath, UserName, Password, and that no " +
+                "other exclusive-mode session is blocking access to the company file.");
         }
 
         _connected = true;
@@ -87,71 +103,35 @@ public class Sage50Client : ISage50Client
     }
 
     /// <summary>
-    /// Looks up the DLL registered for Sage50Settings.SdkProgId in the Windows
-    /// registry (HKEY_CLASSES_ROOT) and logs its actual file version, so a
-    /// missing or mismatched SDK install is caught with a clear message at
-    /// startup instead of surfacing as an opaque COM error mid-sync. Purely
-    /// diagnostic - if ExpectedSdkVersion isn't set, this only logs; if it is
-    /// set and doesn't match, this logs a warning (not a hard failure), since
-    /// PortPro/Sage don't guarantee the file version string format.
+    /// Logs the file version of the bundled Sage_SA.SDK.dll (lib/Sage50SDK) - the
+    /// replacement for the old COM-registry version check, since this SDK is now
+    /// referenced directly rather than resolved via a registered ProgID. This SDK
+    /// must match the Sage 50 product version installed on whatever machine runs
+    /// the built service - see README "Sage 50 SDK installation & version matching".
     /// </summary>
-    private void VerifySdkInstallation()
+    private void LogSdkVersion()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            _logger.LogWarning("SDK version check skipped - not running on Windows.");
-            return;
-        }
-
         try
         {
-            using var progIdKey = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey($@"{_settings.SdkProgId}\CLSID");
-            var clsid = progIdKey?.GetValue(null) as string;
-
-            if (clsid is null)
-            {
-                _logger.LogWarning(
-                    "Sage 50 SDK ProgID '{ProgId}' is not registered on this machine. " +
-                    "Install the Sage 50 SDK version that matches your installed Sage 50 product " +
-                    "before running a real sync (see README for the download portal / version-matching notes).",
-                    _settings.SdkProgId);
-                return;
-            }
-
-            using var inprocKey = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey($@"CLSID\{clsid}\InprocServer32");
-            using var localKey = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey($@"CLSID\{clsid}\LocalServer32");
-            var dllOrExePath = (inprocKey?.GetValue(null) ?? localKey?.GetValue(null)) as string;
-
-            if (string.IsNullOrWhiteSpace(dllOrExePath) || !File.Exists(dllOrExePath))
-            {
-                _logger.LogWarning(
-                    "Sage 50 SDK ProgID '{ProgId}' is registered (CLSID {Clsid}) but its target file " +
-                    "could not be located on disk - the install may be broken or partially removed.",
-                    _settings.SdkProgId, clsid);
-                return;
-            }
-
-            var versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(dllOrExePath);
+            var location = typeof(SDKInstanceManager).Assembly.Location;
+            var versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(location);
             var detectedVersion = versionInfo.ProductVersion ?? versionInfo.FileVersion ?? "unknown";
 
-            _logger.LogInformation(
-                "Detected Sage 50 SDK: ProgID={ProgId}, file={Path}, version={Version}",
-                _settings.SdkProgId, dllOrExePath, detectedVersion);
+            _logger.LogInformation("Using bundled Sage 50 SDK: {Path}, version={Version}", location, detectedVersion);
 
             if (!string.IsNullOrWhiteSpace(_settings.ExpectedSdkVersion) &&
                 !detectedVersion.StartsWith(_settings.ExpectedSdkVersion, StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogWarning(
-                    "Installed Sage 50 SDK version '{Detected}' does not match the expected version " +
-                    "'{Expected}' (Sage50:ExpectedSdkVersion). The SDK must match your installed Sage 50 " +
-                    "product's version exactly - confirm both versions and reinstall the matching SDK if needed.",
+                    "Bundled Sage 50 SDK version '{Detected}' does not match Sage50:ExpectedSdkVersion " +
+                    "'{Expected}' - this SDK must match the Sage 50 product version installed on THIS machine, " +
+                    "or opening the company file may fail. Re-populate lib/Sage50SDK from a matching install if so.",
                     detectedVersion, _settings.ExpectedSdkVersion);
             }
         }
         catch (Exception ex)
         {
-            // Diagnostic only - never block startup because this check itself failed.
-            _logger.LogWarning(ex, "Could not verify the Sage 50 SDK installation (non-fatal).");
+            _logger.LogWarning(ex, "Could not determine the bundled Sage 50 SDK version (non-fatal).");
         }
     }
 
@@ -159,23 +139,31 @@ public class Sage50Client : ISage50Client
     {
         EnsureConnected();
 
-        // TODO: replace with the SDK's actual customer lookup, e.g.:
-        // var match = _company.Customers.Find(name);
-        foreach (var customer in _company!.Customers)
+        var ledger = SDKInstanceManager.Instance.OpenCustomerLedger();
+        try
         {
-            string customerName = customer.Name;
-            if (string.Equals(customerName, name, StringComparison.OrdinalIgnoreCase))
+            if (!ledger.LoadByName(name))
             {
-                return Task.FromResult<Sage50Customer?>(new Sage50Customer
-                {
-                    Code = customer.Code,
-                    Name = customerName,
-                    ReceivableAccount = customer.ReceivableAccount
-                });
+                return Task.FromResult<Sage50Customer?>(null);
             }
-        }
 
-        return Task.FromResult<Sage50Customer?>(null);
+            // CustomerLedger (via APARLedgerBase) exposes Name plus address/contact
+            // fields - there's no separate "customer code" distinct from Name in this
+            // SDK, and no per-customer receivable-account override (Simply
+            // Accounting/Sage 50 posts all customers to one AR control account), so
+            // ReceivableAccount is left null here; Sage50Settings.DefaultReceivableAccount
+            // is what actually matters for posting.
+            return Task.FromResult<Sage50Customer?>(new Sage50Customer
+            {
+                Code = ledger.Name,
+                Name = ledger.Name,
+                ReceivableAccount = null
+            });
+        }
+        finally
+        {
+            SDKInstanceManager.Instance.CloseCustomerLedger();
+        }
     }
 
     public Task<Sage50Customer> CreateCustomerAsync(string name, string receivableAccount, CancellationToken ct)
@@ -192,55 +180,49 @@ public class Sage50Client : ISage50Client
 
         if (_settings.DryRun)
         {
-            var fakeCode = $"DRYRUN-{Math.Abs(name.GetHashCode()) % 10000}";
-            _logger.LogInformation("DRY RUN: would create customer '{Name}' with receivable account '{Account}' (simulated code {Code})",
-                name, string.IsNullOrWhiteSpace(receivableAccount) ? _settings.DefaultReceivableAccount : receivableAccount, fakeCode);
-            return Task.FromResult(new Sage50Customer { Code = fakeCode, Name = name, ReceivableAccount = receivableAccount });
+            _logger.LogInformation("DRY RUN: would create customer '{Name}'", name);
+            return Task.FromResult(new Sage50Customer { Code = name, Name = name, ReceivableAccount = receivableAccount });
         }
 
-        // TODO: replace with the SDK's actual customer creation, e.g.:
-        // var newCustomer = _company.Customers.Add();
-        // newCustomer.Name = name;
-        // newCustomer.ReceivableAccount = receivableAccount;
-        // newCustomer.Save();
-        dynamic newCustomer = _company!.Customers.Add();
-        newCustomer.Name = name;
-        newCustomer.ReceivableAccount = string.IsNullOrWhiteSpace(receivableAccount)
-            ? _settings.DefaultReceivableAccount
-            : receivableAccount;
-        newCustomer.Save();
-
-        return Task.FromResult(new Sage50Customer
+        var ledger = SDKInstanceManager.Instance.OpenCustomerLedger();
+        try
         {
-            Code = newCustomer.Code,
-            Name = name,
-            ReceivableAccount = newCustomer.ReceivableAccount
-        });
+            ledger.InitializeNew();
+            ledger.Name = name;
+            ledger.Save();
+
+            return Task.FromResult(new Sage50Customer { Code = name, Name = name, ReceivableAccount = receivableAccount });
+        }
+        finally
+        {
+            SDKInstanceManager.Instance.CloseCustomerLedger();
+        }
     }
 
     public Task<Sage50Item?> FindItemByCodeOrDescriptionAsync(string codeOrDescription, CancellationToken ct)
     {
         EnsureConnected();
 
-        // TODO: replace with the SDK's actual item/service lookup.
-        foreach (var item in _company!.Items)
+        var ledger = SDKInstanceManager.Instance.OpenInventoryLedger();
+        try
         {
-            string code = item.Code;
-            string description = item.Description;
-            if (string.Equals(code, codeOrDescription, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(description, codeOrDescription, StringComparison.OrdinalIgnoreCase))
+            if (!ledger.LoadByPartCode(codeOrDescription))
             {
-                return Task.FromResult<Sage50Item?>(new Sage50Item
-                {
-                    Code = code,
-                    Description = description,
-                    RevenueAccount = item.RevenueAccount,
-                    IsService = true
-                });
+                return Task.FromResult<Sage50Item?>(null);
             }
-        }
 
-        return Task.FromResult<Sage50Item?>(null);
+            return Task.FromResult<Sage50Item?>(new Sage50Item
+            {
+                Code = ledger.Number,
+                Description = ledger.Name,
+                RevenueAccount = ledger.RevenueAccount,
+                IsService = ledger.IsServiceType
+            });
+        }
+        finally
+        {
+            SDKInstanceManager.Instance.CloseInventoryLedger();
+        }
     }
 
     public Task<Sage50Item> CreateServiceItemAsync(string code, string description, string revenueAccount, CancellationToken ct)
@@ -262,25 +244,28 @@ public class Sage50Client : ISage50Client
             return Task.FromResult(new Sage50Item { Code = code, Description = description, RevenueAccount = revenueAccount, IsService = true });
         }
 
-        // TODO: replace with the SDK's actual item creation, e.g.:
-        // var newItem = _company.Items.Add();
-        // newItem.Code = code; newItem.Description = description; newItem.Type = ItemType.Service;
-        // newItem.RevenueAccount = revenueAccount; newItem.Save();
-        dynamic newItem = _company!.Items.Add();
-        newItem.Code = code;
-        newItem.Description = description;
-        newItem.RevenueAccount = string.IsNullOrWhiteSpace(revenueAccount)
-            ? _settings.DefaultRevenueAccount
-            : revenueAccount;
-        newItem.Save();
-
-        return Task.FromResult(new Sage50Item
+        var ledger = SDKInstanceManager.Instance.OpenInventoryLedger();
+        try
         {
-            Code = code,
-            Description = description,
-            RevenueAccount = newItem.RevenueAccount,
-            IsService = true
-        });
+            ledger.InitializeNew();
+            ledger.Number = code;
+            ledger.Name = description;
+            ledger.IsServiceType = true;
+            ledger.RevenueAccount = string.IsNullOrWhiteSpace(revenueAccount) ? _settings.DefaultRevenueAccount : revenueAccount;
+            ledger.Save();
+
+            return Task.FromResult(new Sage50Item
+            {
+                Code = ledger.Number,
+                Description = ledger.Name,
+                RevenueAccount = ledger.RevenueAccount,
+                IsService = true
+            });
+        }
+        finally
+        {
+            SDKInstanceManager.Instance.CloseInventoryLedger();
+        }
     }
 
     public Task<bool> AccountExistsAsync(string accountNumber, CancellationToken ct)
@@ -289,29 +274,28 @@ public class Sage50Client : ISage50Client
 
         if (string.IsNullOrWhiteSpace(accountNumber)) return Task.FromResult(false);
 
-        // TODO: replace with the SDK's actual GL account lookup, e.g.:
-        // return _company.Accounts.Find(accountNumber) != null;
-        foreach (var account in _company!.Accounts)
+        var ledger = SDKInstanceManager.Instance.OpenAccountLedger();
+        try
         {
-            string number = account.Number;
-            if (string.Equals(number, accountNumber, StringComparison.OrdinalIgnoreCase))
-            {
-                return Task.FromResult(true);
-            }
-        }
+            var found = int.TryParse(accountNumber, out var numeric)
+                ? ledger.LoadByAccountNumber(numeric)
+                : ledger.LoadByAccountDisplayString(accountNumber);
 
-        return Task.FromResult(false);
+            return Task.FromResult(found);
+        }
+        finally
+        {
+            SDKInstanceManager.Instance.CloseAccountLedger();
+        }
     }
 
     public Task<bool> InvoiceAlreadyExistsAsync(string externalReference, CancellationToken ct)
     {
-        // In practice, checking Sage 50 itself for a prior import is slow (no indexed
-        // "external reference" field to search by), so the primary duplicate-check lives
-        // in SyncStateRepository (a local table keyed on PortPro invoice id). This method
-        // is kept as a defensive secondary check - wire it to whatever field you use on
-        // the Sage invoice (e.g. the Invoice's "Comment"/"Reference" field) to store the
-        // PortPro reference number, if you want a belt-and-suspenders check against Sage
-        // 50 itself.
+        // In practice, checking Sage 50 itself for a prior import is slow, so the
+        // primary duplicate-check lives in SyncStateRepository (a local table keyed
+        // on PortPro invoice id). This is kept as a defensive secondary check -
+        // InvoiceJournal.LoadInvoiceForLookup(reference, ...) could wire this up for
+        // real if you want a belt-and-suspenders check against Sage 50 itself.
         return Task.FromResult(false);
     }
 
@@ -333,51 +317,50 @@ public class Sage50Client : ISage50Client
             return Task.FromResult(fakeInvoiceNumber);
         }
 
-        // TODO: replace with the SDK's actual invoice creation. Typical shape:
-        // dynamic newInvoice = _company.SalesInvoices.Add();
-        // newInvoice.CustomerCode = invoice.CustomerCode;
-        // newInvoice.InvoiceDate = invoice.InvoiceDate;
-        // newInvoice.Comment = invoice.ExternalReference; // store PortPro ref for traceability
-        // foreach (var line in invoice.Lines)
-        // {
-        //     dynamic newLine = newInvoice.Lines.Add();
-        //     newLine.ItemCode = line.ItemCode;
-        //     newLine.Description = line.Description;
-        //     newLine.Quantity = line.Quantity;
-        //     newLine.UnitPrice = line.UnitPrice;
-        //     newLine.Account = line.RevenueAccount;
-        //     if (!string.IsNullOrWhiteSpace(line.TaxCode)) newLine.TaxCode = line.TaxCode;
-        // }
-        // newInvoice.Save();
-        // return newInvoice.InvoiceNumber;
-
-        dynamic newInvoice = _company!.SalesInvoices.Add();
-        newInvoice.CustomerCode = invoice.CustomerCode;
-        newInvoice.InvoiceDate = invoice.InvoiceDate;
-        newInvoice.Comment = invoice.ExternalReference;
-
-        foreach (var line in invoice.Lines)
+        var journal = SDKInstanceManager.Instance.OpenSalesJournal();
+        try
         {
-            dynamic newLine = newInvoice.Lines.Add();
-            newLine.ItemCode = line.ItemCode;
-            newLine.Description = line.Description;
-            newLine.Quantity = line.Quantity;
-            newLine.UnitPrice = line.UnitPrice;
-            newLine.Account = line.RevenueAccount;
-            if (!string.IsNullOrWhiteSpace(line.TaxCode))
-            {
-                newLine.TaxCode = line.TaxCode;
-            }
-        }
+            journal.SelectAPARLedger(invoice.CustomerCode);
+            journal.SetReferenceNumber(invoice.ExternalReference);
+            journal.SetJournalDate(invoice.InvoiceDate.ToString("yyyy-MM-dd"));
 
-        newInvoice.Save();
-        string sageInvoiceNumber = newInvoice.InvoiceNumber;
-        return Task.FromResult(sageInvoiceNumber);
+            var line = 1;
+            foreach (var l in invoice.Lines)
+            {
+                if (!string.IsNullOrWhiteSpace(l.ItemCode))
+                {
+                    journal.SetItemNumber(l.ItemCode, line);
+                }
+
+                journal.SetDescription(l.Description, line);
+                journal.SetQuantity((double)l.Quantity, line);
+                journal.SetPrice((double)l.UnitPrice, line);
+                journal.SetLineAccount(l.RevenueAccount, line);
+
+                if (!string.IsNullOrWhiteSpace(l.TaxCode))
+                {
+                    journal.SetTaxCodeString(l.TaxCode, line);
+                }
+
+                line++;
+            }
+
+            if (!journal.Post())
+            {
+                throw new InvalidOperationException("Sage 50 SalesJournal.Post() returned false.");
+            }
+
+            return Task.FromResult(journal.InvoiceNumber);
+        }
+        finally
+        {
+            SDKInstanceManager.Instance.CloseSalesJournal();
+        }
     }
 
     private void EnsureConnected()
     {
-        if (!_connected || _company is null)
+        if (!_connected)
         {
             throw new InvalidOperationException("Sage50Client.ConnectAsync must succeed before calling this method.");
         }
@@ -385,10 +368,11 @@ public class Sage50Client : ISage50Client
 
     public void Dispose()
     {
+        if (!_connected) return;
+
         try
         {
-            _company?.Close();
-            _session?.Disconnect();
+            SDKInstanceManager.Instance.CloseDatabase();
         }
         catch
         {
@@ -396,8 +380,7 @@ public class Sage50Client : ISage50Client
         }
         finally
         {
-            if (_company is not null && Marshal.IsComObject(_company)) Marshal.ReleaseComObject(_company);
-            if (_session is not null && Marshal.IsComObject(_session)) Marshal.ReleaseComObject(_session);
+            _connected = false;
         }
     }
 }

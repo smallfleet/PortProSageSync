@@ -35,7 +35,13 @@ public class PortProInvoice
     [JsonPropertyName("billingDate")]
     public DateTimeOffset? BillingDate { get; set; }
 
-    /// <summary>Load/invoice completion date - used for the "invoice complete date range" filter.</summary>
+    /// <summary>
+    /// NOT observed in live PortPro responses as of 2026-08-04 (only billingDate,
+    /// createdAt, updatedAt were present on real invoices). Kept as an optional
+    /// field in case some invoices carry it; the "invoice complete date range"
+    /// filter actually queries PortPro's confirmed billingFrom/billingTo params
+    /// against billingDate - see PortProClient.BuildQueryString.
+    /// </summary>
     [JsonPropertyName("completedDate")]
     public DateTimeOffset? CompletedDate { get; set; }
 
@@ -92,24 +98,41 @@ public class PortProPricingLine
     public string? GlCode { get; set; }
 }
 
-/// <summary>Envelope PortPro wraps list responses in.</summary>
+/// <summary>
+/// Envelope PortPro wraps list responses in. Confirmed 2026-08-04 against the
+/// live API using the production connector's own credentials: top-level array
+/// key is "data" (not "invoice"), total count key is "count" (not "total").
+/// </summary>
 public class PortProInvoiceListResponse
 {
-    [JsonPropertyName("total")]
-    public int Total { get; set; }
+    [JsonPropertyName("count")]
+    public int Count { get; set; }
 
-    [JsonPropertyName("invoice")]
-    public List<PortProInvoice> Invoice { get; set; } = new();
+    [JsonPropertyName("data")]
+    public List<PortProInvoice> Data { get; set; } = new();
 }
 
-public class PortProTokenResponse
+/// <summary>
+/// Envelope returned by GET /generate-new-token. Confirmed 2026-08-04 live:
+/// <c>{"_object":..., "self":..., "version":..., "data": {"token":..., "refresh_token":..., "tokenType":"public"}, "error": null}</c>
+/// </summary>
+public class PortProTokenEnvelope
 {
-    [JsonPropertyName("access_token")]
-    public string AccessToken { get; set; } = string.Empty;
+    [JsonPropertyName("data")]
+    public PortProTokenData? Data { get; set; }
+
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+}
+
+public class PortProTokenData
+{
+    [JsonPropertyName("token")]
+    public string Token { get; set; } = string.Empty;
 
     [JsonPropertyName("refresh_token")]
     public string RefreshToken { get; set; } = string.Empty;
 
-    [JsonPropertyName("expires_in")]
-    public int ExpiresInSeconds { get; set; }
+    [JsonPropertyName("tokenType")]
+    public string TokenType { get; set; } = string.Empty;
 }

@@ -1,3 +1,7 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using PortProSage.Core.Config;
 using PortProSage.Core.Data;
 using PortProSage.Core.Fixyee;
@@ -8,7 +12,19 @@ using PortProSage.Core.Validation;
 using PortProSage.Service;
 using Serilog;
 
-var builder = Host.CreateApplicationBuilder(args);
+// ContentRootPath must be pinned to the executable's own directory, not the
+// process's current working directory (Host.CreateApplicationBuilder's default) -
+// confirmed live 2026-08-04 that this matters: appsettings.json/appsettings.
+// {Environment}.json are looked up relative to ContentRootPath, silently
+// contribute nothing if not found there (AddJsonFile's default optional:true),
+// and the app falls back to hardcoded C# property defaults with no error. This
+// would also break for real under the Service Control Manager, which launches
+// services with an unrelated CWD (typically System32), not this app's folder.
+var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory
+});
 
 // Run as a native Windows Service when launched by the Service Control Manager;
 // behaves as a normal console app when run interactively (e.g. for local testing).

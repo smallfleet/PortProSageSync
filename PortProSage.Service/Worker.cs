@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using PortProSage.Core.Config;
 using PortProSage.Core.Data;
 using PortProSage.Core.Models;

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using PortProSage.Core.Models;
 using PortProSage.Core.PortPro;
 using PortProSage.Core.Sage50;
@@ -90,11 +92,11 @@ public static class Diagnostics
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "FAILED: could not connect to Sage 50. Check Sage50:CompanyDataPath/UserName/Password/SdkProgId/" +
-                                 "AppId/AppName in appsettings, confirm the SDK is installed and its ProgID matches (see the " +
-                                 "startup log line for the detected SDK version), confirm no other exclusive-mode session is " +
-                                 "blocking access to the company file, and check Sage 50 itself for an access-grant prompt if " +
-                                 "this AppId hasn't connected before.");
+            logger.LogError(ex, "FAILED: could not connect to Sage 50. Check Sage50:CompanyDataPath/UserName/Password/" +
+                                 "AppId/AppName in appsettings, confirm lib/Sage50SDK is populated with SDK assemblies " +
+                                 "matching this machine's installed Sage 50 version (see the startup log line for the " +
+                                 "bundled SDK version), and confirm no other exclusive-mode session is blocking access " +
+                                 "to the company file.");
             return 1;
         }
     }

@@ -21,3 +21,8 @@ out/
 # OS cruft
 .DS_Store
 Thumbs.db
+
+# Sage 50 SDK assemblies - third-party binaries that must match the Sage 50
+# version installed on each machine that builds/runs this service; populate
+# locally, don't commit (see PortProSage.Core.csproj for details).
+lib/Sage50SDK/

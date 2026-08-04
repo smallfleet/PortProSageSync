@@ -78,30 +78,24 @@ public class Sage50Settings
     public string Password { get; set; } = string.Empty;
 
     /// <summary>
-    /// ProgID / COM class used to instantiate the Sage 50 SDK session object.
-    /// This depends on the exact SDK version installed on this server -
-    /// confirm the correct ProgID from your Sage 50 SDK documentation / sample apps.
-    /// </summary>
-    public string SdkProgId { get; set; } = "SageData50.Session";
-
-    /// <summary>
-    /// The application name registered with the Sage 50 SDK. Sage's SDK pattern
-    /// (shared with the US "Peachtree" API) typically requires the calling app to
-    /// identify itself via an App ID + App Name before it can open a company file -
-    /// Sage 50 then prompts the user, inside Sage 50 itself, to grant that app
-    /// access the first time it connects. If you already have an App ID/Name
-    /// registered with Sage for this integration, put them here.
+    /// The Sage 50 SDK's "TPAppName" (third-party application name) parameter,
+    /// passed to SDKInstanceManager.OpenDatabase alongside AppId.
     /// </summary>
     public string AppName { get; set; } = string.Empty;
 
-    /// <summary>The application ID registered with Sage alongside AppName (see above).</summary>
+    /// <summary>
+    /// The Sage 50 SDK's "TPAppCode" parameter - a short identifier for this
+    /// application, passed to SDKInstanceManager.OpenDatabase alongside AppName.
+    /// Maximum 6 characters (enforced by the SDK).
+    /// </summary>
     public string AppId { get; set; } = string.Empty;
 
     /// <summary>
     /// Optional. If set (e.g. "2026.2"), the service logs a warning at startup when
-    /// the installed SDK's file version doesn't start with this value, so a
-    /// mismatched or stale SDK install is caught immediately rather than surfacing
-    /// as a confusing COM error later. Leave blank to skip the check.
+    /// the bundled Sage 50 SDK's file version (lib/Sage50SDK/Sage_SA.SDK.dll) doesn't
+    /// start with this value - that SDK must match the Sage 50 product version
+    /// installed on whatever machine runs the built service. Leave blank to skip
+    /// the check.
     /// </summary>
     public string ExpectedSdkVersion { get; set; } = string.Empty;
 

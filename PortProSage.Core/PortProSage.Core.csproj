@@ -1,20 +1,97 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- net8.0-windows because this project uses COM interop (Sage 50 SDK), which is Windows-only -->
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!--
+      net48, not net8.0 - the Sage 50 SDK (SDKInstanceManager.OpenDatabase) makes an
+      unconditional internal call (ConnectionManager.PingConnection) into .NET
+      Remoting (System.Runtime.Remoting), which was permanently removed in .NET
+      Core/.NET 5+ with no replacement. Confirmed live 2026-08-04: this fails the
+      same way regardless of single- vs multi-user open mode, so there's no
+      workaround from our side - the whole process hosting Sage50Client must run
+      under classic .NET Framework. This matches the existing "Sage50-PortPro
+      connector" tool, which is itself a .NET Framework 4.8 app for the same reason.
+    -->
+    <TargetFramework>net48</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
     <RootNamespace>PortProSage.Core</RootNamespace>
+    <!--
+      Sage_SA.SDK.dll's COR header has Requires32Bit=true (confirmed live 2026-08-04
+      via System.Reflection.PortableExecutable.PEReader - Sage 50/Simply Accounting's
+      SDK is 32-bit-only despite being pure IL). The whole process this assembly
+      loads into - Service and Trigger too - must therefore run as x86.
+    -->
+    <PlatformTarget>x86</PlatformTarget>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
-    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
     <PackageReference Include="Polly" Version="8.4.1" />
+    <!-- net48 doesn't ship System.Text.Json or the HttpClient JSON extension methods
+         the way modern .NET does - both are plain NuGet packages here instead. -->
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="System.Net.Http.Json" Version="8.0.1" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- net48 SDK-style projects don't auto-reference every GAC assembly - System.Net.Http
+         (HttpClient/HttpRequestMessage/etc.) needs an explicit framework reference. -->
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+  <!--
+    Sage 50 Canadian Edition SDK ("SimplySDK" namespace, ships as Sage_SA.SDK.dll -
+    a regular .NET Framework 4.8 managed assembly, NOT a COM component - there is
+    no registerable ProgID for it). Only Sage_SA.SDK.dll's types are referenced
+    directly from Sage50Client.cs; everything else under lib\Sage50SDK is that
+    assembly's own dependency chain (Sage_SA.Domain.dll, Sage_SA.DataAccess.dll,
+    etc.) and just needs to sit next to the built output for the CLR to resolve
+    at runtime - copied via the None/CopyToOutputDirectory group below rather
+    than referenced, to avoid clashing with BCL-facade packages (System.Buffers,
+    Newtonsoft.Json, etc.) already supplied by this project's own NuGet graph.
+
+    lib\Sage50SDK is intentionally not committed to git (see .gitignore) - these
+    DLLs must match the Sage 50 product version installed on whatever machine
+    runs the built service (see README "Sage 50 SDK installation & version
+    matching"). Populate it by copying the SDK's DLLs from a working install on
+    this machine before building.
+  -->
+  <!--
+    Compile-time references: the Sage/Simply-namespaced assemblies themselves
+    (Sage50Client.cs's calls into SDKInstanceManager return types like
+    CustomerLedger/AccountLedger whose members live across several of these
+    DLLs - e.g. LedgerBase.Model is a Sage_SA.Domain type - so more than just
+    Sage_SA.SDK.dll needs to be referenced for those call sites to resolve).
+    These have no naming overlap with this project's own NuGet packages, so
+    referencing them directly is safe.
+  -->
+  <ItemGroup>
+    <Sage50SdkReference Include="..\lib\Sage50SDK\Sage_SA.*.dll" />
+    <Sage50SdkReference Include="..\lib\Sage50SDK\Sage.*.dll" />
+    <Sage50SdkReference Include="..\lib\Sage50SDK\SageID.*.dll" />
+    <Sage50SdkReference Include="..\lib\Sage50SDK\Simply.*.dll" />
+    <Sage50SdkReference Include="..\lib\Sage50SDK\log4net.dll" />
+    <Sage50SdkReference Include="..\lib\Sage50SDK\Microsoft.Web.WebView2.*.dll" />
+    <!-- Include is a path (not a bare assembly name), so MSBuild resolves it as a
+         direct file reference - no separate HintPath needed. -->
+    <Reference Include="@(Sage50SdkReference)">
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!--
+    Deliberately NOT copying the rest of lib/Sage50SDK (Newtonsoft.Json, Npgsql,
+    MySql.Data, Serilog*, System.* BCL facades, Sage.CloudServices/BankingCloud/
+    Collaboration/ConnectedServicesHub - all unrelated to the plain
+    OpenDatabase/ledger/journal calls this project makes). A same-named older
+    Serilog.dll here previously shadowed this project's own NuGet-restored one
+    and broke Serilog.Extensions.Hosting at startup (TypeLoadException on
+    ReloadableLogger.Verbose) - confirmed live 2026-08-04. If a future SDK call
+    path throws a FileNotFoundException for one of these, copy that specific
+    DLL back in deliberately rather than restoring this blanket copy.
+  -->
 
 </Project>

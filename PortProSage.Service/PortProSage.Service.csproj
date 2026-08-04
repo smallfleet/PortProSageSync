@@ -1,14 +1,27 @@
-<Project Sdk="Microsoft.NET.Sdk.Worker">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <!--
+      Plain Microsoft.NET.Sdk, not Microsoft.NET.Sdk.Worker (that SDK targets modern
+      .NET only) - Program.cs still builds the same Generic Host manually via
+      Host.CreateApplicationBuilder, which works fine on net48 with these packages.
+      Must match PortProSage.Core's TargetFramework (net48) - see that project for why.
+    -->
+    <TargetFramework>net48</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
     <RootNamespace>PortProSage.Service</RootNamespace>
     <UserSecretsId>portpro-sage-sync-service</UserSecretsId>
+    <!-- Must match PortProSage.Core's PlatformTarget (x86) - see that project for why. -->
+    <PlatformTarget>x86</PlatformTarget>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Microsoft.NET.Sdk.Worker auto-referenced this on net8.0 (BackgroundService,
+         ILogger<T>, Host.CreateApplicationBuilder) - plain Microsoft.NET.Sdk needs it explicit. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
     <PackageReference Include="Serilog.Extensions.Hosting" Version="8.0.0" />
