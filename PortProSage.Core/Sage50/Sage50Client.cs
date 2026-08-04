@@ -67,19 +67,31 @@ public class Sage50Client : ISage50Client
         bool opened;
         try
         {
-            // openMultiUserMode: false (exclusive/single-user), NOT a preference -
-            // multi-user mode's "ping the Remote Data Access connection manager" step
-            // (Simply.ConnectionManagerServiceClient.RegisterChannels) uses .NET
-            // Remoting (System.Runtime.Remoting), which was permanently removed in
-            // .NET Core/.NET 5+ with no replacement - confirmed live 2026-08-04
-            // (FileNotFoundException for System.Runtime.Remoting). Single-user mode
-            // takes an exclusive lock on the company file for the duration of the
-            // connection, so avoid holding it open longer than necessary.
+            // openMultiUserMode: true - confirmed working live 2026-08-04, including
+            // a genuine concurrency test: this service connected successfully as
+            // Sage50:UserName ("PortProConnect", a dedicated account - see below)
+            // while a real interactive Sage 50 Accounting session stayed open the
+            // whole time under "sysadmin". It had been forced to false earlier
+            // because multi-user's "ping the Remote Data Access connection manager"
+            // step uses .NET Remoting (System.Runtime.Remoting), unavailable under
+            // .NET Core/.NET 5+ - but that's *why* this project retargeted to net48
+            // in the first place, and Remoting is natively available there.
+            //
+            // IMPORTANT: Sage50:UserName must be a dedicated Sage 50 user account,
+            // never the same account a human logs in with interactively - Sage 50
+            // rejects a second simultaneous session under the SAME username even in
+            // multi-user mode ("Someone else is already using the program under
+            // this name"), confirmed live when this was still configured as
+            // "sysadmin". Single-user mode, for reference, takes an exclusive lock
+            // on the company file for as long as this connection stays open, which -
+            // since Sage50Client is a DI singleton that stays connected once first
+            // connected - would lock out the real Sage 50 Accounting desktop app
+            // entirely for as long as this service runs.
             opened = SDKInstanceManager.Instance.OpenDatabase(
                 _settings.CompanyDataPath,
                 _settings.UserName,
                 _settings.Password,
-                false,
+                true,
                 _settings.AppName,
                 _settings.AppId,
                 1);
