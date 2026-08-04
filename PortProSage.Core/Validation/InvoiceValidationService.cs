@@ -126,7 +126,7 @@ public class InvoiceValidationService
             {
                 revenueAccount = !string.IsNullOrWhiteSpace(existingItem.RevenueAccount)
                     ? existingItem.RevenueAccount
-                    : ResolveFallbackAccount(line);
+                    : ResolveAccountForCharge(line);
 
                 result.ResolvedItemCodesByChargeName[line.Name] = existingItem.Code;
             }
@@ -135,7 +135,7 @@ public class InvoiceValidationService
                 try
                 {
                     var code = MakeItemCode(line.Name);
-                    revenueAccount = ResolveFallbackAccount(line);
+                    revenueAccount = ResolveAccountForCharge(line);
 
                     var created = await _sage50.CreateServiceItemAsync(code, line.Name, revenueAccount, ct);
                     result.ResolvedItemCodesByChargeName[line.Name] = created.Code;
@@ -154,7 +154,7 @@ public class InvoiceValidationService
                 continue;
             }
 
-            revenueAccount = ResolveFallbackAccount(line);
+            revenueAccount = ResolveAccountForCharge(line);
             if (!await _sage50.AccountExistsAsync(revenueAccount, ct))
             {
                 result.Errors.Add($"Revenue account '{revenueAccount}' for charge '{line.Name}' does not exist in Sage 50's chart of accounts.");
@@ -165,10 +165,25 @@ public class InvoiceValidationService
         }
     }
 
-    private string ResolveFallbackAccount(PortProPricingLine line)
+    /// <summary>
+    /// Resolution order: Sage50Settings.ChargeAccountMap's Sage50AccountNumber for
+    /// this charge name (if a row exists and it's non-blank) > the charge's own
+    /// PortPro glCode > DefaultRevenueAccount. See ChargeAccountMap's doc comment
+    /// for why: a client whose PortPro glCode values already match their Sage 50
+    /// accounts needs no mapping at all, while a client whose glCode values don't
+    /// match (or aren't set) can redirect specific charges without PortPro's data
+    /// needing to change.
+    /// </summary>
+    private string ResolveAccountForCharge(PortProPricingLine line)
     {
-        // PortPro charge lines can carry their own glCode (see the sample invoice payload);
-        // prefer that, and fall back to the configured default revenue account.
+        var mapping = _settings.ChargeAccountMap.FirstOrDefault(
+            m => string.Equals(m.PortProChargeName, line.Name, StringComparison.OrdinalIgnoreCase));
+
+        if (mapping is not null && !string.IsNullOrWhiteSpace(mapping.Sage50AccountNumber))
+        {
+            return mapping.Sage50AccountNumber;
+        }
+
         return !string.IsNullOrWhiteSpace(line.GlCode) ? line.GlCode! : _settings.DefaultRevenueAccount;
     }
 
