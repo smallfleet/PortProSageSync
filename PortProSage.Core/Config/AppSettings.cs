@@ -148,23 +148,19 @@ public class Sage50Settings
 
     /// <summary>
     /// Optional charge-to-account lookup table, matched against each PortPro
-    /// pricing line's charge name (case-insensitive). Exists because different
-    /// deployments of this integration need different things:
-    ///   - A client whose PortPro charge codes are already set up to match their
-    ///     Sage 50 chart of accounts directly (e.g. every charge tagged glCode
-    ///     "4100", and 4100 is genuinely correct in Sage 50) needs nothing here -
-    ///     leave Sage50AccountNumber blank on a row (or omit the row entirely) and
-    ///     PortPro's own glCode passes straight through.
-    ///   - A client whose PortPro glCode values don't match their real Sage 50
-    ///     accounts (this company's "4020" charges, confirmed 2026-08-04 to not
-    ///     exist) can redirect specific charges to the correct account here without
-    ///     needing PortPro's data to change at all.
+    /// pricing line's charge name (case-insensitive). A charge with no matching
+    /// row here, or a row whose Sage50AccountNumber is blank, falls back to
+    /// DefaultRevenueAccount - PortPro's own glCode is NOT consulted (confirmed
+    /// live 2026-08-05 this was a real bug: this company's "4020"-coded charges
+    /// don't have a matching 4020 account in Sage 50 at all, so using glCode as an
+    /// intermediate fallback caused every one of those charges to fail validation
+    /// instead of correctly falling through to the default).
     /// PortProChargeNumber/Sage50AccountName are for readability/audit only - the
     /// row is matched on PortProChargeName, and only Sage50AccountNumber (when
     /// non-blank) actually changes what gets posted. See
-    /// InvoiceValidationService.ResolveAccountForCharge for the exact resolution
-    /// order: this table's Sage50AccountNumber (if set) > the charge's own PortPro
-    /// glCode > DefaultRevenueAccount.
+    /// InvoiceValidationService.TryResolveAccountForCharge for the exact
+    /// resolution order: this table's Sage50AccountNumber (if set) >
+    /// DefaultRevenueAccount > error (process stops) if neither resolves.
     /// </summary>
     public List<ChargeAccountMapping> ChargeAccountMap { get; set; } = new();
 
@@ -234,7 +230,7 @@ public class ChargeAccountMapping
     /// <summary>Sage 50 account name, for reference/documentation only.</summary>
     public string Sage50AccountName { get; set; } = string.Empty;
 
-    /// <summary>Sage 50 GL account number to actually post this charge to. Leave blank to pass PortPro's own glCode through unchanged.</summary>
+    /// <summary>Sage 50 GL account number to actually post this charge to. Leave blank to fall back to Sage50Settings.DefaultRevenueAccount.</summary>
     public string Sage50AccountNumber { get; set; } = string.Empty;
 }
 

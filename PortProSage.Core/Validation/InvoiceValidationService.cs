@@ -182,26 +182,24 @@ public class InvoiceValidationService
                 continue;
             }
 
-            result.ResolvedRevenueAccount ??= revenueAccount;
+            result.ResolvedRevenueAccountByChargeName[line.Name] = revenueAccount;
         }
     }
 
     /// <summary>
     /// Resolution order: Sage50Settings.ChargeAccountMap's Sage50AccountNumber for
-    /// this charge name (if a row exists and it's non-blank) > the charge's own
-    /// PortPro glCode > DefaultRevenueAccount. See ChargeAccountMap's doc comment
-    /// for why: a client whose PortPro glCode values already match their Sage 50
-    /// accounts needs no mapping at all, while a client whose glCode values don't
-    /// match (or aren't set) can redirect specific charges without PortPro's data
-    /// needing to change.
+    /// this charge name (if a row exists and it's non-blank) > DefaultRevenueAccount.
+    /// PortPro's own glCode is NOT consulted - confirmed live 2026-08-05 this was a
+    /// real bug: PREPULL/STORAGE/YARD STORAGE - LOADED carry PortPro glCode "4020",
+    /// which doesn't exist in this company's chart of accounts, so using it instead
+    /// of falling through to the default caused every one of those charges to fail
+    /// validation. The actual rule is simpler and was stated explicitly: unmapped
+    /// charges always fall back to DefaultRevenueAccount, full stop.
     ///
-    /// Returns false (with an error message, no account) if none of those three
-    /// resolve to anything - confirmed 2026-08-04 this genuinely happens: PortPro's
-    /// earliest historical invoices carry no glCode at all, so a charge with no
-    /// ChargeAccountMap entry either would otherwise silently fall through to an
-    /// empty string. Rather than let that reach AccountExistsAsync("") (which
-    /// would still correctly error, just with a less specific message), this
-    /// fails fast with a clear reason.
+    /// Returns false (with an error message, no account) if neither resolves to
+    /// anything, i.e. no ChargeAccountMap entry and DefaultRevenueAccount is blank -
+    /// per the same rule, that's the one case that must stop the process rather
+    /// than silently post to an undefined account.
     /// </summary>
     private bool TryResolveAccountForCharge(PortProPricingLine line, out string account, out string? error)
     {
@@ -216,16 +214,10 @@ public class InvoiceValidationService
             return true;
         }
 
-        if (!string.IsNullOrWhiteSpace(line.GlCode))
-        {
-            account = line.GlCode!;
-            return true;
-        }
-
         if (string.IsNullOrWhiteSpace(_settings.DefaultRevenueAccount))
         {
             account = string.Empty;
-            error = $"Charge '{line.Name}' has no ChargeAccountMap entry, no PortPro glCode, and " +
+            error = $"Charge '{line.Name}' has no ChargeAccountMap entry, and " +
                     "Sage50Settings.DefaultRevenueAccount is not configured - cannot resolve a GL account to post to.";
             return false;
         }

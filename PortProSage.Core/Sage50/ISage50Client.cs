@@ -1,5 +1,16 @@
 namespace PortProSage.Core.Sage50;
 
+/// <summary>
+/// Thrown by CreateInvoiceAsync when Sage 50 rejects a post because that exact
+/// invoice number already exists for the customer - a real, correct validation
+/// result (nothing was written), not evidence of a compromised SDK session.
+/// Callers should treat this as "already imported" and continue, not fatal.
+/// </summary>
+public class DuplicateInvoiceNumberException : Exception
+{
+    public DuplicateInvoiceNumberException(string message, Exception inner) : base(message, inner) { }
+}
+
 public class Sage50Customer
 {
     public string Code { get; set; } = string.Empty;

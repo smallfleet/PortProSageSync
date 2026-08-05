@@ -161,20 +161,25 @@ public static class Diagnostics
     }
 
     /// <summary>
-    /// Real (non-DryRun) write of up to `count` invoices strictly after
-    /// `afterInvoiceNumber`, ordered ascending, amount > 0 only. Forces DryRun
-    /// off in-memory for THIS PROCESS ONLY (never touches appsettings.Local.json
-    /// or any environment variable) - this command never starts the Worker's
-    /// automatic-poll loop, so there is no automatic run for that override to
-    /// leak into; the process runs this one bounded batch and exits. The run
-    /// uses an explicit invoice-number range (UseWatermark=false), so it never
-    /// touches the persisted watermark/last-processed-invoice-number - call
-    /// --set-anchor afterward to advance it to whatever was actually transferred.
+    /// Real (non-DryRun) write of up to `count` invoices from `afterInvoiceNumber`
+    /// onward (ascending, amount > 0 only - zero-amount ones don't count against
+    /// the cap since SyncOrchestrator filters them out before the capped loop).
+    /// Forces DryRun off in-memory for THIS PROCESS ONLY (never touches
+    /// appsettings.Local.json or any environment variable) - this command never
+    /// starts the Worker's automatic-poll loop, so there is no automatic run for
+    /// that override to leak into; the process runs this one bounded batch and
+    /// exits. Single pass, no separate discovery fetch - confirmed live 2026-08-05
+    /// that computing a Start/End boundary from an earlier snapshot and handing
+    /// it to a second, independently-refetched run doesn't reliably cap anything
+    /// against PortPro's live data (see SyncRequest.MaxInvoicesToProcess). Uses
+    /// an explicit invoice-number range (UseWatermark=false), so it never touches
+    /// the persisted watermark/last-processed-invoice-number - call --set-anchor
+    /// afterward to advance it to whatever was actually transferred.
     /// </summary>
     public static async Task<int> RealTransferAsync(string afterInvoiceNumber, int count, IServiceProvider services, ILogger logger, CancellationToken ct)
     {
         logger.LogWarning(
-            "=== REAL TRANSFER: about to WRITE up to {Count} real invoice(s) to Sage 50, strictly after '{After}' ===",
+            "=== REAL TRANSFER: about to WRITE up to {Count} real invoice(s) to Sage 50, from '{After}' onward ===",
             count, afterInvoiceNumber);
 
         var sage50Settings = services.GetRequiredService<Sage50Settings>();
@@ -184,50 +189,15 @@ public static class Diagnostics
             logger.LogWarning("DryRun forced to false in-memory for this process only - appsettings.Local.json and environment variables are untouched.");
         }
 
-        var portPro = services.GetRequiredService<PortProClient>();
         var orchestrator = services.GetRequiredService<SyncOrchestrator>();
 
         try
         {
-            // No server-side reference-number filter (see PortProClient.GetInvoicesAsync) -
-            // this pages through every invoice from afterInvoiceNumber's neighborhood
-            // onward and filters/sorts client-side to find exactly which ones qualify.
-            var discovery = new SyncRequest
-            {
-                FilterType = FilterType.InvoiceNumberRange,
-                StartInvoiceNumber = afterInvoiceNumber,
-                RequestedBy = "real-transfer-discovery"
-            };
-
-            var fromAnchor = await portPro.GetInvoicesAsync(discovery, ct);
-            var candidates = fromAnchor
-                .Where(i => string.CompareOrdinal(i.ReferenceNumber, afterInvoiceNumber) > 0 && i.TotalAmount > 0m)
-                .OrderBy(i => i.ReferenceNumber, StringComparer.Ordinal)
-                .Take(count)
-                .ToList();
-
-            if (candidates.Count == 0)
-            {
-                logger.LogError("FAILED: no eligible invoices (amount > 0) found strictly after '{After}'. Nothing written.", afterInvoiceNumber);
-                return 1;
-            }
-
-            if (candidates.Count < count)
-            {
-                logger.LogWarning(
-                    "Only {Found} eligible invoice(s) found after '{After}' (requested {Count}) - proceeding with what's available.",
-                    candidates.Count, afterInvoiceNumber, count);
-            }
-
-            var start = candidates[0].ReferenceNumber;
-            var end = candidates[candidates.Count - 1].ReferenceNumber;
-            logger.LogWarning("REAL TRANSFER selecting {Selected} invoice(s), range {Start}..{End}.", candidates.Count, start, end);
-
             var request = new SyncRequest
             {
                 FilterType = FilterType.InvoiceNumberRange,
-                StartInvoiceNumber = start,
-                EndInvoiceNumber = end,
+                StartInvoiceNumber = afterInvoiceNumber,
+                MaxInvoicesToProcess = count,
                 UseWatermark = false,
                 RequestedBy = "real-transfer"
             };

@@ -446,6 +446,18 @@ public class Sage50Client : ISage50Client
         }
         catch (Exception ex)
         {
+            // Not a sign of a compromised session - Sage 50's own duplicate-number
+            // validation correctly rejected this before writing anything. Confirmed
+            // live 2026-08-05: this happens for invoices that were already posted in
+            // an earlier run (e.g. the original incident's cascade, before per-run
+            // ascending-order processing existed) - recoverable by the caller
+            // (SyncOrchestrator) marking it imported and moving on, not fatal.
+            if (ex.Message.IndexOf("invoice number has already been used", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                throw new DuplicateInvoiceNumberException(
+                    $"Invoice number '{invoice.ExternalReference}' already exists in Sage 50 for customer '{invoice.CustomerCode}'.", ex);
+            }
+
             TerminateOnFatalWriteError($"posting invoice for external ref '{invoice.ExternalReference}'", ex);
             throw; // unreachable - TerminateOnFatalWriteError never returns
         }

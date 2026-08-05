@@ -39,6 +39,19 @@ public class SyncRequest
     /// </summary>
     public bool UseWatermark { get; set; }
 
+    /// <summary>
+    /// Caps how many eligible (amount > 0) invoices this run will actually process,
+    /// regardless of how many fall within the fetched range - confirmed live
+    /// 2026-08-05 that computing a Start/End boundary from a separate "find N
+    /// candidates" snapshot and handing it to a later, independently-refetched run
+    /// doesn't reliably cap anything: PortPro is live data, so the two fetches can
+    /// disagree, and the second run just processes everything in the boundary
+    /// regardless of the original N. Enforcing the cap inside the same run's own
+    /// loop is the only way it's actually a cap. Null means unlimited (the default
+    /// for automatic polling and ordinary manual triggers).
+    /// </summary>
+    public int? MaxInvoicesToProcess { get; set; }
+
     public DateTimeOffset RequestedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public string RequestedBy { get; set; } = Environment.UserName;
 }
@@ -84,7 +97,16 @@ public class ValidationResult
 
     public string? ResolvedSage50CustomerCode { get; set; }
     public Dictionary<string, string> ResolvedItemCodesByChargeName { get; } = new();
-    public string? ResolvedRevenueAccount { get; set; }
+
+    /// <summary>
+    /// Per charge name, not a single shared value - confirmed live 2026-08-05 this
+    /// was a real bug: a single ResolvedRevenueAccount set once (from whichever
+    /// charge line happened to validate first) and reused as a fallback for every
+    /// other line on the same invoice would silently give unrelated charges the
+    /// wrong account whenever an invoice mixes charge types that resolve
+    /// differently.
+    /// </summary>
+    public Dictionary<string, string> ResolvedRevenueAccountByChargeName { get; } = new();
 
     /// <summary>
     /// Sage 50 tax code (e.g. "H" for HST13%) resolved from a PortPro charge that

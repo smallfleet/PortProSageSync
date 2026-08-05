@@ -142,6 +142,14 @@ public class SyncOrchestrator
                         result.LastProcessedInvoiceNumberAfterRun = invoice.ReferenceNumber;
                     }
                 }
+
+                if (request.MaxInvoicesToProcess is not null && result.Outcomes.Count >= request.MaxInvoicesToProcess.Value)
+                {
+                    _logger.LogInformation(
+                        "Reached MaxInvoicesToProcess={Max} - stopping this run early; {Remaining} more eligible invoice(s) were fetched but not processed.",
+                        request.MaxInvoicesToProcess.Value, orderedInvoices.Count - result.Outcomes.Count);
+                    break;
+                }
             }
 
             if (request.UseWatermark && orderedInvoices.Count > 0 && request.To is not null)
@@ -235,6 +243,20 @@ public class SyncOrchestrator
                 ? $"DRY RUN - would import as {sageInvoiceNumber} (not recorded; re-runs will re-validate this invoice)."
                 : $"Imported as Sage 50 invoice {sageInvoiceNumber}.");
         }
+        catch (DuplicateInvoiceNumberException ex)
+        {
+            // Sage 50 already has this exact invoice number for this customer - not
+            // a failure, just evidence it was posted in an earlier run (e.g. the
+            // original incident's cascade). Record it as imported and move on
+            // instead of treating this as fatal - see DuplicateInvoiceNumberException.
+            _logger.LogWarning(
+                "SKIPPED invoice {Ref} (PortPro id {Id}): {Message} Marking as imported without re-posting.",
+                invoice.ReferenceNumber, invoice.Id, ex.Message);
+            _state.MarkImported(invoice.Id, invoice.ReferenceNumber, invoice.ReferenceNumber);
+            outcome.Success = true;
+            outcome.Sage50InvoiceNumber = invoice.ReferenceNumber;
+            outcome.Messages.Add($"SKIPPED - already existed in Sage 50 under this invoice number: {ex.Message}");
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to import PortPro invoice {Id} ({Ref}) into Sage 50", invoice.Id, invoice.ReferenceNumber);
@@ -270,13 +292,20 @@ public class SyncOrchestrator
                 amount = 0m;
             }
 
+            // Use the account validation actually resolved and confirmed exists for
+            // THIS charge (not PortPro's raw glCode again here) - re-deriving from
+            // glCode independently at this point would bypass whatever
+            // TryResolveAccountForCharge decided and could post to an account that
+            // was never checked against Sage 50's chart of accounts at all.
+            validation.ResolvedRevenueAccountByChargeName.TryGetValue(line.Name, out var revenueAccount);
+
             sageInvoice.Lines.Add(new Sage50InvoiceLine
             {
                 ItemCode = itemCode,
                 Description = line.Name,
                 Quantity = 1,
                 UnitPrice = amount,
-                RevenueAccount = !string.IsNullOrWhiteSpace(line.GlCode) ? line.GlCode! : validation.ResolvedRevenueAccount ?? string.Empty,
+                RevenueAccount = revenueAccount ?? string.Empty,
                 TaxCode = validation.ResolvedTaxCode
             });
         }
