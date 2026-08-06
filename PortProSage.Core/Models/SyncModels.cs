@@ -70,9 +70,23 @@ public class SyncResult
     public List<InvoiceProcessingOutcome> Outcomes { get; set; } = new();
 
     /// <summary>
-    /// The highest PortPro reference number seen across all fetched invoices this
-    /// run, if this was a watermark-driven ("continue from last processed") run -
-    /// null for an explicit-range run, which never updates this tracking. For
+    /// Pre/post snapshot of the persisted "continue from where we left off" state -
+    /// read once at the very start of the run and once at the very end, always
+    /// (regardless of UseWatermark), so the two can be compared directly. For an
+    /// explicit-range run (UseWatermark=false), Before and After should always be
+    /// identical - that's the persisted-state-is-untouched guarantee made visible
+    /// and checkable, not just documented. For a watermark-driven run, the
+    /// difference between Before and After is exactly how far this run advanced.
+    /// </summary>
+    public DateTimeOffset? WatermarkBeforeRun { get; set; }
+    public DateTimeOffset? WatermarkAfterRun { get; set; }
+    public string? LastProcessedInvoiceNumberBeforeRun { get; set; }
+
+    /// <summary>
+    /// The persisted last-processed-invoice-number as of the end of the run -
+    /// always populated (re-read from state at the end), not just for
+    /// watermark-driven runs; see WatermarkBeforeRun/WatermarkAfterRun's doc
+    /// comment for why reading unconditionally at both ends matters. For
     /// display/audit only; see SyncRequest.UseWatermark's doc comment for why the
     /// date-based watermark, not this number, is what actually drives the query.
     /// </summary>
@@ -86,6 +100,24 @@ public class InvoiceProcessingOutcome
     public bool Success { get; set; }
     public string? Sage50InvoiceNumber { get; set; }
     public List<string> Messages { get; set; } = new();
+
+    /// <summary>PortPro's billing/completed date for this invoice - populated for every
+    /// outcome (success or failure), not just imported ones, so the Admin app's
+    /// "Invoice Transferred" view can show it regardless.</summary>
+    public DateTimeOffset? PortProInvoiceDate { get; set; }
+
+    /// <summary>The date actually posted to Sage 50 (Sage50Invoice.InvoiceDate) - only
+    /// set once the invoice is actually mapped/posted, so this is null for outcomes
+    /// that failed validation before mapping was attempted.</summary>
+    public DateTimeOffset? Sage50InvoiceDate { get; set; }
+
+    public decimal TotalAmount { get; set; }
+
+    /// <summary>Sum of PortPro pricing lines recognized as a Canadian sales tax charge
+    /// (see InvoiceValidationService.TryGetTaxAbbreviation) - the tax PortPro charged
+    /// on this invoice, regardless of whether it mapped to a configured Sage 50 tax
+    /// code.</summary>
+    public decimal TaxCharged { get; set; }
 }
 
 /// <summary>Outcome of validating/matching one invoice against Sage 50 master data.</summary>

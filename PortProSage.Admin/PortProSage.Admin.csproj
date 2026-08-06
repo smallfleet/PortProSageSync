@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Deliberately modern .NET (matching whatever's actually installed - net10.0
+      on this machine), not net48/x86 like the other three projects - this app
+      never touches the Sage 50 SDK (only reads/writes the same JSON files and
+      trigger-folder files the Service already uses), so it doesn't need to
+      inherit the SDK's .NET Remoting / 32-bit / COM constraints. Keeping it on
+      modern .NET gets a better WinForms designer/runtime and avoids any risk of
+      destabilizing the working net48 pipeline in the other projects.
+    -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PortProSage.Admin</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WMI access to another process's command line - used to tell an
+         automatic (long-running, no run-once flag) Service instance apart
+         from a manual one-off run (run-once), including ones started
+         outside this app. -->
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>

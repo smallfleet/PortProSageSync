@@ -162,6 +162,27 @@ public class SyncStateRepository
     }
 
     /// <summary>
+    /// All imported_invoice reference numbers, ordinal-sorted ascending - for
+    /// reporting the actual range/list of what's been transferred so far.
+    /// </summary>
+    public List<string> GetAllImportedReferenceNumbers()
+    {
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT reference_number FROM imported_invoice ORDER BY reference_number;";
+
+        var results = new List<string>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            results.Add(reader.GetString(0));
+        }
+        return results;
+    }
+
+    /// <summary>
     /// Removes imported_invoice records whose reference_number falls in [start, end]
     /// (ordinal, inclusive) - for correcting false-positive MarkImported records,
     /// e.g. confirmed live 2026-08-04: a missing host disposal meant CloseDatabase()

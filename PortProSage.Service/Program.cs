@@ -117,6 +117,20 @@ if (diagnoseIndex >= 0 && diagnoseIndex + 1 < args.Length)
     return exitCode;
 }
 
+// --run-once <RequestJsonPath> : execute exactly one SyncRequest (read from the
+// given file) and exit - never starts the Worker's polling loop. This is the
+// "Manual Run" path from the Admin app: runs immediately in this dedicated
+// process regardless of whether an automatic Service instance is running
+// elsewhere, and the caller can track/kill this specific process. See
+// Diagnostics.RunOnceAsync.
+var runOnceIndex = Array.IndexOf(args, "--run-once");
+if (runOnceIndex >= 0 && runOnceIndex + 1 < args.Length)
+{
+    using var scope = host.Services.CreateScope();
+    var exitCode = await Diagnostics.RunOnceAsync(args[runOnceIndex + 1], scope.ServiceProvider, startupLogger, CancellationToken.None);
+    return exitCode;
+}
+
 // --set-anchor <ReferenceNumber> : manually correct the persisted "continue from
 // where we left off" watermark to a specific invoice, then exit. PortPro-read-only,
 // never touches Sage 50 - see Diagnostics.SetAnchorAsync.
@@ -143,6 +157,14 @@ if (realTransferIndex >= 0 && realTransferIndex + 2 < args.Length)
     }
     var exitCode = await Diagnostics.RealTransferAsync(afterInvoiceNumber, count, scope.ServiceProvider, startupLogger, CancellationToken.None);
     return exitCode;
+}
+
+// --imported-range : report the full range/list of everything recorded as
+// imported so far, then exit. Local state only - see Diagnostics.ReportImportedRange.
+if (Array.IndexOf(args, "--imported-range") >= 0)
+{
+    using var scope = host.Services.CreateScope();
+    return Diagnostics.ReportImportedRange(scope.ServiceProvider, startupLogger);
 }
 
 // --clear-false-imports <StartRef> <EndRef> : remove false-positive

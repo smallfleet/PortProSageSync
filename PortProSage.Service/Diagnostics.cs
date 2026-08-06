@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PortProSage.Core.Config;
@@ -102,6 +103,72 @@ public static class Diagnostics
                                  "to the company file.");
             return 1;
         }
+    }
+
+    /// <summary>
+    /// Executes exactly one SyncRequest (read from a JSON file the caller wrote,
+    /// same shape TriggerFileManager uses) and exits - never starts the Worker's
+    /// polling loop, unlike host.Run(). This is the "Manual Run" path from the
+    /// Admin app: distinct from dropping a file in TriggerFolder for an
+    /// already-running Service to notice, this runs immediately in this one
+    /// process regardless of whether anything else is running, and the caller can
+    /// track/kill this specific process since it's a normal Process.Start result.
+    /// Writes a matching *.result.json next to the request file so the caller
+    /// (polling, same pattern as TriggerFileManager's processed-folder results)
+    /// can read the outcome once this process exits.
+    /// </summary>
+    public static async Task<int> RunOnceAsync(string requestFilePath, IServiceProvider services, ILogger logger, CancellationToken ct)
+    {
+        if (!File.Exists(requestFilePath))
+        {
+            logger.LogError("FAILED: request file not found: {Path}", requestFilePath);
+            return 1;
+        }
+
+        SyncRequest? request;
+        try
+        {
+            request = JsonSerializer.Deserialize<SyncRequest>(File.ReadAllText(requestFilePath));
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "FAILED: could not parse request file {Path}", requestFilePath);
+            return 1;
+        }
+
+        if (request is null)
+        {
+            logger.LogError("FAILED: request file {Path} deserialized to null.", requestFilePath);
+            return 1;
+        }
+
+        logger.LogWarning("=== MANUAL RUN: executing one-time sync request {RequestId} ===", request.RequestId);
+
+        var orchestrator = services.GetRequiredService<SyncOrchestrator>();
+        var result = await orchestrator.RunAsync(request, ct);
+
+        var resultFilePath = Path.Combine(
+            Path.GetDirectoryName(requestFilePath) ?? ".",
+            $"{request.RequestId}.result.json");
+        File.WriteAllText(resultFilePath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+
+        logger.LogWarning(
+            "MANUAL RUN complete: fetched={Fetched} imported={Imported} alreadyImported={AlreadyImported} " +
+            "zeroAmount={ZeroAmount} failedValidation={FailedVal} failedImport={FailedImp}",
+            result.InvoicesFetched, result.InvoicesImported, result.InvoicesSkippedAlreadyImported,
+            result.InvoicesSkippedZeroOrNegativeAmount, result.InvoicesFailedValidation, result.InvoicesFailedImport);
+
+        // Per-invoice detail as its own log lines - not just the aggregate counts
+        // above - so the Admin app's Warnings/Validation and Failed Transactions
+        // views (filtered from this same log) have real per-invoice text to filter.
+        foreach (var outcome in result.Outcomes)
+        {
+            logger.LogInformation(
+                "  {Ref}: success={Success} sage50Number={SageNo} messages=[{Messages}]",
+                outcome.ReferenceNumber, outcome.Success, outcome.Sage50InvoiceNumber ?? "(none)", string.Join(" | ", outcome.Messages));
+        }
+
+        return result.InvoicesFailedImport > 0 || result.InvoicesFailedValidation > 0 ? 1 : 0;
     }
 
     /// <summary>
@@ -224,6 +291,26 @@ public static class Diagnostics
             logger.LogError(ex, "FAILED: real transfer errored outside the per-invoice loop.");
             return 1;
         }
+    }
+
+    /// <summary>
+    /// Reports the full range/list of everything recorded as imported so far - local
+    /// state only, no PortPro/Sage 50 calls.
+    /// </summary>
+    public static int ReportImportedRange(IServiceProvider services, ILogger logger)
+    {
+        var state = services.GetRequiredService<SyncStateRepository>();
+        var refs = state.GetAllImportedReferenceNumbers();
+
+        if (refs.Count == 0)
+        {
+            logger.LogWarning("No invoices recorded as imported yet.");
+            return 0;
+        }
+
+        logger.LogWarning("IMPORTED RANGE: {Count} invoice(s), from {Min} to {Max}.", refs.Count, refs[0], refs[refs.Count - 1]);
+        logger.LogInformation("Full list: {List}", string.Join(", ", refs));
+        return 0;
     }
 
     /// <summary>

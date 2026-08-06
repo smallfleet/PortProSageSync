@@ -254,7 +254,7 @@ public class InvoiceValidationService
     /// only consistent signal PortPro provides. Returns the abbreviation in
     /// upper-case (e.g. "HST") for use as a Sage50Settings.TaxCodesByAbbreviation key.
     /// </summary>
-    private static bool TryGetTaxAbbreviation(string chargeName, out string abbreviation)
+    internal static bool TryGetTaxAbbreviation(string chargeName, out string abbreviation)
     {
         var match = TaxChargeNamePattern.Match(chargeName);
         abbreviation = match.Success ? match.Groups[1].Value.ToUpperInvariant() : string.Empty;

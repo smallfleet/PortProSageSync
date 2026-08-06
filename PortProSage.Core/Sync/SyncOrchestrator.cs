@@ -45,6 +45,14 @@ public class SyncOrchestrator
             StartedAtUtc = DateTimeOffset.UtcNow
         };
 
+        // Pre-image of the persisted "continue from" state - captured before
+        // anything below can change it, so it can be compared against the
+        // post-image captured at the very end of this method (see
+        // SyncResult.WatermarkBeforeRun's doc comment for why this is captured
+        // unconditionally, not just for watermark-driven runs).
+        result.WatermarkBeforeRun = _state.GetLastChangedWatermark();
+        result.LastProcessedInvoiceNumberBeforeRun = _state.GetLastProcessedInvoiceNumber();
+
         // "Continue from where we left off" (no explicit range given, whether this
         // is the automatic poll or a manual trigger run with no --mode) - resolve
         // From/To from the persisted date watermark. An explicit range (UseWatermark
@@ -52,7 +60,7 @@ public class SyncOrchestrator
         // any other persisted state - see SyncRequest.UseWatermark's doc comment.
         if (request.UseWatermark)
         {
-            request.From = _state.GetLastChangedWatermark()
+            request.From = result.WatermarkBeforeRun
                 ?? DateTimeOffset.UtcNow.AddDays(-Math.Max(1, _syncSettings.InitialLookbackDays));
             request.To = DateTimeOffset.UtcNow;
         }
@@ -100,6 +108,26 @@ public class SyncOrchestrator
                 ct.ThrowIfCancellationRequested();
                 var outcome = await ProcessOneInvoiceAsync(invoice, ct);
                 result.Outcomes.Add(outcome);
+
+                // A single, consistently-formatted line per genuinely-transferred invoice
+                // (skips ALREADY_IMPORTED/DRYRUN, which didn't actually post anything this
+                // run) - logged here, inside RunAsync itself, so both the automatic poll
+                // (Worker.cs) and manual/diagnostic runs (Diagnostics.cs) produce it
+                // identically without each caller having to remember to. The Admin app's
+                // "Invoice Transferred" tab parses this line back out of the full log
+                // rather than reading result.json, since the automatic poll never writes
+                // a result.json at all - the log is the only record that exists for it.
+                if (outcome.Success && outcome.Sage50InvoiceNumber is not null &&
+                    outcome.Sage50InvoiceNumber != "ALREADY_IMPORTED" &&
+                    !outcome.Sage50InvoiceNumber.StartsWith("DRYRUN-", StringComparison.Ordinal))
+                {
+                    _logger.LogInformation(
+                        "TRANSFER: Ref={Ref} Sage50Number={SageNo} PortProDate={PortProDate} Sage50Date={Sage50Date} TotalAmount={TotalAmount} TaxCharged={TaxCharged}",
+                        outcome.ReferenceNumber, outcome.Sage50InvoiceNumber,
+                        outcome.PortProInvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
+                        outcome.Sage50InvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
+                        outcome.TotalAmount, outcome.TaxCharged);
+                }
 
                 if (outcome.Success)
                 {
@@ -171,6 +199,13 @@ public class SyncOrchestrator
             });
         }
 
+        // Post-image, read fresh from state rather than trusting whatever the loop
+        // above set - always populated regardless of UseWatermark, so an explicit
+        // range's "this should be unchanged" guarantee is directly checkable
+        // (WatermarkBeforeRun == WatermarkAfterRun) rather than just documented.
+        result.WatermarkAfterRun = _state.GetLastChangedWatermark();
+        result.LastProcessedInvoiceNumberAfterRun = _state.GetLastProcessedInvoiceNumber();
+
         result.FinishedAtUtc = DateTimeOffset.UtcNow;
         _logger.LogInformation(
             "Finished sync {RequestId}: fetched={Fetched} imported={Imported} alreadyImported={Skipped} zeroAmount={ZeroAmount} failedValidation={FailedVal} failedImport={FailedImp}",
@@ -203,7 +238,12 @@ public class SyncOrchestrator
         var outcome = new InvoiceProcessingOutcome
         {
             PortProInvoiceId = invoice.Id,
-            ReferenceNumber = invoice.ReferenceNumber
+            ReferenceNumber = invoice.ReferenceNumber,
+            PortProInvoiceDate = invoice.BillingDate ?? invoice.CompletedDate,
+            TotalAmount = invoice.TotalAmount,
+            TaxCharged = invoice.Pricing
+                .Where(l => InvoiceValidationService.TryGetTaxAbbreviation(l.Name, out _))
+                .Sum(l => decimal.TryParse(l.FinalAmount, out var amount) ? amount : 0m)
         };
 
         if (_state.IsAlreadyImported(invoice.Id))
@@ -227,6 +267,7 @@ public class SyncOrchestrator
         try
         {
             var sageInvoice = MapToSage50Invoice(invoice, validation);
+            outcome.Sage50InvoiceDate = sageInvoice.InvoiceDate;
             var sageInvoiceNumber = await _sage50.CreateInvoiceAsync(sageInvoice, ct);
 
             // A dry-run invoice number (see Sage50Client) must NOT be recorded as
