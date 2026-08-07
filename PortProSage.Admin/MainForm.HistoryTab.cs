@@ -169,6 +169,7 @@ public partial class MainForm
 
         _historyEntries = RunHistoryService.ListRuns(_triggerFolder, _processedTriggerFolder, _logFolder, _manualRunFolder);
         _historyGrid.Rows.Clear();
+        RefreshPreviousRunSection();
 
         foreach (var entry in _historyEntries)
         {

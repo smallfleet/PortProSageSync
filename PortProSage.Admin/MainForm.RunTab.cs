@@ -22,6 +22,21 @@ public partial class MainForm
     private Button _manualRunButton = new() { Text = "Manual Run", Width = 140, Height = 36 };
     private Button _manualRunStopButton = new() { Text = "Stop Manual Run", Width = 140, Height = 36, Enabled = false };
 
+    // "Previous Run" section - a read-only snapshot of the most recently completed
+    // run's parameters, so it's directly visible (not just documented) that
+    // whichever mode was actually used, its values are retained/recorded rather
+    // than lost. Refreshed by RefreshPreviousRunSection(), called every time
+    // RefreshHistoryList() runs (MainForm.HistoryTab.cs) - initial load, after
+    // starting/stopping a Manual Run, and on the result-poll timer.
+    private TextBox _prevRunMode = new() { ReadOnly = true, Enabled = false };
+    private TextBox _prevRunFrom = new() { ReadOnly = true, Enabled = false };
+    private TextBox _prevRunTo = new() { ReadOnly = true, Enabled = false };
+    private TextBox _prevRunStartInvoice = new() { ReadOnly = true, Enabled = false };
+    private TextBox _prevRunEndInvoice = new() { ReadOnly = true, Enabled = false };
+    private TextBox _prevRunMaxInvoices = new() { ReadOnly = true, Enabled = false };
+    private TextBox _prevRunFirstInvoiceProcessed = new() { ReadOnly = true, Enabled = false };
+    private TextBox _prevRunLastInvoiceProcessed = new() { ReadOnly = true, Enabled = false };
+
     private const string ManualRunHelpText =
         "Runs the sync ONE TIME, right now, in its own dedicated process - it does not write a file for something " +
         "else to notice, and it does not keep running afterward like the Automatic Service does. This is the " +
@@ -42,24 +57,30 @@ public partial class MainForm
         {
             "Continue (from where we left off)",
             "Last changed date",
-            "Invoice number range",
-            "Completed date range"
+            "Invoice number range"
         });
         _runMode.SelectedIndex = 0;
         _runMode.SelectedIndexChanged += (_, _) => UpdateRunModeFieldStates();
 
         AddRow(grid, "Mode", _runMode, "(request - not a settings file)", "SyncRequest.FilterType / UseWatermark",
             "Picks how invoices get selected for this one run:\n\n" +
-            "• Continue - automatically resumes from wherever the last run stopped (no dates/numbers to set).\n" +
+            "• Continue - automatically resumes from wherever the last run stopped. Every run, whatever mode it " +
+            "used, records two things when it finishes: PortPro's \"last changed\" timestamp of the newest invoice " +
+            "it saw (the watermark), and that invoice's reference number. The NEXT Continue run reads that saved " +
+            "watermark back, asks PortPro for everything changed since then up to now, processes it, and only then " +
+            "moves the watermark forward again - so as long as every run uses Continue, nothing is skipped and " +
+            "nothing is reprocessed. No dates/numbers to set. See the \"Previous Run\" section below to confirm " +
+            "what the last run actually recorded.\n" +
             "• Last changed date - invoices whose PortPro \"last updated\" time falls in the From/To window below.\n" +
-            "• Invoice number range - invoices whose reference number falls between Start/End invoice number below.\n" +
-            "• Completed date range - invoices whose load-completed date falls in the From/To window below.\n\n" +
-            "Every mode except Continue is a one-time override - it never changes the saved \"continue from\" position.");
+            "• Invoice number range - invoices whose reference number falls between Start/End invoice number below.\n\n" +
+            "Last changed date and Invoice number range are both one-time overrides - running them never reads or " +
+            "changes the saved Continue position, so the next Continue run behaves exactly as if the override run " +
+            "never happened.");
         AddRow(grid, "From", _runFrom, "(request)", "SyncRequest.From",
-            "Start of the date window - only used by Last changed date / Completed date range modes.\n\n" +
+            "Start of the date window - only used by Last changed date mode.\n\n" +
             "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.");
         AddRow(grid, "To", _runTo, "(request)", "SyncRequest.To",
-            "End of the date window - only used by Last changed date / Completed date range modes.\n\n" +
+            "End of the date window - only used by Last changed date mode.\n\n" +
             "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.");
         AddRow(grid, "Start invoice number", _runStartInvoice, "(request)", "SyncRequest.StartInvoiceNumber",
             "The lowest PortPro reference number to include - only used by Invoice number range mode. Leave blank " +
@@ -79,6 +100,8 @@ public partial class MainForm
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         grid.Controls.Add(new Label { Text = "Current write mode:", AutoSize = true, Margin = new Padding(3, 8, 3, 3) }, 0, dryRunRow);
         grid.Controls.Add(_runDryRunStatus, 1, dryRunRow);
+
+        BuildPreviousRunSection(grid);
 
         _manualRunButton.Click += (_, _) => StartManualRun();
         _manualRunStopButton.Click += (_, _) => StopManualRun();
@@ -120,10 +143,102 @@ public partial class MainForm
     private void UpdateRunModeFieldStates()
     {
         var mode = _runMode.SelectedIndex;
-        _runFrom.Enabled = mode == 1 || mode == 3;
-        _runTo.Enabled = mode == 1 || mode == 3;
+        _runFrom.Enabled = mode == 1;
+        _runTo.Enabled = mode == 1;
         _runStartInvoice.Enabled = mode == 2;
         _runEndInvoice.Enabled = mode == 2;
+    }
+
+    /// <summary>Adds the read-only "Previous Run" rows to the same grid as the run
+    /// parameters above, rather than a separately-docked panel - a TableLayoutPanel's
+    /// rows always render in row-index order, so this sidesteps WinForms' well-known
+    /// "last-docked-control-ends-up-on-top" ordering gotcha entirely.</summary>
+    private void BuildPreviousRunSection(TableLayoutPanel grid)
+    {
+        var headingRow = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var heading = new Label
+        {
+            Text = "Previous Run",
+            AutoSize = true,
+            Font = new Font(Font, FontStyle.Bold),
+            Margin = new Padding(3, 18, 3, 2)
+        };
+        grid.Controls.Add(heading, 0, headingRow);
+        grid.SetColumnSpan(heading, 3);
+
+        var subHeadingRow = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var subHeading = new Label
+        {
+            Text = "Read-only - the parameters and outcome of the most recently completed run (automatic or " +
+                   "manual), shown here so it's directly visible that they're retained rather than lost.",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(3, 0, 3, 8)
+        };
+        grid.Controls.Add(subHeading, 0, subHeadingRow);
+        grid.SetColumnSpan(subHeading, 3);
+
+        AddRow(grid, "Previous Run: Mode", _prevRunMode, "(history - most recent completed run)", "RunHistoryEntry.Request.FilterType / UseWatermark");
+        AddRow(grid, "Previous Run: From", _prevRunFrom, "(history)", "RunHistoryEntry.Request.From");
+        AddRow(grid, "Previous Run: To", _prevRunTo, "(history)", "RunHistoryEntry.Request.To");
+        AddRow(grid, "Previous Run: Start invoice number", _prevRunStartInvoice, "(history)", "RunHistoryEntry.Request.StartInvoiceNumber");
+        AddRow(grid, "Previous Run: End invoice number", _prevRunEndInvoice, "(history)", "RunHistoryEntry.Request.EndInvoiceNumber");
+        AddRow(grid, "Previous Run: Max invoices to process", _prevRunMaxInvoices, "(history)", "RunHistoryEntry.Request.MaxInvoicesToProcess");
+        AddRow(grid, "Previous Run: First Invoice Processed", _prevRunFirstInvoiceProcessed, "(history)", "Parsed from the run's log (TRANSFER lines)",
+            "The lowest-numbered invoice actually transferred to Sage 50 during the previous run - same data as the " +
+            "History tab's \"Invoice Transferred\" list, parsed from the log rather than result.json so this works " +
+            "for automatic-poll runs too (they never write a result.json).");
+        AddRow(grid, "Previous Run: Last Invoice Processed", _prevRunLastInvoiceProcessed, "(history)", "Parsed from the run's log (TRANSFER lines)",
+            "The highest-numbered invoice actually transferred to Sage 50 during the previous run.");
+    }
+
+    /// <summary>Called every time RefreshHistoryList() runs (MainForm.HistoryTab.cs) -
+    /// initial load, after starting/stopping a Manual Run, and on the result-poll
+    /// timer - so this section always reflects the actual most recent run, not a
+    /// stale snapshot from when the tab was built.</summary>
+    private void RefreshPreviousRunSection()
+    {
+        var entry = _historyEntries.FirstOrDefault(e => !e.IsPending && e.Result is not null);
+        if (entry?.Result is null)
+        {
+            _prevRunMode.Text = "(no completed run yet)";
+            _prevRunFrom.Text = "";
+            _prevRunTo.Text = "";
+            _prevRunStartInvoice.Text = "";
+            _prevRunEndInvoice.Text = "";
+            _prevRunMaxInvoices.Text = "";
+            _prevRunFirstInvoiceProcessed.Text = "";
+            _prevRunLastInvoiceProcessed.Text = "";
+            return;
+        }
+
+        var request = entry.Request;
+        _prevRunMode.Text = request is null
+            ? "(automatic poll - continue from where we left off)"
+            : request.UseWatermark ? "Continue (from where we left off)" : request.FilterType.ToString();
+        _prevRunFrom.Text = request?.From?.ToString("yyyy-MM-dd HH:mm") ?? "";
+        _prevRunTo.Text = request?.To?.ToString("yyyy-MM-dd HH:mm") ?? "";
+        _prevRunStartInvoice.Text = request?.StartInvoiceNumber ?? "";
+        _prevRunEndInvoice.Text = request?.EndInvoiceNumber ?? "";
+        _prevRunMaxInvoices.Text = request?.MaxInvoicesToProcess?.ToString() ?? "(no limit)";
+
+        // Parsed from the log, not entry.Result.Outcomes - Outcomes is empty for
+        // automatic-poll entries (ReconstructFromLogs only recovers the summary
+        // counts, not the per-invoice list), so parsing the log is the only way
+        // this works identically for every run source.
+        var logLines = string.IsNullOrWhiteSpace(_logFolder)
+            ? new List<string>()
+            : LogExtractorService.ExtractForWindow(_logFolder, entry.Result.StartedAtUtc, entry.Result.FinishedAtUtc);
+        var refs = LogExtractorService.ExtractTransferredInvoices(logLines)
+            .Select(r => r.PortProReference)
+            .Where(r => !string.IsNullOrEmpty(r))
+            .OrderBy(r => r, StringComparer.Ordinal)
+            .ToList();
+
+        _prevRunFirstInvoiceProcessed.Text = refs.Count > 0 ? refs[0] : "(none)";
+        _prevRunLastInvoiceProcessed.Text = refs.Count > 0 ? refs[^1] : "(none)";
     }
 
     /// <summary>Called after Sync tab (re)loads config - the Run/History tabs need the
@@ -161,11 +276,6 @@ public partial class MainForm
                 request.FilterType = FilterType.InvoiceNumberRange;
                 request.StartInvoiceNumber = string.IsNullOrWhiteSpace(_runStartInvoice.Text) ? null : _runStartInvoice.Text.Trim();
                 request.EndInvoiceNumber = string.IsNullOrWhiteSpace(_runEndInvoice.Text) ? null : _runEndInvoice.Text.Trim();
-                break;
-            case 3:
-                request.FilterType = FilterType.CompletedDateRange;
-                request.From = _runFrom.Value;
-                request.To = _runTo.Value;
                 break;
         }
 
