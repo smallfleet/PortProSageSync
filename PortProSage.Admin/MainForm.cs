@@ -162,7 +162,12 @@ public partial class MainForm : Form
     /// example - shown in a popup when the circular "?" icon next to the field is
     /// clicked. Pass "" to skip the icon (rare - only for rows where a separate
     /// explanation doesn't add anything, e.g. a pure status readout).</param>
-    private void AddRow(TableLayoutPanel grid, string labelText, Control input, string fileName, string jsonPath, string helpText = "")
+    /// <param name="stretchInput">False keeps the control at its own declared Width
+    /// (anchored Left only) instead of stretching to fill the column - for fields
+    /// whose content is inherently short (a date, an invoice number) where filling
+    /// the whole form width just looks disproportionate. Defaults true - most fields
+    /// (URLs, file paths, tokens) genuinely benefit from the extra width.</param>
+    private void AddRow(TableLayoutPanel grid, string labelText, Control input, string fileName, string jsonPath, string helpText = "", bool stretchInput = true)
     {
         var row = grid.RowCount++;
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -174,9 +179,13 @@ public partial class MainForm : Form
         // these (URLs, file paths, tokens). Numeric spinners and checkboxes
         // stay their natural compact size - stretching a NumericUpDown or
         // CheckBox wide doesn't help readability, just looks broken.
-        if (input is not (NumericUpDown or CheckBox))
+        if (stretchInput && input is not (NumericUpDown or CheckBox))
         {
             input.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        }
+        else
+        {
+            input.Anchor = AnchorStyles.Left;
         }
 
         grid.Controls.Add(label, 0, row);

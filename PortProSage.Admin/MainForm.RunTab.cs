@@ -15,8 +15,8 @@ public partial class MainForm
     private ComboBox _runMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
     private DateTimePicker _runFrom = new() { Width = 220 };
     private DateTimePicker _runTo = new() { Width = 220 };
-    private TextBox _runStartInvoice = new();
-    private TextBox _runEndInvoice = new();
+    private TextBox _runStartInvoice = new() { Width = 160 };
+    private TextBox _runEndInvoice = new() { Width = 160 };
     private NumericUpDown _runMaxInvoices = new() { Minimum = 0, Maximum = 100000, Width = 120 };
     private Label _runDryRunStatus = new() { AutoSize = true };
     private Button _manualRunButton = new() { Text = "Manual Run", Width = 140, Height = 36 };
@@ -72,22 +72,28 @@ public partial class MainForm
             "nothing is reprocessed. No dates/numbers to set. See the \"Previous Run\" section below to confirm " +
             "what the last run actually recorded.\n" +
             "• Last changed date - invoices whose PortPro \"last updated\" time falls in the From/To window below.\n" +
-            "• Invoice number range - invoices whose reference number falls between Start/End invoice number below.\n\n" +
+            "• Invoice number range - invoices whose reference number falls between Start/End invoice number below, " +
+            "with BOTH endpoints included (e.g. Start=90, End=95 processes 90, 91, 92, 93, 94, 95 - 6 invoices, not 5).\n\n" +
             "Last changed date and Invoice number range are both one-time overrides - running them never reads or " +
             "changes the saved Continue position, so the next Continue run behaves exactly as if the override run " +
             "never happened.");
         AddRow(grid, "From", _runFrom, "(request)", "SyncRequest.From",
             "Start of the date window - only used by Last changed date mode.\n\n" +
-            "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.");
+            "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.",
+            stretchInput: false);
         AddRow(grid, "To", _runTo, "(request)", "SyncRequest.To",
             "End of the date window - only used by Last changed date mode.\n\n" +
-            "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.");
+            "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.",
+            stretchInput: false);
         AddRow(grid, "Start invoice number", _runStartInvoice, "(request)", "SyncRequest.StartInvoiceNumber",
             "The lowest PortPro reference number to include - only used by Invoice number range mode. Leave blank " +
-            "for no lower bound.\n\nExample: RSRE_000102");
+            "for no lower bound.\n\nExample: RSRE_000102",
+            stretchInput: false);
         AddRow(grid, "End invoice number", _runEndInvoice, "(request)", "SyncRequest.EndInvoiceNumber",
             "The highest PortPro reference number to include - only used by Invoice number range mode. Leave blank " +
-            "for no upper bound.\n\nExample: RSRE_000102 to RSRE_000120 processes those 19 invoices (inclusive).");
+            "for no upper bound.\n\nExample: Start=90, End=95 processes 90, 91, 92, 93, 94, 95 - 6 invoices (both " +
+            "ends included).",
+            stretchInput: false);
         AddRow(grid, "Max invoices to process (0 = no limit)", _runMaxInvoices, "(request)", "SyncRequest.MaxInvoicesToProcess",
             "Caps how many eligible (amount > 0) invoices this run actually processes, on top of whatever Mode " +
             "selects - once this many have been handled, the run stops even if more would otherwise qualify. " +
@@ -257,23 +263,20 @@ public partial class MainForm
         RefreshHistoryList();
     }
 
-    /// <summary>Clears the run-parameter inputs back to defaults after a Manual Run
-    /// finishes or is stopped - the Previous Run section (read-only, below) already
-    /// shows exactly what that run used, so leaving the live inputs holding the same
-    /// stale values serves no purpose and is actively risky: the next run silently
-    /// reuses whatever was left over (see BuildRequestFromForm's case 1 comment for a
-    /// real example of this causing a run with a 15-millisecond date window). Resets
-    /// Mode to Continue specifically - the one mode with no dates/numbers to carry
-    /// forward at all.</summary>
+    /// <summary>Called after a Manual Run finishes or is stopped. Mode, From/To, and
+    /// Start/End invoice number are deliberately left exactly as they were - the
+    /// Previous Run section (read-only, below) already documents what that run used,
+    /// and retaining the live inputs too means re-running the same or a similar
+    /// range doesn't require re-entering everything. Only Max invoices to process
+    /// resets - it's a one-time safety cap, and silently carrying a small cap
+    /// forward into an unrelated later run is the one thing worth clearing
+    /// automatically. (The date-window footgun this used to guard against - see
+    /// BuildRequestFromForm's case 1 comment - is now closed at the source: "Last
+    /// changed date" mode always snaps to whole-day boundaries, so retained dates
+    /// can't collapse into a near-zero-width window.)</summary>
     private void ResetRunFormToDefaults()
     {
-        _runMode.SelectedIndex = 0;
-        _runFrom.Value = DateTime.Now.Date;
-        _runTo.Value = DateTime.Now.Date;
-        _runStartInvoice.Text = "";
-        _runEndInvoice.Text = "";
         _runMaxInvoices.Value = 0;
-        UpdateRunModeFieldStates();
     }
 
     private SyncRequest BuildRequestFromForm()
@@ -294,9 +297,10 @@ public partial class MainForm
                 // actually only milliseconds apart (their untouched construction-time
                 // default) - confirmed live 2026-08-07 this produced a real run with a
                 // 15-millisecond window and, unsurprisingly, 0 invoices fetched.
-                // Snapping to day boundaries makes the request match what's shown.
-                request.From = _runFrom.Value.Date;
-                request.To = _runTo.Value.Date.AddDays(1).AddTicks(-1);
+                // 00:00:01 to 23:59:59 (not midnight-to-midnight) so From is never equal
+                // to a boundary the previous day's To could also land on.
+                request.From = _runFrom.Value.Date.AddSeconds(1);
+                request.To = _runTo.Value.Date.AddDays(1).AddSeconds(-1);
                 break;
             case 2:
                 request.FilterType = FilterType.InvoiceNumberRange;
