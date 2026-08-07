@@ -257,6 +257,25 @@ public partial class MainForm
         RefreshHistoryList();
     }
 
+    /// <summary>Clears the run-parameter inputs back to defaults after a Manual Run
+    /// finishes or is stopped - the Previous Run section (read-only, below) already
+    /// shows exactly what that run used, so leaving the live inputs holding the same
+    /// stale values serves no purpose and is actively risky: the next run silently
+    /// reuses whatever was left over (see BuildRequestFromForm's case 1 comment for a
+    /// real example of this causing a run with a 15-millisecond date window). Resets
+    /// Mode to Continue specifically - the one mode with no dates/numbers to carry
+    /// forward at all.</summary>
+    private void ResetRunFormToDefaults()
+    {
+        _runMode.SelectedIndex = 0;
+        _runFrom.Value = DateTime.Now.Date;
+        _runTo.Value = DateTime.Now.Date;
+        _runStartInvoice.Text = "";
+        _runEndInvoice.Text = "";
+        _runMaxInvoices.Value = 0;
+        UpdateRunModeFieldStates();
+    }
+
     private SyncRequest BuildRequestFromForm()
     {
         var request = new SyncRequest { RequestedBy = Environment.UserName + " (Admin UI - Manual Run)" };
@@ -269,8 +288,15 @@ public partial class MainForm
                 break;
             case 1:
                 request.FilterType = FilterType.LastChangedDate;
-                request.From = _runFrom.Value;
-                request.To = _runTo.Value;
+                // Whole calendar days, not the picker's raw Value - the DateTimePicker
+                // only ever DISPLAYS a date (no time-of-day control), so "From: June 22,
+                // To: June 22" looks like a real window even when the two Values are
+                // actually only milliseconds apart (their untouched construction-time
+                // default) - confirmed live 2026-08-07 this produced a real run with a
+                // 15-millisecond window and, unsurprisingly, 0 invoices fetched.
+                // Snapping to day boundaries makes the request match what's shown.
+                request.From = _runFrom.Value.Date;
+                request.To = _runTo.Value.Date.AddDays(1).AddTicks(-1);
                 break;
             case 2:
                 request.FilterType = FilterType.InvoiceNumberRange;
@@ -398,6 +424,7 @@ public partial class MainForm
         _pendingRequestId = null;
         RefreshServiceStatus();
         RefreshHistoryList();
+        ResetRunFormToDefaults();
     }
 
     /// <summary>Called by RefreshServiceStatus() (MainForm.ServiceControl.cs) every time

@@ -217,6 +217,7 @@ public partial class MainForm
         {
             _pendingRequestId = null;
             _resultPollTimer.Stop();
+            ResetRunFormToDefaults();
         }
     }
 
