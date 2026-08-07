@@ -350,6 +350,33 @@ public partial class MainForm
         return string.Join(Environment.NewLine, lines);
     }
 
+    /// <summary>Catches a To-before-From or End-invoice-before-Start-invoice range
+    /// before it's ever written to a request file - both are silently "valid" as far
+    /// as PortProClient's filtering is concerned (an inverted window just matches
+    /// nothing), so without this check the run would simply fetch 0 invoices with no
+    /// indication why, the same confusing outcome as the earlier zero-width date bug.</summary>
+    private static bool ValidateRequestRanges(SyncRequest request, out string? error)
+    {
+        error = null;
+
+        if (request.From is not null && request.To is not null && request.From > request.To)
+        {
+            error = $"From ({request.From:yyyy-MM-dd HH:mm:ss}) is after To ({request.To:yyyy-MM-dd HH:mm:ss}) - " +
+                    "To must be on or after From.";
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(request.StartInvoiceNumber) && !string.IsNullOrEmpty(request.EndInvoiceNumber) &&
+            string.CompareOrdinal(request.EndInvoiceNumber, request.StartInvoiceNumber) < 0)
+        {
+            error = $"End invoice number ({request.EndInvoiceNumber}) is before Start invoice number " +
+                    $"({request.StartInvoiceNumber}) - End must be the same as or come after Start.";
+            return false;
+        }
+
+        return true;
+    }
+
     private void StartManualRun()
     {
         if (string.IsNullOrWhiteSpace(_manualRunFolder))
@@ -377,6 +404,13 @@ public partial class MainForm
         }
 
         var request = BuildRequestFromForm();
+
+        if (!ValidateRequestRanges(request, out var rangeError))
+        {
+            MessageBox.Show(this, rangeError, "Invalid range", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
         var requestPathPreview = Path.Combine(_manualRunFolder, $"{request.RequestId}.request.json");
 
         var confirm = MessageBox.Show(this, BuildManualRunConfirmationText(request, requestPathPreview),

@@ -127,6 +127,14 @@ public partial class MainForm
         _historyOutcomesGrid.Columns.Add("Success", "Success");
         _historyOutcomesGrid.Columns.Add("SageNumber", "Sage 50 #");
         _historyOutcomesGrid.Columns.Add("Messages", "Messages");
+
+        // Proportional widths (FillWeight, not pixels) - AutoSizeColumnsMode.Fill is
+        // already set on the grid itself (see field declaration above), so these sum
+        // to 100 and read directly as percentages of the available width.
+        _historyOutcomesGrid.Columns["Reference"].FillWeight = 20;
+        _historyOutcomesGrid.Columns["Success"].FillWeight = 20;
+        _historyOutcomesGrid.Columns["SageNumber"].FillWeight = 20;
+        _historyOutcomesGrid.Columns["Messages"].FillWeight = 40;
     }
 
     private void SetupTransferredGrid()
@@ -134,7 +142,7 @@ public partial class MainForm
         // Built from the run's full log (see LogExtractorService.ExtractTransferredInvoices),
         // not from result.json's Outcomes - the automatic poll never writes a result.json,
         // so the log is the only record that exists for those runs.
-        _historyTransferredGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
+        _historyTransferredGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
         _historyTransferredGrid.Columns.Add("PortProRef", "PortPro Invoice #");
         _historyTransferredGrid.Columns.Add("PortProDate", "PortPro Date");
         _historyTransferredGrid.Columns.Add("Sage50Number", "Sage 50 Invoice #");
@@ -142,15 +150,17 @@ public partial class MainForm
         _historyTransferredGrid.Columns.Add("TotalAmount", "Total Amount");
         _historyTransferredGrid.Columns.Add("TaxCharged", "Tax Charged");
 
-        _historyTransferredGrid.Columns["PortProDate"].Width = 100;
-        _historyTransferredGrid.Columns["Sage50Number"].Width = 120;
-        _historyTransferredGrid.Columns["Sage50Date"].Width = 100;
-        _historyTransferredGrid.Columns["TotalAmount"].Width = 100;
-        _historyTransferredGrid.Columns["TaxCharged"].Width = 100;
+        // Proportional widths (FillWeight, not pixels) - sums to 100, so these read
+        // directly as percentages of the available width.
+        _historyTransferredGrid.Columns["PortProRef"].FillWeight = 25;
+        _historyTransferredGrid.Columns["PortProDate"].FillWeight = 15;
+        _historyTransferredGrid.Columns["Sage50Number"].FillWeight = 25;
+        _historyTransferredGrid.Columns["Sage50Date"].FillWeight = 15;
+        _historyTransferredGrid.Columns["TotalAmount"].FillWeight = 10;
+        _historyTransferredGrid.Columns["TaxCharged"].FillWeight = 10;
+
         _historyTransferredGrid.Columns["TotalAmount"].DefaultCellStyle.Format = "N2";
         _historyTransferredGrid.Columns["TaxCharged"].DefaultCellStyle.Format = "N2";
-
-        _historyTransferredGrid.Columns["PortProRef"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
     }
 
     private void SelectHistoryTab()

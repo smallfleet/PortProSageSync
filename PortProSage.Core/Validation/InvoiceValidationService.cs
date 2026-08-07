@@ -133,12 +133,23 @@ public class InvoiceValidationService
 
             if (existingItem is not null)
             {
-                if (!string.IsNullOrWhiteSpace(existingItem.RevenueAccount))
+                // Trust the account already configured on the existing Sage 50 item ONLY
+                // if that account actually exists - it may have been set up deliberately
+                // (e.g. by hand in Sage 50), and re-deriving it from ChargeAccountMap/
+                // default here would silently discard that. But confirmed live 2026-08-07
+                // this blind trust was itself a bug: PREPULL/STORAGE/YARD STORAGE - LOADED
+                // were auto-created back when the (now-fixed) glCode-fallback bug was still
+                // live, so their EXISTING Sage 50 item record permanently carries the
+                // invalid glCode "4020" as its revenue account - every later run just kept
+                // trusting that stale, invalid value and failing validation forever, never
+                // reaching the ChargeAccountMap/Default fallback below. An existing item
+                // with a missing or invalid account is treated the same as no item at all -
+                // same priority as everywhere else: ChargeAccountMap > Default > Error.
+                var existingAccountValid = !string.IsNullOrWhiteSpace(existingItem.RevenueAccount)
+                    && await _sage50.AccountExistsAsync(existingItem.RevenueAccount, ct);
+
+                if (existingAccountValid)
                 {
-                    // Trust the account already configured on the existing Sage 50 item
-                    // over anything we'd otherwise resolve - it may have been set up
-                    // deliberately (e.g. by hand in Sage 50), and re-deriving it from
-                    // ChargeAccountMap/glCode/default here would silently discard that.
                     revenueAccount = existingItem.RevenueAccount!;
                 }
                 else if (!TryResolveAccountForCharge(line, out revenueAccount, out var resolveError))

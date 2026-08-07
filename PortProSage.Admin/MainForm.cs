@@ -42,12 +42,12 @@ public partial class MainForm : Form
         var topBar = BuildServiceFolderBar();
 
         _tabs = new TabControl { Dock = DockStyle.Fill };
+        _tabs.TabPages.Add(BuildRunTab()); // includes the Automatic/Manual run controls
+        _tabs.TabPages.Add(BuildResultsTab());
+        _tabs.TabPages.Add(BuildSyncTab());
         _tabs.TabPages.Add(BuildPortProTab());
         _tabs.TabPages.Add(BuildSage50Tab());
         _tabs.TabPages.Add(BuildEmailTab());
-        _tabs.TabPages.Add(BuildSyncTab());
-        _tabs.TabPages.Add(BuildRunTab()); // includes the Automatic/Manual run controls
-        _tabs.TabPages.Add(BuildResultsTab());
 
         Controls.Add(_tabs);
         Controls.Add(topBar);
