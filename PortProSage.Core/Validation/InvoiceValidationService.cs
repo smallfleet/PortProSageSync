@@ -152,7 +152,7 @@ public class InvoiceValidationService
                 {
                     revenueAccount = existingItem.RevenueAccount!;
                 }
-                else if (!TryResolveAccountForCharge(line, out revenueAccount, out var resolveError))
+                else if (!TryResolveAccountForCharge(invoice.ReferenceNumber, line, result, out revenueAccount, out var resolveError))
                 {
                     result.Errors.Add(resolveError!);
                     continue;
@@ -162,7 +162,7 @@ public class InvoiceValidationService
             }
             else if (_settings.AutoCreateItems)
             {
-                if (!TryResolveAccountForCharge(line, out revenueAccount, out var resolveError))
+                if (!TryResolveAccountForCharge(invoice.ReferenceNumber, line, result, out revenueAccount, out var resolveError))
                 {
                     result.Errors.Add(resolveError!);
                     continue;
@@ -212,7 +212,7 @@ public class InvoiceValidationService
     /// per the same rule, that's the one case that must stop the process rather
     /// than silently post to an undefined account.
     /// </summary>
-    private bool TryResolveAccountForCharge(PortProPricingLine line, out string account, out string? error)
+    private bool TryResolveAccountForCharge(string invoiceRef, PortProPricingLine line, ValidationResult result, out string account, out string? error)
     {
         error = null;
 
@@ -234,6 +234,19 @@ public class InvoiceValidationService
         }
 
         account = _settings.DefaultRevenueAccount;
+
+        // Flagged as a WARNING (not just a silent fallback) whenever a charge falls
+        // through to the default account, whether that's because it has no
+        // ChargeAccountMap entry at all or because its existing Sage 50 item carried
+        // an invalid account (see the PREPULL/STORAGE/YARD STORAGE - LOADED incident
+        // above) - visible per-invoice so a mapping gap is caught immediately rather
+        // than discovered later. Logged via _logger.LogWarning (not just added to
+        // result.Warnings) so it also lands in the searchable log file and shows up
+        // in the Admin app's Warnings/Validation tab, which filters on "[WRN]".
+        var warning = $"Revenue account '{line.GlCode ?? "(none)"}' in PortPro for charge '{line.Name}' was mapped " +
+                      $"to DEFAULT account '{account}' in Sage50.";
+        result.Warnings.Add(warning);
+        _logger.LogWarning("Invoice {Ref}: {Message}", invoiceRef, warning);
         return true;
     }
 
