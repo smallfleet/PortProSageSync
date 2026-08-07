@@ -98,6 +98,20 @@ public static class LogExtractorService
         return result;
     }
 
+    /// <summary>The timestamp of the last timestamped line in an already-extracted set
+    /// of log lines (see ExtractForWindow) - used as a stand-in "Finished" time for a
+    /// run that never got a result.json, since its own log activity is the only clue
+    /// left as to when it actually stopped doing anything.</summary>
+    public static DateTimeOffset? GetLastTimestamp(IEnumerable<string> lines)
+    {
+        DateTimeOffset? last = null;
+        foreach (var line in lines)
+        {
+            if (TryGetLineTimestamp(line, out var ts)) last = ts;
+        }
+        return last;
+    }
+
     /// <summary>File.ReadAllLines while the Service may still be writing to the same file.</summary>
     private static IEnumerable<string> ReadLinesSafely(string path)
     {

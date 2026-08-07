@@ -197,6 +197,44 @@ public partial class MainForm : Form
         WireSource(input, fileName, jsonPath);
     }
 
+    /// <summary>Like AddRow, but with an extra button (e.g. "Test Connection") next
+    /// to the field instead of stretching it full-width - built by hand rather than
+    /// routed through AddRow for the same reason as AddFolderRow (MainForm.SyncTab.cs):
+    /// wiring WireSource to a wrapper panel instead of the actual input control would
+    /// silently break "click to see source" for this field.</summary>
+    private void AddRowWithButton(TableLayoutPanel grid, string labelText, Control input, string fileName, string jsonPath,
+        string helpText, string buttonText, EventHandler onClick, int inputWidth = FieldHalfWidth)
+    {
+        var row = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var label = new Label { Text = labelText, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 8, 3, 3) };
+
+        input.Width = inputWidth;
+        input.Anchor = AnchorStyles.Left;
+        input.Margin = new Padding(3, 4, 3, 4);
+
+        var button = new Button { Text = buttonText, AutoSize = true, Height = 23, Margin = new Padding(6, 5, 3, 3) };
+        button.Click += onClick;
+
+        var wrap = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            AutoSize = true
+        };
+        wrap.Controls.Add(input);
+        wrap.Controls.Add(button);
+
+        grid.Controls.Add(label, 0, row);
+        grid.Controls.Add(wrap, 1, row);
+        if (!string.IsNullOrEmpty(helpText))
+        {
+            grid.Controls.Add(CreateHelpIcon(labelText.Replace("\n", " "), helpText), 2, row);
+        }
+        WireSource(input, fileName, jsonPath);
+    }
+
     // ---------------------------------------------------------------------
     // Per-field help: a small circular "?" badge next to each field that pops
     // up a plain-language explanation with a worked example on click.

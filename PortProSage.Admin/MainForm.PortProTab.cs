@@ -44,11 +44,13 @@ public partial class MainForm
         AddRow(grid, "Timeout (seconds)", _portProTimeoutSeconds, f, "PortProSage:PortPro:TimeoutSeconds",
             "How long to wait for PortPro to respond before giving up on a single request and treating it as failed.\n\n" +
             "Example: 60 means if PortPro takes longer than 60 seconds to answer one request, that request is abandoned.");
-        AddRow(grid, "Access token (secret)", _portProAccessToken, LocalSettingsFileName, "PortProSage:PortPro:AccessToken",
+        AddRowWithButton(grid, "Access token (secret)", _portProAccessToken, LocalSettingsFileName, "PortProSage:PortPro:AccessToken",
             "The current short-lived credential used to authenticate every PortPro API call. It's normally refreshed " +
             "automatically and re-saved here when it expires - you usually don't need to touch this by hand, except " +
-            "the very first time you set this install up (paste the value PortPro's integration screen gives you).",
-            stretchInput: false);
+            "the very first time you set this install up (paste the value PortPro's integration screen gives you).\n\n" +
+            "\"Test Connection\" attempts a real fetch (last 24 hours of changed invoices) using whatever is " +
+            "currently SAVED to appsettings.Local.json - Save PortPro settings first if you just changed something.",
+            "Test Connection", (_, _) => TestPortProConnection());
         AddRow(grid, "Refresh token (secret)", _portProRefreshToken, LocalSettingsFileName, "PortProSage:PortPro:RefreshToken",
             "The longer-lived credential used to obtain a brand new Access token once the old one expires - this is " +
             "what actually keeps the connection working long-term without you re-entering anything. Get the real " +

@@ -53,15 +53,27 @@ public partial class MainForm
 
         _runMode.Items.AddRange(new object[]
         {
+            "Invoice date",
             "Continue (from where we left off)",
             "Last changed date",
             "Invoice number range"
         });
+        // Invoice date is the default, not Continue - it filters by the invoice's own
+        // actual date (PortPro's billingDate), so a chosen window can never surprise
+        // you with an old invoice that Sage 50 then rejects for being dated before
+        // its "Do Not Allow Transactions Dated Before" cutoff. Last changed date
+        // filters by when PortPro last TOUCHED an invoice, which is a different
+        // thing entirely - confirmed live 2026-08-07 that a Last changed date run
+        // pulled in an old invoice merely because it had been recently edited, and
+        // Sage 50's date-cutoff rejection killed the whole run over it.
         _runMode.SelectedIndex = 0;
         _runMode.SelectedIndexChanged += (_, _) => UpdateRunModeFieldStates();
 
         AddRow(grid, "Mode", _runMode, "(request - not a settings file)", "SyncRequest.FilterType / UseWatermark",
             "Picks how invoices get selected for this one run:\n\n" +
+            "• Invoice date (default) - invoices whose own date (PortPro's billingDate) falls in the From/To " +
+            "window below. This is what you almost always want for a specific date range - it can't surprise you " +
+            "with an old invoice that was merely edited recently, unlike Last changed date below.\n" +
             "• Continue - automatically resumes from wherever the last run stopped. Every run, whatever mode it " +
             "used, records two things when it finishes: PortPro's \"last changed\" timestamp of the newest invoice " +
             "it saw (the watermark), and that invoice's reference number. The NEXT Continue run reads that saved " +
@@ -69,18 +81,21 @@ public partial class MainForm
             "moves the watermark forward again - so as long as every run uses Continue, nothing is skipped and " +
             "nothing is reprocessed. No dates/numbers to set. See the \"Previous Run\" section below to confirm " +
             "what the last run actually recorded.\n" +
-            "• Last changed date - invoices whose PortPro \"last updated\" time falls in the From/To window below.\n" +
+            "• Last changed date - invoices whose PortPro \"last updated\" time falls in the From/To window below - " +
+            "this can include an invoice dated well outside that window if it was simply edited/touched recently, " +
+            "which has caused a real run to fail (an old invoice pulled in this way got rejected by Sage 50 for " +
+            "being dated before its \"Do Not Allow Transactions Dated Before\" cutoff, killing the run). Prefer " +
+            "Invoice date above unless you specifically need \"what changed recently.\"\n" +
             "• Invoice number range - invoices whose reference number falls between Start/End invoice number below, " +
             "with BOTH endpoints included (e.g. Start=90, End=95 processes 90, 91, 92, 93, 94, 95 - 6 invoices, not 5).\n\n" +
-            "Last changed date and Invoice number range are both one-time overrides - running them never reads or " +
-            "changes the saved Continue position, so the next Continue run behaves exactly as if the override run " +
-            "never happened.");
+            "Every mode except Continue is a one-time override - it never reads or changes the saved Continue " +
+            "position, so the next Continue run behaves exactly as if the override run never happened.");
         AddRow(grid, "From", _runFrom, "(request)", "SyncRequest.From",
-            "Start of the date window - only used by Last changed date mode.\n\n" +
+            "Start of the date window - only used by Invoice date / Last changed date modes.\n\n" +
             "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.",
             stretchInput: false);
         AddRow(grid, "To", _runTo, "(request)", "SyncRequest.To",
-            "End of the date window - only used by Last changed date mode.\n\n" +
+            "End of the date window - only used by Invoice date / Last changed date modes.\n\n" +
             "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.",
             stretchInput: false);
         AddRow(grid, "Start invoice number", _runStartInvoice, "(request)", "SyncRequest.StartInvoiceNumber",
@@ -147,10 +162,10 @@ public partial class MainForm
     private void UpdateRunModeFieldStates()
     {
         var mode = _runMode.SelectedIndex;
-        _runFrom.Enabled = mode == 1;
-        _runTo.Enabled = mode == 1;
-        _runStartInvoice.Enabled = mode == 2;
-        _runEndInvoice.Enabled = mode == 2;
+        _runFrom.Enabled = mode == 0 || mode == 2; // Invoice date, Last changed date
+        _runTo.Enabled = mode == 0 || mode == 2;
+        _runStartInvoice.Enabled = mode == 3; // Invoice number range
+        _runEndInvoice.Enabled = mode == 3;
     }
 
     /// <summary>Adds the read-only "Previous Run" rows to the same grid as the run
@@ -295,10 +310,20 @@ public partial class MainForm
         switch (_runMode.SelectedIndex)
         {
             case 0:
+                // Invoice date - filters by PortPro's billingDate (the invoice's own
+                // date), via the billingFrom/billingTo query params (see
+                // PortProClient.BuildQueryString's FilterType.CompletedDateRange case -
+                // the name is historical/misleading, the actual param is billing-date-
+                // based, which IS the invoice's real date).
+                request.FilterType = FilterType.CompletedDateRange;
+                request.From = _runFrom.Value.Date.AddSeconds(1);
+                request.To = _runTo.Value.Date.AddDays(1).AddSeconds(-1);
+                break;
+            case 1:
                 request.FilterType = FilterType.LastChangedDate;
                 request.UseWatermark = true;
                 break;
-            case 1:
+            case 2:
                 request.FilterType = FilterType.LastChangedDate;
                 // Whole calendar days, not the picker's raw Value - the DateTimePicker
                 // only ever DISPLAYS a date (no time-of-day control), so "From: June 22,
@@ -311,7 +336,7 @@ public partial class MainForm
                 request.From = _runFrom.Value.Date.AddSeconds(1);
                 request.To = _runTo.Value.Date.AddDays(1).AddSeconds(-1);
                 break;
-            case 2:
+            case 3:
                 request.FilterType = FilterType.InvoiceNumberRange;
                 request.StartInvoiceNumber = string.IsNullOrWhiteSpace(_runStartInvoice.Text) ? null : _runStartInvoice.Text.Trim();
                 request.EndInvoiceNumber = string.IsNullOrWhiteSpace(_runEndInvoice.Text) ? null : _runEndInvoice.Text.Trim();

@@ -86,6 +86,16 @@ public partial class MainForm
 
     private void SetupHistoryGrid()
     {
+        // DataGridView doesn't expose DoubleBuffered publicly - this is the standard
+        // reflection workaround. Cuts down the visible redraw flicker every time
+        // RefreshHistoryList() clears and rebuilds every row (every 2 seconds while
+        // a Manual Run is actively being polled) - the real fix for that flicker was
+        // making the poll actually stop once there's nothing left to wait for (see
+        // ResultPollTimer_Tick), but this still helps for the genuinely-active window.
+        typeof(DataGridView).InvokeMember("DoubleBuffered",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.SetProperty,
+            null, _historyGrid, new object[] { true });
+
         // Explicit widths, not a uniform Fill across every column - only the
         // genuinely long string column (Request ID) should be wide; date columns
         // are sized to fit an actual date/time string, and count columns are
@@ -181,24 +191,75 @@ public partial class MainForm
         _historyGrid.Rows.Clear();
         RefreshPreviousRunSection();
 
-        foreach (var entry in _historyEntries)
+        // Which manual request (if any) a currently-live --run-once process actually
+        // belongs to - the only way to tell a pending manual entry that's genuinely
+        // still running apart from one whose process is already gone.
+        var (liveState, liveProcess) = GetServiceRunState();
+        var liveManualCommandLine = liveState == ServiceRunState.ManualRunning && liveProcess is not null
+            ? GetCommandLine(liveProcess.Id) ?? ""
+            : "";
+
+        for (var i = 0; i < _historyEntries.Count; i++)
         {
+            var entry = _historyEntries[i];
+
+            if (entry.IsManual && entry.IsPending)
+            {
+                entry.IsLiveProcess = liveManualCommandLine.Contains(entry.RequestId, StringComparison.OrdinalIgnoreCase);
+
+                // Tie up the loose end: the process that was supposed to handle this
+                // request is gone and never wrote a result.json (crashed, force-
+                // killed, or hit a fatal condition that terminates immediately - see
+                // Sage50Client.TerminateOnFatalWriteError). Pull the last thing it
+                // actually logged so there's still an end time and something to look
+                // at here, instead of "Running" forever with a blank Finished column.
+                if (!entry.IsLiveProcess && !string.IsNullOrWhiteSpace(_logFolder))
+                {
+                    var window = GetLogWindow(entry, i);
+                    if (window is not null)
+                    {
+                        var lines = LogExtractorService.ExtractForWindow(_logFolder, window.Value.Start, window.Value.End);
+                        entry.LastLogActivityUtc = LogExtractorService.GetLastTimestamp(lines);
+                    }
+                }
+            }
+
             var mode = entry.Request is not null
                 ? (entry.Request.UseWatermark ? "Continue" : entry.Request.FilterType.ToString())
                 : "(auto-poll)";
             var source = entry.ReconstructedFromLog ? "Automatic Service"
                 : entry.IsManual ? "Manual Run"
                 : "Trigger file";
-            var status = !entry.IsPending ? "Completed"
-                : entry.IsManual ? "Running"
-                : "Pending (queued)";
+
+            string status;
+            string finishedText;
+            if (!entry.IsPending)
+            {
+                status = "Completed";
+                finishedText = entry.Result?.FinishedAtUtc.ToLocalTime().ToString("g") ?? "";
+            }
+            else if (entry.IsManual && entry.IsLiveProcess)
+            {
+                status = "Running";
+                finishedText = "";
+            }
+            else if (entry.IsManual)
+            {
+                status = "Interrupted (no result)";
+                finishedText = entry.LastLogActivityUtc?.ToLocalTime().ToString("g") ?? "";
+            }
+            else
+            {
+                status = "Pending (queued)";
+                finishedText = "";
+            }
 
             var rowIndex = _historyGrid.Rows.Add(
                 entry.RequestId,
                 source,
                 mode,
                 entry.Result?.StartedAtUtc.ToLocalTime().ToString("g") ?? entry.Request?.RequestedAtUtc.ToLocalTime().ToString("g") ?? "",
-                entry.Result?.FinishedAtUtc.ToLocalTime().ToString("g") ?? "",
+                finishedText,
                 entry.Result?.InvoicesFetched.ToString() ?? "",
                 entry.Result?.InvoicesImported.ToString() ?? "",
                 entry.Result?.InvoicesSkippedAlreadyImported.ToString() ?? "",
@@ -217,18 +278,59 @@ public partial class MainForm
         }
     }
 
+    /// <summary>The log time-window for a history entry - Result's own
+    /// StartedAtUtc/FinishedAtUtc when we have them; otherwise the Request's
+    /// RequestedAtUtc as a start, and either "now" (a genuinely still-live process)
+    /// or the next chronological entry's start (the Worker's loop is single-
+    /// threaded, so nothing else could have logged in between) as the end. Null if
+    /// there isn't even a start to work with.</summary>
+    private (DateTimeOffset Start, DateTimeOffset End)? GetLogWindow(RunHistoryEntry entry, int index)
+    {
+        var start = entry.Result?.StartedAtUtc ?? entry.Request?.RequestedAtUtc;
+        if (start is null) return null;
+        if (entry.Result?.FinishedAtUtc is { } finished) return (start.Value, finished);
+        if (entry.IsLiveProcess) return (start.Value, DateTimeOffset.UtcNow);
+
+        var nextEntry = index > 0 ? _historyEntries[index - 1] : null;
+        var end = nextEntry?.Result?.StartedAtUtc ?? nextEntry?.Request?.RequestedAtUtc ?? DateTimeOffset.UtcNow;
+        return (start.Value, end);
+    }
+
     private void ResultPollTimer_Tick(object? sender, EventArgs e)
     {
         if (_pendingRequestId is null || _pendingProcessedFolder is null) { _resultPollTimer.Stop(); return; }
 
         var result = TriggerService.TryReadResult(_pendingProcessedFolder, _pendingRequestId);
-        RefreshHistoryList();
         if (result is not null)
         {
             _pendingRequestId = null;
             _resultPollTimer.Stop();
+            RefreshHistoryList();
             ResetRunFormToDefaults();
+            return;
         }
+
+        // Confirmed live 2026-08-07 this was the actual cause of constant History &
+        // Logs flicker (and a selected row's Summary flashing then disappearing): a
+        // run whose process died without ever writing a result.json (crashed, or hit
+        // TerminateOnFatalWriteError) left result permanently null forever, so this
+        // timer never stopped - it just kept calling RefreshHistoryList() (full grid
+        // rebuild, briefly deselecting the current row) every 2 seconds indefinitely,
+        // long after there was anything left to actually wait for. Stop as soon as
+        // the process we're tracking is confirmed gone, not just when we find a result.
+        var (state, process) = GetServiceRunState();
+        var stillTrackingThisRequest = state == ServiceRunState.ManualRunning && process is not null &&
+            (GetCommandLine(process.Id) ?? "").Contains(_pendingRequestId, StringComparison.OrdinalIgnoreCase);
+
+        if (!stillTrackingThisRequest)
+        {
+            _pendingRequestId = null;
+            _resultPollTimer.Stop();
+            RefreshHistoryList();
+            return;
+        }
+
+        RefreshHistoryList();
     }
 
     private void ShowSelectedHistoryEntry()
@@ -264,18 +366,11 @@ public partial class MainForm
         // but never got a result.json (crashed, or was killed before it could write
         // one) still has real log lines sitting in the Service's log file explaining
         // what happened, and that's exactly the case where seeing them matters most.
-        // Window end: the result's own FinishedAtUtc if we have one, otherwise the
-        // start of whatever run came right after it (the Worker's loop is single-
-        // threaded, so nothing else could have logged in between), otherwise now.
-        var windowStart = entry.Result?.StartedAtUtc ?? entry.Request?.RequestedAtUtc;
-        if (windowStart is not null && !string.IsNullOrWhiteSpace(_logFolder))
+        var selectedIndex = _historyGrid.SelectedRows[0].Index;
+        var window = GetLogWindow(entry, selectedIndex);
+        if (window is not null && !string.IsNullOrWhiteSpace(_logFolder))
         {
-            var selectedIndex = _historyGrid.SelectedRows[0].Index;
-            var nextEntry = selectedIndex > 0 ? _historyEntries[selectedIndex - 1] : null;
-            var windowEnd = entry.Result?.FinishedAtUtc
-                ?? (nextEntry?.Result?.StartedAtUtc ?? nextEntry?.Request?.RequestedAtUtc)
-                ?? DateTimeOffset.UtcNow;
-            _selectedRunLogLines = LogExtractorService.ExtractForWindow(_logFolder, windowStart.Value, windowEnd);
+            _selectedRunLogLines = LogExtractorService.ExtractForWindow(_logFolder, window.Value.Start, window.Value.End);
         }
 
         // Warnings/Validation and Failed Transactions are both filtered views of
@@ -308,6 +403,7 @@ public partial class MainForm
         {
             $"Request ID: {entry.RequestId}",
             entry.ReconstructedFromLog ? "Source: Automatic poll (reconstructed from the log - no request/result file exists for auto-poll runs)" :
+                entry.IsManual && entry.IsPending && !entry.IsLiveProcess ? "Source: Manual trigger - the process handling it is no longer running (see below)" :
                 entry.IsPending ? "Source: Manual trigger - still pending, not processed yet" : "Source: Manual trigger",
         };
 
@@ -327,10 +423,20 @@ public partial class MainForm
         {
             lines.Add("");
             lines.Add($"Started: {entry.Request.RequestedAtUtc.ToLocalTime():G}");
-            lines.Add("No result was ever recorded for this run - either it's still in progress, or the process " +
-                       "was interrupted/crashed before it could write one (e.g. force-stopped, or the machine/Sage " +
-                       "50 connection dropped mid-run). Check the Full log / Failed Transactions tabs below - the " +
-                       "Service's log file still has whatever it managed to log before that point.");
+
+            if (entry.IsManual && entry.IsLiveProcess)
+            {
+                lines.Add("Still running - no result yet.");
+            }
+            else
+            {
+                lines.Add($"Last log activity: {entry.LastLogActivityUtc?.ToLocalTime().ToString("G") ?? "(none found)"}");
+                lines.Add("No result was ever recorded for this run - the process that was handling it is no " +
+                           "longer running (crashed, was force-stopped, or hit a fatal condition that terminates " +
+                           "the process immediately - see Sage50Client.TerminateOnFatalWriteError, which does " +
+                           "exactly this on an unrecoverable Sage 50 write error). Check the Full log / Failed " +
+                           "Transactions tabs below for exactly what it logged before stopping.");
+            }
         }
 
         if (entry.Result is not null)

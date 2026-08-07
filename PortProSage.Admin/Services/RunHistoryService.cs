@@ -22,6 +22,21 @@ public class RunHistoryEntry
     /// only manual/file-triggered runs go through TriggerFileManager.Archive).</summary>
     public bool ReconstructedFromLog { get; set; }
 
+    /// <summary>Set by MainForm.RefreshHistoryList (WMI-based, needs live process
+    /// state - not something this static service can determine on its own) for a
+    /// pending manual entry whose *.request.json command line matches a currently-
+    /// running PortProSage.Service.exe --run-once process. False for a pending entry
+    /// means the process that was supposed to handle it is gone without ever writing
+    /// a result - crashed, was force-killed, or hit a fatal condition like
+    /// Sage50Client.TerminateOnFatalWriteError's Environment.Exit.</summary>
+    public bool IsLiveProcess { get; set; }
+
+    /// <summary>Set by MainForm.RefreshHistoryList for a pending, non-live manual
+    /// entry - the timestamp of the last log line found in this entry's window, used
+    /// as a stand-in "Finished" time when no result.json exists to supply a real one.
+    /// Null until computed; also null if the log has nothing for this window.</summary>
+    public DateTimeOffset? LastLogActivityUtc { get; set; }
+
     public DateTimeOffset SortKey => Result?.FinishedAtUtc ?? Request?.RequestedAtUtc ?? DateTimeOffset.MinValue;
 }
 

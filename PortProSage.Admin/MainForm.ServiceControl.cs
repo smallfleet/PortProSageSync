@@ -245,4 +245,89 @@ public partial class MainForm
             // nothing more to do here.
         }
     }
+
+    private void TestSage50Connection() => RunConnectionTest("sage50", "Sage 50 connection test");
+
+    private void TestPortProConnection() => RunConnectionTest("portpro", "PortPro connection test");
+
+    /// <summary>Runs PortProSage.Service.exe --diagnose &lt;mode&gt; (already existed for
+    /// staged command-line testing - see Diagnostics.cs) and shows its console output
+    /// in a dialog. Reuses that existing diagnostic rather than adding a new one:
+    /// it already does exactly "connect and report success/failure", using whatever
+    /// is currently saved in appsettings.json/.Local.json - the same file-based
+    /// contract every other feature on this screen follows (this button tests what's
+    /// SAVED, not unsaved edits still sitting in the fields - save first if you just
+    /// changed something).</summary>
+    private void RunConnectionTest(string diagnoseMode, string title)
+    {
+        if (!File.Exists(ServiceExePath))
+        {
+            MessageBox.Show(this, $"Could not find PortProSage.Service.exe in:\n{_serviceFolderBox.Text}", "Not found",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var (state, _) = GetServiceRunState();
+        if (state != ServiceRunState.NotRunning)
+        {
+            MessageBox.Show(this,
+                "Something is already running (automatic or manual) - a connection test would try to open Sage 50 " +
+                "under the same account at the same time, which Sage 50 rejects as a second simultaneous session. " +
+                "Stop it first.",
+                "Already running", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        Cursor = Cursors.WaitCursor;
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = ServiceExePath,
+                Arguments = $"--diagnose {diagnoseMode}",
+                WorkingDirectory = _serviceFolderBox.Text,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            });
+
+            if (process is null)
+            {
+                MessageBox.Show(this, "Could not start the test process.", title, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+
+            // Sage 50's OpenDatabase alone can take several seconds - 45s covers
+            // that comfortably without leaving the operator staring at a frozen
+            // window indefinitely if something really is stuck.
+            if (!process.WaitForExit(45000))
+            {
+                try { process.Kill(); } catch { /* best effort */ }
+                MessageBox.Show(this,
+                    "The test didn't finish within 45 seconds and was stopped. This can happen if Sage 50 is " +
+                    "waiting on a confirmation dialog, or the connection is just unusually slow - check the " +
+                    "History & Logs tab's Full log for whatever it managed to do before being stopped.",
+                    title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var output = (stdoutTask.Result + stderrTask.Result).Trim();
+            var succeeded = process.ExitCode == 0;
+            MessageBox.Show(this,
+                $"{(succeeded ? "SUCCESS" : "FAILED")}\n\n{(string.IsNullOrWhiteSpace(output) ? "(no output captured)" : output)}",
+                title, MessageBoxButtons.OK, succeeded ? MessageBoxIcon.Information : MessageBoxIcon.Error);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Could not run the test:\n{ex.Message}", title, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+        }
+    }
 }
