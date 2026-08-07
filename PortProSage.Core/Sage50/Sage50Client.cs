@@ -110,9 +110,21 @@ public class Sage50Client : ISage50Client
 
         if (!opened)
         {
+            // Confirmed live 2026-08-07 the original one-line message here ("OpenDatabase
+            // returned false...") wasn't actionable for a non-developer reading the log -
+            // it names the settings to check but not what's actually likely wrong or what
+            // to do about it. Spell out the real, ranked causes instead.
             throw new InvalidOperationException(
-                "Sage 50 OpenDatabase returned false. Verify CompanyDataPath, UserName, Password, and that no " +
-                "other exclusive-mode session is blocking access to the company file.");
+                $"Could not open the Sage 50 company file '{_settings.CompanyDataPath}' as user " +
+                $"'{_settings.UserName}'. This almost always means one of:\n" +
+                $"  1. Sage 50 is already open on this computer under the SAME username ('{_settings.UserName}') " +
+                "- Sage 50 refuses a second simultaneous session under one username. Close that session, or " +
+                "(recommended) configure a separate, dedicated Sage 50 user account for this service in the " +
+                "Admin app's Sage 50 tab so a human can stay signed in under their own account at the same time.\n" +
+                "  2. The company data path, username, or password configured in the Admin app's Sage 50 tab is " +
+                "wrong - try opening the company file by hand in Sage 50 with the same username/password to " +
+                "confirm they work.\n" +
+                "  3. Sage 50 itself isn't installed, licensed, or activated on this computer.");
         }
 
         _connected = true;

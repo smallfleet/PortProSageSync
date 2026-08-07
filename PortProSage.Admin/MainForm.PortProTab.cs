@@ -2,12 +2,12 @@ namespace PortProSage.Admin;
 
 public partial class MainForm
 {
-    private TextBox _portProBaseUrl = new();
-    private TextBox _portProInvoiceEndpoint = new();
-    private TextBox _portProAccessTokenEndpoint = new();
-    private TextBox _portProNewTokenEndpoint = new();
-    private TextBox _portProAccessToken = new() { UseSystemPasswordChar = true };
-    private TextBox _portProRefreshToken = new() { UseSystemPasswordChar = true };
+    private TextBox _portProBaseUrl = new() { Width = FieldHalfWidth };
+    private TextBox _portProInvoiceEndpoint = new() { Width = FieldHalfWidth };
+    private TextBox _portProAccessTokenEndpoint = new() { Width = FieldHalfWidth };
+    private TextBox _portProNewTokenEndpoint = new() { Width = FieldHalfWidth };
+    private TextBox _portProAccessToken = new() { UseSystemPasswordChar = true, Width = FieldHalfWidth };
+    private TextBox _portProRefreshToken = new() { UseSystemPasswordChar = true, Width = FieldHalfWidth };
     private NumericUpDown _portProPageSize = new() { Minimum = 1, Maximum = 1000 };
     private NumericUpDown _portProTimeoutSeconds = new() { Minimum = 1, Maximum = 600 };
 
@@ -20,19 +20,23 @@ public partial class MainForm
         AddRow(grid, "Base URL", _portProBaseUrl, f, "PortProSage:PortPro:BaseUrl",
             "The root web address of PortPro's API - every other PortPro call is built by adding a path onto this.\n\n" +
             "Example: https://api1.app.portpro.io/v1\n\n" +
-            "You'd only ever change this if PortPro moved their API to a different address.");
+            "You'd only ever change this if PortPro moved their API to a different address.",
+            stretchInput: false);
         AddRow(grid, "Invoice endpoint", _portProInvoiceEndpoint, f, "PortProSage:PortPro:InvoiceEndpoint",
             "The path (added onto Base URL) used to fetch invoices from PortPro.\n\n" +
             "Example: /invoices\n" +
             "Combined with Base URL this becomes: https://api1.app.portpro.io/v1/invoices\n\n" +
-            "This is where every sync run actually pulls invoice data from.");
+            "This is where every sync run actually pulls invoice data from.",
+            stretchInput: false);
         AddRow(grid, "Access token endpoint", _portProAccessTokenEndpoint, f, "PortProSage:PortPro:AccessTokenEndpoint",
             "The path used for the standard OAuth-style access token exchange. Reference/legacy field - " +
-            "this account's real login flow uses 'New token endpoint' below instead.\n\nExample: /token");
+            "this account's real login flow uses 'New token endpoint' below instead.\n\nExample: /token",
+            stretchInput: false);
         AddRow(grid, "New token endpoint", _portProNewTokenEndpoint, f, "PortProSage:PortPro:NewTokenEndpoint",
             "The path actually used to get a fresh access token from PortPro, using the Refresh token (secret) below as " +
             "authorization. Called automatically whenever the current access token expires or is rejected - you never " +
-            "trigger this by hand.\n\nExample: /generate-new-token");
+            "trigger this by hand.\n\nExample: /generate-new-token",
+            stretchInput: false);
         AddRow(grid, "Page size", _portProPageSize, f, "PortProSage:PortPro:PageSize",
             "How many invoices PortPro returns per page when fetching a list. The sync process automatically pages " +
             "through everything - this just controls the chunk size of each request.\n\n" +
@@ -43,11 +47,13 @@ public partial class MainForm
         AddRow(grid, "Access token (secret)", _portProAccessToken, LocalSettingsFileName, "PortProSage:PortPro:AccessToken",
             "The current short-lived credential used to authenticate every PortPro API call. It's normally refreshed " +
             "automatically and re-saved here when it expires - you usually don't need to touch this by hand, except " +
-            "the very first time you set this install up (paste the value PortPro's integration screen gives you).");
+            "the very first time you set this install up (paste the value PortPro's integration screen gives you).",
+            stretchInput: false);
         AddRow(grid, "Refresh token (secret)", _portProRefreshToken, LocalSettingsFileName, "PortProSage:PortPro:RefreshToken",
             "The longer-lived credential used to obtain a brand new Access token once the old one expires - this is " +
             "what actually keeps the connection working long-term without you re-entering anything. Get the real " +
-            "value from PortPro's own integration/API settings screen.");
+            "value from PortPro's own integration/API settings screen.",
+            stretchInput: false);
 
         var save = new Button { Text = "Save PortPro settings", Dock = DockStyle.Bottom, Height = 32 };
         save.Click += (_, _) => SavePortProTab();

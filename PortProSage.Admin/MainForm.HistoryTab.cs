@@ -258,11 +258,24 @@ public partial class MainForm
                     outcome.Sage50InvoiceNumber ?? "",
                     string.Join(" | ", outcome.Messages));
             }
+        }
 
-            if (!string.IsNullOrWhiteSpace(_logFolder))
-            {
-                _selectedRunLogLines = LogExtractorService.ExtractForWindow(_logFolder, entry.Result.StartedAtUtc, entry.Result.FinishedAtUtc);
-            }
+        // Extracted regardless of whether entry.Result exists - a run that started
+        // but never got a result.json (crashed, or was killed before it could write
+        // one) still has real log lines sitting in the Service's log file explaining
+        // what happened, and that's exactly the case where seeing them matters most.
+        // Window end: the result's own FinishedAtUtc if we have one, otherwise the
+        // start of whatever run came right after it (the Worker's loop is single-
+        // threaded, so nothing else could have logged in between), otherwise now.
+        var windowStart = entry.Result?.StartedAtUtc ?? entry.Request?.RequestedAtUtc;
+        if (windowStart is not null && !string.IsNullOrWhiteSpace(_logFolder))
+        {
+            var selectedIndex = _historyGrid.SelectedRows[0].Index;
+            var nextEntry = selectedIndex > 0 ? _historyEntries[selectedIndex - 1] : null;
+            var windowEnd = entry.Result?.FinishedAtUtc
+                ?? (nextEntry?.Result?.StartedAtUtc ?? nextEntry?.Request?.RequestedAtUtc)
+                ?? DateTimeOffset.UtcNow;
+            _selectedRunLogLines = LogExtractorService.ExtractForWindow(_logFolder, windowStart.Value, windowEnd);
         }
 
         // Warnings/Validation and Failed Transactions are both filtered views of
@@ -308,6 +321,16 @@ public partial class MainForm
                 lines.Add($"Start invoice: {entry.Request.StartInvoiceNumber}   End invoice: {entry.Request.EndInvoiceNumber}");
             if (entry.Request.MaxInvoicesToProcess is not null)
                 lines.Add($"Max invoices to process: {entry.Request.MaxInvoicesToProcess}");
+        }
+
+        if (entry.Result is null && entry.Request is not null)
+        {
+            lines.Add("");
+            lines.Add($"Started: {entry.Request.RequestedAtUtc.ToLocalTime():G}");
+            lines.Add("No result was ever recorded for this run - either it's still in progress, or the process " +
+                       "was interrupted/crashed before it could write one (e.g. force-stopped, or the machine/Sage " +
+                       "50 connection dropped mid-run). Check the Full log / Failed Transactions tabs below - the " +
+                       "Service's log file still has whatever it managed to log before that point.");
         }
 
         if (entry.Result is not null)

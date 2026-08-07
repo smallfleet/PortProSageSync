@@ -34,21 +34,21 @@ public partial class MainForm
         var page = new TabPage("Sage 50");
         var grid = NewFieldGrid();
         const string f = AppSettingsFileName;
+        AddRow(grid, "App name", _sage50AppName, f, "PortProSage:Sage50:AppName",
+            "The friendly application name the Sage 50 SDK asks for when a third-party app registers itself before " +
+            "opening a company file. Shows up inside Sage 50 as the name of the connecting application.\n\n" +
+            "Example: PortPro Sage 50 Connector");
         AddRow(grid, "Company data path (secret)", _sage50CompanyDataPath, LocalSettingsFileName, "PortProSage:Sage50:CompanyDataPath",
             "The full file path to the Sage 50 company file (.SAI) this integration reads from and writes invoices to.\n\n" +
             "Example: C:\\simplyData\\RS RUSH TRANSFER XPRESS INC-2026.sai\n\n" +
             "This must point at a real, existing company file on this server - the Service opens exactly this file " +
             "every time it connects to Sage 50.");
-        AddRow(grid, "Username (secret)", _sage50UserName, LocalSettingsFileName, "PortProSage:Sage50:UserName",
+        AddRow(grid, "Sage50 User Name (secret)", _sage50UserName, LocalSettingsFileName, "PortProSage:Sage50:UserName",
             "The Sage 50 login the Service uses to open the company file. Must be a dedicated account, never the " +
             "same one a human logs into Sage 50 with interactively - Sage 50 rejects two simultaneous sessions " +
             "under the same username, even in multi-user mode.\n\nExample: PortProConnect");
-        AddRow(grid, "Password (secret)", _sage50Password, LocalSettingsFileName, "PortProSage:Sage50:Password",
+        AddRow(grid, "Sage50 Password (secret)", _sage50Password, LocalSettingsFileName, "PortProSage:Sage50:Password",
             "The password for the Sage 50 username above.");
-        AddRow(grid, "App name", _sage50AppName, f, "PortProSage:Sage50:AppName",
-            "The friendly application name the Sage 50 SDK asks for when a third-party app registers itself before " +
-            "opening a company file. Shows up inside Sage 50 as the name of the connecting application.\n\n" +
-            "Example: PortPro Sage 50 Connector");
         AddRow(grid, "App ID (max 6 chars)", _sage50AppId, f, "PortProSage:Sage50:AppId",
             "A short code (max 6 characters) identifying this application to the Sage 50 SDK - required alongside " +
             "App name to register before opening a company file.\n\nExample: PPS50");
