@@ -28,14 +28,12 @@ public partial class MainForm
     // than lost. Refreshed by RefreshPreviousRunSection(), called every time
     // RefreshHistoryList() runs (MainForm.HistoryTab.cs) - initial load, after
     // starting/stopping a Manual Run, and on the result-poll timer.
-    private TextBox _prevRunMode = new() { ReadOnly = true, Enabled = false };
-    private TextBox _prevRunFrom = new() { ReadOnly = true, Enabled = false };
-    private TextBox _prevRunTo = new() { ReadOnly = true, Enabled = false };
-    private TextBox _prevRunStartInvoice = new() { ReadOnly = true, Enabled = false };
-    private TextBox _prevRunEndInvoice = new() { ReadOnly = true, Enabled = false };
-    private TextBox _prevRunMaxInvoices = new() { ReadOnly = true, Enabled = false };
-    private TextBox _prevRunFirstInvoiceProcessed = new() { ReadOnly = true, Enabled = false };
-    private TextBox _prevRunLastInvoiceProcessed = new() { ReadOnly = true, Enabled = false };
+    private TextBox _prevRunMode = new() { ReadOnly = true, Enabled = false, Width = 400 };
+    private TextBox _prevRunFrom = new() { ReadOnly = true, Enabled = false, Width = 220 };
+    private TextBox _prevRunTo = new() { ReadOnly = true, Enabled = false, Width = 220 };
+    private TextBox _prevRunMaxInvoices = new() { ReadOnly = true, Enabled = false, Width = 400 };
+    private TextBox _prevRunFirstInvoiceProcessed = new() { ReadOnly = true, Enabled = false, Width = 400 };
+    private TextBox _prevRunLastInvoiceProcessed = new() { ReadOnly = true, Enabled = false, Width = 400 };
 
     private const string ManualRunHelpText =
         "Runs the sync ONE TIME, right now, in its own dedicated process - it does not write a file for something " +
@@ -186,18 +184,28 @@ public partial class MainForm
         grid.Controls.Add(subHeading, 0, subHeadingRow);
         grid.SetColumnSpan(subHeading, 3);
 
-        AddRow(grid, "Previous Run: Mode", _prevRunMode, "(history - most recent completed run)", "RunHistoryEntry.Request.FilterType / UseWatermark");
-        AddRow(grid, "Previous Run: From", _prevRunFrom, "(history)", "RunHistoryEntry.Request.From");
-        AddRow(grid, "Previous Run: To", _prevRunTo, "(history)", "RunHistoryEntry.Request.To");
-        AddRow(grid, "Previous Run: Start invoice number", _prevRunStartInvoice, "(history)", "RunHistoryEntry.Request.StartInvoiceNumber");
-        AddRow(grid, "Previous Run: End invoice number", _prevRunEndInvoice, "(history)", "RunHistoryEntry.Request.EndInvoiceNumber");
-        AddRow(grid, "Previous Run: Max invoices to process", _prevRunMaxInvoices, "(history)", "RunHistoryEntry.Request.MaxInvoicesToProcess");
+        AddRow(grid, "Previous Run: Mode", _prevRunMode, "(history - most recent completed run)", "RunHistoryEntry.Request.FilterType / UseWatermark",
+            stretchInput: false);
+        AddRow(grid, "Previous Run: From", _prevRunFrom, "(history)", "RunHistoryEntry.Result.WatermarkBeforeRun",
+            "The persisted date watermark BEFORE this run started - not the request's own From (which is often " +
+            "blank for Invoice number range or Continue mode, where a date window was never part of the request in " +
+            "the first place). Together with To, shows how far the \"continue from where we left off\" position " +
+            "actually moved.",
+            stretchInput: false);
+        AddRow(grid, "Previous Run: To", _prevRunTo, "(history)", "RunHistoryEntry.Result.WatermarkAfterRun",
+            "The persisted date watermark AFTER this run finished - equal to From if the run didn't advance it (an " +
+            "explicit-range or invoice-number run leaves it untouched by design).",
+            stretchInput: false);
+        AddRow(grid, "Previous Run: Max invoices to process", _prevRunMaxInvoices, "(history)", "RunHistoryEntry.Request.MaxInvoicesToProcess",
+            stretchInput: false);
         AddRow(grid, "Previous Run: First Invoice Processed", _prevRunFirstInvoiceProcessed, "(history)", "Parsed from the run's log (TRANSFER lines)",
             "The lowest-numbered invoice actually transferred to Sage 50 during the previous run - same data as the " +
             "History tab's \"Invoice Transferred\" list, parsed from the log rather than result.json so this works " +
-            "for automatic-poll runs too (they never write a result.json).");
+            "for automatic-poll runs too (they never write a result.json).",
+            stretchInput: false);
         AddRow(grid, "Previous Run: Last Invoice Processed", _prevRunLastInvoiceProcessed, "(history)", "Parsed from the run's log (TRANSFER lines)",
-            "The highest-numbered invoice actually transferred to Sage 50 during the previous run.");
+            "The highest-numbered invoice actually transferred to Sage 50 during the previous run.",
+            stretchInput: false);
     }
 
     /// <summary>Called every time RefreshHistoryList() runs (MainForm.HistoryTab.cs) -
@@ -212,8 +220,6 @@ public partial class MainForm
             _prevRunMode.Text = "(no completed run yet)";
             _prevRunFrom.Text = "";
             _prevRunTo.Text = "";
-            _prevRunStartInvoice.Text = "";
-            _prevRunEndInvoice.Text = "";
             _prevRunMaxInvoices.Text = "";
             _prevRunFirstInvoiceProcessed.Text = "";
             _prevRunLastInvoiceProcessed.Text = "";
@@ -224,10 +230,13 @@ public partial class MainForm
         _prevRunMode.Text = request is null
             ? "(automatic poll - continue from where we left off)"
             : request.UseWatermark ? "Continue (from where we left off)" : request.FilterType.ToString();
-        _prevRunFrom.Text = request?.From?.ToString("yyyy-MM-dd HH:mm") ?? "";
-        _prevRunTo.Text = request?.To?.ToString("yyyy-MM-dd HH:mm") ?? "";
-        _prevRunStartInvoice.Text = request?.StartInvoiceNumber ?? "";
-        _prevRunEndInvoice.Text = request?.EndInvoiceNumber ?? "";
+        // The persisted date watermark, not request.From/To - the request's own dates
+        // are blank for Invoice number range or Continue mode, so showing them left
+        // From/To empty for exactly the runs shown in the screenshot that prompted
+        // this. The watermark is always populated and reflects the actual date of
+        // the last-processed invoice, which is what "From/To" is meant to convey here.
+        _prevRunFrom.Text = entry.Result.WatermarkBeforeRun?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "(none yet)";
+        _prevRunTo.Text = entry.Result.WatermarkAfterRun?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "(none yet)";
         _prevRunMaxInvoices.Text = request?.MaxInvoicesToProcess?.ToString() ?? "(no limit)";
 
         // Parsed from the log, not entry.Result.Outcomes - Outcomes is empty for
