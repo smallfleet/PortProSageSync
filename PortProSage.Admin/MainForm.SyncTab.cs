@@ -76,6 +76,9 @@ public partial class MainForm
             "get.\n\n" +
             "Example: 60 keeps the most recent 60 days of logs; anything older is deleted the next time any sync " +
             "runs (not on a fixed schedule of its own).");
+        AddCheckRow(grid, _syncShowCommandWindow, f, "PortProSage:Sync:ShowCommandWindow", ShowCommandWindowHelpText);
+        WireShowCommandWindowControl(_syncShowCommandWindow);
+        RefreshAllTabsFromConfig += RefreshShowCommandWindowControls;
 
         var save = new Button { Text = "Save Automatic Sync settings", Dock = DockStyle.Bottom, Height = 32 };
         save.Click += (_, _) => SaveSyncTab();

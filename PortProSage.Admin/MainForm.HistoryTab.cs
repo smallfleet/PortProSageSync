@@ -243,11 +243,12 @@ public partial class MainForm
                     : i == 0 && liveState == ServiceRunState.AutomaticRunning;
 
                 // Tie up the loose end: the process that was supposed to handle this
-                // request is gone without ever writing a result. Pull the last thing
-                // it actually logged so there's still an end time and something to
-                // look at here, instead of "Running" forever with a blank Finished
-                // column.
-                if (!entry.IsLiveProcess && !string.IsNullOrWhiteSpace(_logFolder))
+                // request is gone without ever writing a result (not even a
+                // checkpoint - see the IsFinal-carrying branch above for when one
+                // exists). Pull the last thing it actually logged so there's still
+                // an end time and something to look at here, instead of "Running"
+                // forever with a blank Finished column.
+                if (!entry.IsLiveProcess && entry.Result is null && !string.IsNullOrWhiteSpace(_logFolder))
                 {
                     var window = GetLogWindow(entry, i);
                     if (window is not null)
@@ -288,6 +289,14 @@ public partial class MainForm
             {
                 status = "Running";
                 finishedText = "";
+            }
+            else if ((entry.IsManual || isAutoPollFlavor) && entry.Result is not null)
+            {
+                // A checkpoint exists (SyncOrchestrator.RunAsync's onProgress callback
+                // wrote it) but IsFinal never got set - the process died mid-run. The
+                // counts below are real, as-of-last-checkpoint numbers, not blanks.
+                status = "Interrupted (partial)";
+                finishedText = entry.Result.FinishedAtUtc.ToLocalTime().ToString("g");
             }
             else if (entry.IsManual || isAutoPollFlavor)
             {
@@ -505,6 +514,14 @@ public partial class MainForm
             }
 
             lines.Add($"Duration: {(entry.Result.FinishedAtUtc - entry.Result.StartedAtUtc).TotalSeconds:0.0} sec");
+
+            if (entry.IsPending && !entry.IsLiveProcess)
+            {
+                lines.Add("");
+                lines.Add("INTERRUPTED - the process stopped before finishing. The counts below are real, " +
+                           "as of its last checkpoint (saved after every invoice), not blanks.");
+            }
+
             lines.Add("");
             lines.Add($"Fetched: {entry.Result.InvoicesFetched}");
             lines.Add($"Imported (real writes this run): {entry.Result.InvoicesImported}");

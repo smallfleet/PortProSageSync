@@ -64,7 +64,7 @@ public partial class MainForm : Form
 
     private Panel BuildServiceFolderBar()
     {
-        var panel = new Panel { Dock = DockStyle.Top, Height = 36 };
+        var panel = new Panel { Dock = DockStyle.Top, Height = 64 };
 
         var label = new Label { Text = "Service folder:", AutoSize = true, Location = new Point(8, 10) };
         _serviceFolderBox.Location = new Point(100, 7);
@@ -108,12 +108,25 @@ public partial class MainForm : Form
         readmeHelp.Location = new Point(panel.Width - readmeHelp.Width - 8, 8);
         readme.Location = new Point(readmeHelp.Left - readme.Width - 6, 5);
 
+        // Second row: always-visible process status + a Stop button that works
+        // regardless of which tab (Manual Run / Automatic Sync) actually owns
+        // whatever is running - see MainForm.ServiceControl.cs's
+        // RefreshServiceStatus/StopWhicheverIsRunning.
+        var statusLabelCaption = new Label { Text = "Process:", AutoSize = true, Location = new Point(8, 40) };
+        _headerStatusLabel.Font = new Font(_headerStatusLabel.Font, FontStyle.Bold);
+        _headerStatusLabel.Location = new Point(100, 40);
+        _headerStopButton.Location = new Point(590, 36);
+        _headerStopButton.Click += (_, _) => StopWhicheverIsRunning();
+
         panel.Controls.Add(label);
         panel.Controls.Add(_serviceFolderBox);
         panel.Controls.Add(browse);
         panel.Controls.Add(reload);
         panel.Controls.Add(readme);
         panel.Controls.Add(readmeHelp);
+        panel.Controls.Add(statusLabelCaption);
+        panel.Controls.Add(_headerStatusLabel);
+        panel.Controls.Add(_headerStopButton);
         return panel;
     }
 
@@ -280,6 +293,58 @@ public partial class MainForm : Form
         }
         _appSettings.Save();
         RefreshCutoffInvoiceDateControls();
+    }
+
+    // ---------------------------------------------------------------------
+    // Show command window - one setting (PortProSage:Sync:ShowCommandWindow),
+    // shown and editable on BOTH the Automatic Sync tab and the Manual Run tab,
+    // same shared/immediate-save pattern as Cutoff Invoice Date above. Purely an
+    // Admin-app launch preference (the Service itself has no notion of this -
+    // it's decided by whoever starts the process), so it lives under Sync rather
+    // than being read by SyncOrchestrator at all.
+    // ---------------------------------------------------------------------
+
+    private CheckBox _syncShowCommandWindow = new() { Text = "Show command window while running", AutoSize = true };
+    private CheckBox _runShowCommandWindow = new() { Text = "Show command window while running", AutoSize = true };
+    private bool _suppressShowCommandWindowEvents;
+
+    private const string ShowCommandWindowHelpText =
+        "Whether PortProSage.Service.exe's console window is shown while a Manual Run or the Automatic Service is " +
+        "running. Checked (default) shows it, so you can watch progress live, same as before. Unchecked runs it " +
+        "hidden in the background instead - useful once you trust it and don't want a window popping up every " +
+        "time, but you'll only be able to watch progress via the History & Logs tab, not the console itself.\n\n" +
+        "Applies to BOTH Manual Run and Start Automatic Service - shared between the Automatic Sync tab and the " +
+        "Manual Run tab, saved immediately when changed on either.";
+
+    private void WireShowCommandWindowControl(CheckBox box)
+    {
+        box.CheckedChanged += (_, _) => SaveShowCommandWindow(box);
+    }
+
+    private void RefreshShowCommandWindowControls()
+    {
+        if (_appSettings is null) return;
+
+        _suppressShowCommandWindowEvents = true;
+        try
+        {
+            var show = _appSettings.GetBool("PortProSage.Sync.ShowCommandWindow", true);
+            _syncShowCommandWindow.Checked = show;
+            _runShowCommandWindow.Checked = show;
+        }
+        finally
+        {
+            _suppressShowCommandWindowEvents = false;
+        }
+    }
+
+    private void SaveShowCommandWindow(CheckBox source)
+    {
+        if (_appSettings is null || _suppressShowCommandWindowEvents) return;
+
+        _appSettings.SetBool("PortProSage.Sync.ShowCommandWindow", source.Checked);
+        _appSettings.Save();
+        RefreshShowCommandWindowControls();
     }
 
     // ---------------------------------------------------------------------

@@ -144,13 +144,22 @@ public static class Diagnostics
 
         logger.LogWarning("=== MANUAL RUN: executing one-time sync request {RequestId} ===", request.RequestId);
 
-        var orchestrator = services.GetRequiredService<SyncOrchestrator>();
-        var result = await orchestrator.RunAsync(request, ct);
-
         var resultFilePath = Path.Combine(
             Path.GetDirectoryName(requestFilePath) ?? ".",
             $"{request.RequestId}.result.json");
-        File.WriteAllText(resultFilePath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+        var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+        void WriteResultFile(SyncResult r) => File.WriteAllText(resultFilePath, JsonSerializer.Serialize(r, jsonOptions));
+
+        var orchestrator = services.GetRequiredService<SyncOrchestrator>();
+        // Checkpointed after every invoice (onProgress), not just once at the very
+        // end - a Manual Run that's stopped (or crashes) mid-way used to leave
+        // every count blank in History & Logs, same gap confirmed for the
+        // Automatic Service's poll cycles. Each checkpoint overwrites the same
+        // result file; the final write below (IsFinal=true) is just the last of
+        // these overwrites if the run actually completes normally.
+        var result = await orchestrator.RunAsync(request, ct, onProgress: WriteResultFile);
+
+        WriteResultFile(result);
 
         logger.LogWarning(
             "MANUAL RUN complete: fetched={Fetched} imported={Imported} alreadyImported={AlreadyImported} " +

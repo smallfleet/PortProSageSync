@@ -62,6 +62,18 @@ public class SyncResult
     public DateTimeOffset StartedAtUtc { get; set; }
     public DateTimeOffset FinishedAtUtc { get; set; }
 
+    /// <summary>False for every progress checkpoint written while the run is still
+    /// in progress (see SyncOrchestrator.RunAsync's onProgress callback), true only
+    /// on the very last write, once the run has genuinely finished. Confirmed live
+    /// 2026-08-09 this was a real gap: a run that was killed/crashed mid-way had
+    /// never written a result.json at all, so every count showed blank in History &
+    /// Logs even though real progress had been made. Callers now overwrite the same
+    /// result file after every invoice, so if the process dies mid-run, whatever
+    /// was last checkpointed (IsFinal=false) survives as the historical record
+    /// instead of nothing at all - see RunHistoryEntry.IsPending, which now checks
+    /// this flag rather than just whether a result file exists.</summary>
+    public bool IsFinal { get; set; }
+
     /// <summary>The OS process ID that actually ran this - a Manual Run gets its
     /// own dedicated process, but the Automatic Service's periodic poll and
     /// trigger-file processing all share one long-running process, so several

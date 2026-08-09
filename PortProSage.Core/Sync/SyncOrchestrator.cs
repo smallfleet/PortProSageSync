@@ -37,7 +37,14 @@ public class SyncOrchestrator
         _logger = logger;
     }
 
-    public async Task<SyncResult> RunAsync(SyncRequest request, CancellationToken ct)
+    /// <param name="onProgress">Invoked after every invoice is processed (and
+    /// before the invocation returns to the caller, so it's safe to write the
+    /// result to disk synchronously from inside the callback) - result.IsFinal is
+    /// always false during these calls, true only on the SyncResult this method
+    /// ultimately returns. Lets the caller checkpoint real progress to disk as the
+    /// run proceeds, instead of only ever writing a result once at the very end -
+    /// see SyncResult.IsFinal's doc comment for why that gap mattered.</param>
+    public async Task<SyncResult> RunAsync(SyncRequest request, CancellationToken ct, Action<SyncResult>? onProgress = null)
     {
         var result = new SyncResult
         {
@@ -66,13 +73,38 @@ public class SyncOrchestrator
             // never advances past this capped bound (below), so a held-back
             // invoice is simply picked up on a later run once it clears the delay.
             var upperBound = DateTimeOffset.UtcNow.AddDays(-Math.Max(0, _syncSettings.ProcessingDelayDays));
-            request.From = result.WatermarkBeforeRun ?? upperBound.AddDays(-Math.Max(1, _syncSettings.ProcessingDelayDays));
+            var lowerBound = result.WatermarkBeforeRun ?? upperBound.AddDays(-Math.Max(1, _syncSettings.ProcessingDelayDays));
+
+            // The persisted watermark can already sit at or past the delay-capped
+            // upper bound - e.g. ProcessingDelayDays was raised (or the watermark
+            // had already advanced under a smaller value) since the last run.
+            // Clamp rather than send PortPro an inverted From > To window: there is
+            // genuinely nothing eligible yet, which is a normal, temporary state
+            // (it self-resolves once real time closes the gap), not an error.
+            request.From = lowerBound > upperBound ? upperBound : lowerBound;
             request.To = upperBound;
         }
 
         _logger.LogInformation(
             "Starting sync {RequestId} ({FilterType}, UseWatermark={UseWatermark}, From={From}, To={To}, StartNo={StartNo}, EndNo={EndNo})",
             request.RequestId, request.FilterType, request.UseWatermark, request.From, request.To, request.StartInvoiceNumber, request.EndInvoiceNumber);
+
+        // Nothing eligible yet (see the clamp above) - skip the Sage50 connect and
+        // PortPro fetch entirely rather than asking for a zero-width window every
+        // cycle, and say so plainly instead of leaving a bare "fetched=0" with no
+        // explanation.
+        if (request.UseWatermark && request.From is not null && request.To is not null && request.From >= request.To)
+        {
+            _logger.LogInformation(
+                "Nothing to process yet for {RequestId} - the watermark ({From}) has already caught up to the " +
+                "processing-delay upper bound ({To}, now minus {Days} day(s)). Skipping this cycle.",
+                request.RequestId, request.From, request.To, _syncSettings.ProcessingDelayDays);
+            result.WatermarkAfterRun = result.WatermarkBeforeRun;
+            result.LastProcessedInvoiceNumberAfterRun = result.LastProcessedInvoiceNumberBeforeRun;
+            result.FinishedAtUtc = DateTimeOffset.UtcNow;
+            result.IsFinal = true;
+            return result;
+        }
 
         try
         {
@@ -196,6 +228,13 @@ public class SyncOrchestrator
                     }
                 }
 
+                // Checkpoint after every invoice - see the onProgress parameter's
+                // doc comment. FinishedAtUtc doubles as "as of" for a checkpoint
+                // that never becomes final, so a caller/viewer has a meaningful
+                // timestamp even without IsFinal ever being set.
+                result.FinishedAtUtc = DateTimeOffset.UtcNow;
+                onProgress?.Invoke(result);
+
                 if (request.MaxInvoicesToProcess is not null && result.Outcomes.Count >= request.MaxInvoicesToProcess.Value)
                 {
                     _logger.LogInformation(
@@ -268,6 +307,10 @@ public class SyncOrchestrator
             _logger.LogError(ex, "Log retention cleanup failed for sync {RequestId}", request.RequestId);
         }
 
+        // Only ever set true here, on the run's genuine last write - every
+        // checkpoint above (onProgress) left it false. Callers persist this
+        // returned result as their own final write.
+        result.IsFinal = true;
         return result;
     }
 

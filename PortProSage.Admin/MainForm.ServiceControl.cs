@@ -25,6 +25,13 @@ public partial class MainForm
     private readonly Button _stopServiceButton = new() { Text = "Stop Automatic Service", Width = 160 };
     private readonly System.Windows.Forms.Timer _serviceStatusTimer = new() { Interval = 3000 };
 
+    /// <summary>Always-visible in the top header bar (see MainForm.cs's
+    /// BuildServiceFolderBar), not just on the Automatic Sync tab - now that
+    /// Manual Run and Automatic Sync are separate tabs, this is the only status/
+    /// stop control visible regardless of which tab is currently active.</summary>
+    private readonly Label _headerStatusLabel = new() { AutoSize = true };
+    private readonly Button _headerStopButton = new() { Text = "Stop", Width = 70, Enabled = false };
+
     private const string AutomaticServiceHelpText =
         "Starts/stops the long-running automatic pipeline (PortProSage.Service.exe with no extra arguments) - " +
         "the same thing that happens if you double-click the exe yourself. Once running, it does two things " +
@@ -135,22 +142,63 @@ public partial class MainForm
                 _serviceStatusLabel.ForeColor = Color.DarkGreen;
                 _startServiceButton.Enabled = false;
                 _stopServiceButton.Enabled = true;
+                _headerStatusLabel.Text = $"Automatic Service running - PID {process.Id}, since {FormatStartTime(process)}";
+                _headerStatusLabel.ForeColor = Color.DarkGreen;
+                _headerStopButton.Enabled = true;
                 break;
             case ServiceRunState.ManualRunning:
                 _serviceStatusLabel.Text = $"MANUAL RUNNING (PID {process!.Id})";
                 _serviceStatusLabel.ForeColor = Color.DarkOrange;
                 _startServiceButton.Enabled = false;
                 _stopServiceButton.Enabled = false; // this button only controls the automatic instance
+                _headerStatusLabel.Text = $"Manual Run running - PID {process.Id}, since {FormatStartTime(process)}";
+                _headerStatusLabel.ForeColor = Color.DarkOrange;
+                _headerStopButton.Enabled = true;
                 break;
             default:
                 _serviceStatusLabel.Text = "NOT RUNNING";
                 _serviceStatusLabel.ForeColor = Color.DarkRed;
                 _startServiceButton.Enabled = true;
                 _stopServiceButton.Enabled = false;
+                _headerStatusLabel.Text = "Not running";
+                _headerStatusLabel.ForeColor = Color.DarkRed;
+                _headerStopButton.Enabled = false;
                 break;
         }
 
         UpdateManualRunButtonStates(state, process);
+    }
+
+    /// <summary>process.StartTime can throw (access denied for a process not owned
+    /// by the current user, or it exited between the WMI scan and this call) -
+    /// never let a header-status refresh fail over that.</summary>
+    private static string FormatStartTime(Process process)
+    {
+        try
+        {
+            return process.StartTime.ToString("g");
+        }
+        catch
+        {
+            return "unknown start time";
+        }
+    }
+
+    /// <summary>Wired to the header's always-visible Stop button (see
+    /// MainForm.cs's BuildServiceFolderBar) - stops whichever kind is actually
+    /// running, without the operator needing to be on the tab that owns it.</summary>
+    private void StopWhicheverIsRunning()
+    {
+        var (state, _) = GetServiceRunState();
+        switch (state)
+        {
+            case ServiceRunState.AutomaticRunning:
+                StopServiceProcess();
+                break;
+            case ServiceRunState.ManualRunning:
+                StopManualRun();
+                break;
+        }
     }
 
     private void StartServiceProcess()
@@ -175,11 +223,16 @@ public partial class MainForm
             "Confirm start - Automatic Service", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (confirm != DialogResult.Yes) return;
 
+        // "Show command window" (Automatic Sync / Manual Run tab, shared/synced
+        // setting) - checked shows its own console window like before; unchecked
+        // runs it hidden in the background instead.
+        var showWindow = _syncShowCommandWindow.Checked;
         Process.Start(new ProcessStartInfo
         {
             FileName = exePath,
             WorkingDirectory = _serviceFolderBox.Text,
-            UseShellExecute = true // opens its own console window, so the operator can watch it run live
+            UseShellExecute = showWindow,
+            CreateNoWindow = !showWindow
         });
 
         RefreshServiceStatus();

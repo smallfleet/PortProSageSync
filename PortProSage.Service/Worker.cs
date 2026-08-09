@@ -104,7 +104,14 @@ public class Worker : BackgroundService
         // TriggerFileManager.WriteResult's comment for the full reasoning.
         TriggerFileManager.Write(autoPollFolder, request);
 
-        var result = await _orchestrator.RunAsync(request, ct);
+        // Checkpointed after every invoice (onProgress), not just once at the very
+        // end - confirmed live 2026-08-09 that a cycle killed/closed mid-run left
+        // every count blank in History & Logs even though real progress had been
+        // made, since nothing had ever been written. Each checkpoint overwrites the
+        // same result file; the final write below (IsFinal=true) is just the last
+        // of these overwrites if the run actually completes normally.
+        var result = await _orchestrator.RunAsync(request, ct,
+            onProgress: partial => TriggerFileManager.WriteResult(autoPollFolder, request.RequestId, partial));
 
         TriggerFileManager.WriteResult(autoPollFolder, request.RequestId, result);
     }

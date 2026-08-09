@@ -117,6 +117,8 @@ public partial class MainForm
             "0 means no cap.\n\n" +
             "Example: Continue mode with Max invoices = 10 processes only the next 10 unprocessed invoices, " +
             "even if 50 have changed since the last run.");
+        AddCheckRow(grid, _runShowCommandWindow, "(request - not a settings file)", "PortProSage:Sync:ShowCommandWindow", ShowCommandWindowHelpText);
+        WireShowCommandWindowControl(_runShowCommandWindow);
 
         _runDryRunStatus.Text = "Dry run status unknown - load config first.";
         var dryRunRow = grid.RowCount++;
@@ -461,12 +463,18 @@ public partial class MainForm
         Directory.CreateDirectory(_manualRunFolder);
         var requestPath = TriggerService.WriteRequest(_manualRunFolder, request);
 
+        // "Show command window" (Automatic Sync / Manual Run tab, shared/synced
+        // setting) - checked shows its own console window like before; unchecked
+        // runs it hidden in the background (still fully functional, just no
+        // visible window - progress is only watchable via History & Logs then).
+        var showWindow = _runShowCommandWindow.Checked;
         _manualRunProcess = Process.Start(new ProcessStartInfo
         {
             FileName = ServiceExePath,
             Arguments = $"--run-once \"{requestPath}\"",
             WorkingDirectory = _serviceFolderBox.Text,
-            UseShellExecute = true // its own console window, visible to the operator while it runs
+            UseShellExecute = showWindow,
+            CreateNoWindow = !showWindow
         });
 
         _pendingRequestId = request.RequestId;

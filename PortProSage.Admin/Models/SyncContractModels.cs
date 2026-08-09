@@ -50,6 +50,13 @@ public class SyncResult
     public int InvoicesSkippedBeforeCutoff { get; set; }
     public int InvoicesFailedValidation { get; set; }
     public int InvoicesFailedImport { get; set; }
+
+    /// <summary>False for a progress checkpoint written while the run is still in
+    /// progress; true only on the final write. Mirrors Core's SyncResult.IsFinal -
+    /// see that doc comment for why this exists (interrupted runs used to leave no
+    /// result file at all, so counts showed blank in History &amp; Logs).</summary>
+    public bool IsFinal { get; set; }
+
     public List<InvoiceProcessingOutcome> Outcomes { get; set; } = new();
 
     /// <summary>Pre/post snapshot of the persisted "continue from" state - see

@@ -100,7 +100,7 @@ public static class RunHistoryService
                 var request = TryDeserialize<SyncRequest>(requestFile);
                 var resultFile = Path.Combine(manualRunFolder, $"{id}.result.json");
                 var result = File.Exists(resultFile) ? TryDeserialize<SyncResult>(resultFile) : null;
-                byId[id] = new RunHistoryEntry { RequestId = id, Request = request, Result = result, IsPending = result is null, IsManual = true };
+                byId[id] = new RunHistoryEntry { RequestId = id, Request = request, Result = result, IsPending = result is null || !result.IsFinal, IsManual = true };
             }
         }
 
@@ -116,7 +116,7 @@ public static class RunHistoryService
                 var request = TryDeserialize<SyncRequest>(requestFile);
                 var resultFile = Path.Combine(autoPollFolder, $"{id}.result.json");
                 var result = File.Exists(resultFile) ? TryDeserialize<SyncResult>(resultFile) : null;
-                byId[id] = new RunHistoryEntry { RequestId = id, Request = request, Result = result, IsPending = result is null, IsAutomaticPoll = true };
+                byId[id] = new RunHistoryEntry { RequestId = id, Request = request, Result = result, IsPending = result is null || !result.IsFinal, IsAutomaticPoll = true };
             }
         }
 
