@@ -42,9 +42,9 @@ public partial class MainForm : Form
         var topBar = BuildServiceFolderBar();
 
         _tabs = new TabControl { Dock = DockStyle.Fill };
-        _tabs.TabPages.Add(BuildRunTab()); // includes the Automatic/Manual run controls
+        _tabs.TabPages.Add(BuildRunTab()); // "Manual Run"
+        _tabs.TabPages.Add(BuildSyncTab()); // "Automatic Sync" - includes the Start/Stop Automatic Service controls
         _tabs.TabPages.Add(BuildResultsTab());
-        _tabs.TabPages.Add(BuildSyncTab());
         _tabs.TabPages.Add(BuildPortProTab());
         _tabs.TabPages.Add(BuildSage50Tab());
         _tabs.TabPages.Add(BuildEmailTab());
@@ -201,8 +201,8 @@ public partial class MainForm : Form
 
     // ---------------------------------------------------------------------
     // Cutoff Invoice Date - one setting (SyncSettings.CutoffInvoiceDate),
-    // shown and editable on BOTH the Sync tab and the Run tab (see
-    // MainForm.SyncTab.cs / MainForm.RunTab.cs for where each is laid out).
+    // shown and editable on BOTH the Automatic Sync tab and the Manual Run tab
+    // (see MainForm.SyncTab.cs / MainForm.RunTab.cs for where each is laid out).
     // Unlike every other field in this app, this one saves immediately on
     // change rather than waiting for a tab's own Save button - it needs to
     // stay in sync between two tabs the instant either one changes it, and a
@@ -218,14 +218,14 @@ public partial class MainForm : Form
     private const string CutoffInvoiceDateHelpText =
         "The LOWER bound - if set, no invoice dated BEFORE this fixed date is ever processed, by Manual Run OR the " +
         "Automatic Service, regardless of mode. (For the separate UPPER bound - holding back the most recent N " +
-        "days - see \"Automatic Sync - Processing Delay (Days)\" on the Sync tab; that one's a rolling number of " +
-        "days, this one's a fixed calendar date.)\n\n" +
+        "days - see \"Automatic Sync - Processing Delay (Days)\" on the Automatic Sync tab; that one's a rolling " +
+        "number of days, this one's a fixed calendar date.)\n\n" +
         "This exists to catch, in our own code, a real failure that's happened more than once: Sage 50's own " +
         "\"Do Not Allow Transactions Dated Before\" company setting rejects a too-old invoice mid-write, which " +
         "terminates the whole sync process immediately. Setting this here stops it before that ever happens - the " +
         "invoice is just skipped and logged, nothing crashes.\n\n" +
-        "Shared between the Sync tab and the Run tab - changing it in either place updates both immediately (saved " +
-        "right away, not on a tab's own Save button).\n\n" +
+        "Shared between the Automatic Sync tab and the Manual Run tab - changing it in either place updates both " +
+        "immediately (saved right away, not on a tab's own Save button).\n\n" +
         "Uncheck the box to remove the cutoff entirely - every invoice is eligible regardless of date (the default).";
 
     private void WireCutoffInvoiceDateControl(DateTimePicker picker)

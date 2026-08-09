@@ -8,8 +8,8 @@ public enum ServiceRunState { NotRunning, AutomaticRunning, ManualRunning }
 /// <summary>
 /// Lets the operator start/stop the long-running automatic pipeline
 /// (PortProSage.Service.exe with no arguments - polling + trigger-folder
-/// watching) directly from the Run tab. Distinguishes "automatic" from a
-/// "manual run" (--run-once, see MainForm.RunTab.cs) by inspecting each
+/// watching) directly from the Automatic Sync tab. Distinguishes "automatic"
+/// from a "manual run" (--run-once, see MainForm.RunTab.cs) by inspecting each
 /// matching process's real command line via WMI - not just by whether this
 /// app happened to be the one that started it, since either kind can also be
 /// started outside this app entirely (double-clicking the exe, or as a

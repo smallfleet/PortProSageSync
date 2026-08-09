@@ -34,45 +34,58 @@ public partial class MainForm
         var page = new TabPage("Sage 50");
         var grid = NewFieldGrid();
         const string f = AppSettingsFileName;
-        AddRow(grid, "App name", _sage50AppName, f, "PortProSage:Sage50:AppName",
+        const int fieldPercent = 50;
+
+        AddPercentRow(grid, "App name", _sage50AppName, f, "PortProSage:Sage50:AppName",
             "The friendly application name the Sage 50 SDK asks for when a third-party app registers itself before " +
             "opening a company file. Shows up inside Sage 50 as the name of the connecting application.\n\n" +
-            "Example: PortPro Sage 50 Connector");
-        AddRowWithButton(grid, "Company data path (secret)", _sage50CompanyDataPath, LocalSettingsFileName, "PortProSage:Sage50:CompanyDataPath",
+            "Example: PortPro Sage 50 Connector",
+            fieldPercent);
+
+        var testConnectionButton = new Button { Text = "Test Connection", Width = 110, Height = 23 };
+        testConnectionButton.Click += (_, _) => TestSage50Connection();
+        AddPercentRow(grid, "Company data path (secret)", _sage50CompanyDataPath, LocalSettingsFileName, "PortProSage:Sage50:CompanyDataPath",
             "The full file path to the Sage 50 company file (.SAI) this integration reads from and writes invoices to.\n\n" +
             "Example: C:\\simplyData\\RS RUSH TRANSFER XPRESS INC-2026.sai\n\n" +
             "This must point at a real, existing company file on this server - the Service opens exactly this file " +
             "every time it connects to Sage 50.\n\n" +
             "\"Test Connection\" attempts a real connect using whatever is currently SAVED to appsettings.Local.json " +
             "- Save Sage 50 settings first if you just changed something, or the test won't reflect your edits.",
-            "Test Connection", (_, _) => TestSage50Connection());
-        AddRow(grid, "Sage50 User Name (secret)", _sage50UserName, LocalSettingsFileName, "PortProSage:Sage50:UserName",
+            fieldPercent, testConnectionButton);
+        AddPercentRow(grid, "Sage50 User Name (secret)", _sage50UserName, LocalSettingsFileName, "PortProSage:Sage50:UserName",
             "The Sage 50 login the Service uses to open the company file. Must be a dedicated account, never the " +
             "same one a human logs into Sage 50 with interactively - Sage 50 rejects two simultaneous sessions " +
-            "under the same username, even in multi-user mode.\n\nExample: PortProConnect");
-        AddRow(grid, "Sage50 Password (secret)", _sage50Password, LocalSettingsFileName, "PortProSage:Sage50:Password",
-            "The password for the Sage 50 username above.");
-        AddRow(grid, "App ID (max 6 chars)", _sage50AppId, f, "PortProSage:Sage50:AppId",
+            "under the same username, even in multi-user mode.\n\nExample: PortProConnect",
+            fieldPercent);
+        AddPercentRow(grid, "Sage50 Password (secret)", _sage50Password, LocalSettingsFileName, "PortProSage:Sage50:Password",
+            "The password for the Sage 50 username above.",
+            fieldPercent);
+        AddPercentRow(grid, "App ID (max 6 chars)", _sage50AppId, f, "PortProSage:Sage50:AppId",
             "A short code (max 6 characters) identifying this application to the Sage 50 SDK - required alongside " +
-            "App name to register before opening a company file.\n\nExample: PPS50");
-        AddRow(grid, "Expected SDK version", _sage50ExpectedSdkVersion, f, "PortProSage:Sage50:ExpectedSdkVersion",
+            "App name to register before opening a company file.\n\nExample: PPS50",
+            fieldPercent);
+        AddPercentRow(grid, "Expected SDK version", _sage50ExpectedSdkVersion, f, "PortProSage:Sage50:ExpectedSdkVersion",
             "If set, the Service logs a warning at startup when the bundled Sage 50 SDK's version doesn't start with " +
             "this text - a sanity check that the SDK files match what's actually installed on this server. Leave " +
-            "blank to skip the check entirely.\n\nExample: 2026.2");
-        AddRow(grid, "Default revenue account", _sage50DefaultRevenueAccount, f, "PortProSage:Sage50:DefaultRevenueAccount",
+            "blank to skip the check entirely.\n\nExample: 2026.2",
+            fieldPercent);
+        AddPercentRow(grid, "Default revenue account", _sage50DefaultRevenueAccount, f, "PortProSage:Sage50:DefaultRevenueAccount",
             "The GL account a PortPro charge posts to when it has no specific row in the Charge account map below, " +
             "or has a row with a blank Sage 50 Account Number. If this is also blank, that invoice fails with an " +
             "error instead of posting to an undefined account.\n\n" +
-            "Example: 4100  ->  a 'PICK UP & DELIVERY' charge with no map entry posts to account 4100.");
-        AddRow(grid, "Default receivable account", _sage50DefaultReceivableAccount, f, "PortProSage:Sage50:DefaultReceivableAccount",
+            "Example: 4100  ->  a 'PICK UP & DELIVERY' charge with no map entry posts to account 4100.",
+            fieldPercent);
+        AddPercentRow(grid, "Default receivable account", _sage50DefaultReceivableAccount, f, "PortProSage:Sage50:DefaultReceivableAccount",
             "The GL accounts-receivable account assigned to a customer that gets auto-created because they didn't " +
-            "already exist in Sage 50.\n\nExample: 1200");
-        AddRow(grid, "Accounts unverifiable by SDK\n(comma-separated)", _sage50AccountsUnverifiable, f, "PortProSage:Sage50:AccountsUnverifiableBySdk",
+            "already exist in Sage 50.\n\nExample: 1200",
+            fieldPercent);
+        AddPercentRow(grid, "Accounts unverifiable by SDK\n(comma-separated)", _sage50AccountsUnverifiable, f, "PortProSage:Sage50:AccountsUnverifiableBySdk",
             "A workaround list, not a mapping. Some Sage 50 accounts (confirmed for this company: currency-paired " +
             "accounts like 4100/4110) make the SDK's own 'does this account exist?' check incorrectly return false, " +
             "even though the account is real and valid. Any account number listed here skips that broken check and " +
             "is trusted to exist - only add an account here after confirming directly in Sage 50 that it's real.\n\n" +
-            "Example: 4100, 4110");
+            "Example: 4100, 4110",
+            fieldPercent);
 
         AddCheckRow(grid, _sage50AutoCreateCustomers, f, "PortProSage:Sage50:AutoCreateCustomers",
             "When checked, a PortPro customer that doesn't already exist in Sage 50 is created automatically before " +
@@ -88,12 +101,13 @@ public partial class MainForm
             "items are actually created in Sage 50 for real. Always test a change with this checked first.");
 
         SetupTaxCodesGrid();
-        AddRow(grid, "Tax codes\n(PortPro abbreviation -> Sage 50 code)", _taxCodesGrid, f, "PortProSage:Sage50:TaxCodesByAbbreviation",
+        AddPercentRow(grid, "Tax codes\n(PortPro abbreviation -> Sage 50 code)", _taxCodesGrid, f, "PortProSage:Sage50:TaxCodesByAbbreviation",
             "Maps a Canadian tax abbreviation PortPro shows in a charge name (HST/GST/PST/QST) to the matching tax " +
             "code string from Sage 50's own Setup > Settings > Company > Sales Taxes > Tax Codes screen. A charge " +
             "recognized this way is NOT imported as its own line item - instead Sage 50 calculates and applies that " +
             "tax code directly to the invoice's real revenue lines.\n\n" +
-            "Example: Abbreviation 'HST' -> Sage 50 code 'H' (this company's code for HST 13%, posting to account 2310).");
+            "Example: Abbreviation 'HST' -> Sage 50 code 'H' (this company's code for HST 13%, posting to account 2310).",
+            60);
 
         SetupChargeAccountMapGrid();
         WireSource(_chargeAccountMapGrid, f, "PortProSage:Sage50:ChargeAccountMap");
@@ -138,6 +152,68 @@ public partial class MainForm
 
         RefreshAllTabsFromConfig += RefreshSage50Tab;
         return page;
+    }
+
+    /// <summary>Places `content` at a fixed PERCENTAGE of the row's available width -
+    /// a nested TableLayoutPanel Percent column, not a fixed pixel value, so it
+    /// stays exactly that fraction of the panel as the window resizes. Requested
+    /// specifically for this tab: the other tabs' fixed-pixel FieldHalfWidth
+    /// approach looked fine there, but far too wide here on a large/wide window.
+    /// Any trailing controls (a button, the help icon) sit immediately after
+    /// `content`, inside the SAME percentage share at their own natural width -
+    /// only `content` itself stretches to fill what's left within that share, and
+    /// the other (100-percent)% of the row is left empty, not consumed by
+    /// anything.</summary>
+    private void AddPercentRow(TableLayoutPanel grid, string labelText, Control content, string fileName, string jsonPath,
+        string helpText, int percent, params Control[] trailingControls)
+    {
+        var row = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var label = new Label { Text = labelText, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 8, 3, 3) };
+        grid.Controls.Add(label, 0, row);
+
+        var trailing = trailingControls.ToList();
+        if (!string.IsNullOrEmpty(helpText))
+        {
+            trailing.Add(CreateHelpIcon(labelText.Replace("\n", " "), helpText));
+        }
+
+        content.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        content.Margin = new Padding(3, 4, 3, 4);
+
+        Control share;
+        if (trailing.Count == 0)
+        {
+            share = content;
+        }
+        else
+        {
+            var inner = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = trailing.Count + 1, RowCount = 1, Margin = new Padding(0) };
+            inner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            foreach (var t in trailing)
+            {
+                inner.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, t.Width + 10));
+                t.Anchor = AnchorStyles.Left;
+                t.Margin = new Padding(4, 4, 0, 3);
+            }
+            inner.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            inner.Controls.Add(content, 0, 0);
+            for (var i = 0; i < trailing.Count; i++)
+            {
+                inner.Controls.Add(trailing[i], i + 1, 0);
+            }
+            share = inner;
+        }
+
+        var outer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0) };
+        outer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, percent));
+        outer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100 - percent));
+        outer.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        outer.Controls.Add(share, 0, 0);
+        // Column 1 (the remaining (100-percent)%) is deliberately left empty.
+
+        grid.Controls.Add(outer, 1, row);
+        WireSource(content, fileName, jsonPath);
     }
 
     private void AddCheckRow(TableLayoutPanel grid, CheckBox box, string fileName, string jsonPath, string helpText = "")

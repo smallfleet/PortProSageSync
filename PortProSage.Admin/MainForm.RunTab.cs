@@ -49,7 +49,7 @@ public partial class MainForm
 
     private TabPage BuildRunTab()
     {
-        var page = new TabPage("Run");
+        var page = new TabPage("Manual Run");
         var grid = NewFieldGrid();
 
         _runMode.Items.AddRange(new object[]
@@ -91,17 +91,17 @@ public partial class MainForm
             "with BOTH endpoints included (e.g. Start=90, End=95 processes 90, 91, 92, 93, 94, 95 - 6 invoices, not 5).\n\n" +
             "Every mode except Continue is a one-time override - it never reads or changes the saved Continue " +
             "position, so the next Continue run behaves exactly as if the override run never happened.");
-        AddRow(grid, "Cutoff (Lower) Invoice Date", _runCutoffInvoiceDate, "(request - not a settings file)", "PortProSage:Sync:CutoffInvoiceDate",
-            CutoffInvoiceDateHelpText, stretchInput: false);
-        WireCutoffInvoiceDateControl(_runCutoffInvoiceDate);
-        AddRow(grid, "From", _runFrom, "(request)", "SyncRequest.From",
+        AddRow(grid, "Invoice Date From", _runFrom, "(request)", "SyncRequest.From",
             "Start of the date window - only used by Invoice date / Last changed date modes.\n\n" +
             "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.",
             stretchInput: false);
-        AddRow(grid, "To", _runTo, "(request)", "SyncRequest.To",
+        AddRow(grid, "Invoice Date To", _runTo, "(request)", "SyncRequest.To",
             "End of the date window - only used by Invoice date / Last changed date modes.\n\n" +
             "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.",
             stretchInput: false);
+        AddRow(grid, "Cutoff (Lower) Invoice Date", _runCutoffInvoiceDate, "(request - not a settings file)", "PortProSage:Sync:CutoffInvoiceDate",
+            CutoffInvoiceDateHelpText, stretchInput: false);
+        WireCutoffInvoiceDateControl(_runCutoffInvoiceDate);
         AddRow(grid, "Start invoice number", _runStartInvoice, "(request)", "SyncRequest.StartInvoiceNumber",
             "The lowest PortPro reference number to include - only used by Invoice number range mode. Leave blank " +
             "for no lower bound.\n\nExample: RSRE_000102",
@@ -148,13 +148,10 @@ public partial class MainForm
             ForeColor = SystemColors.GrayText
         };
 
-        var serviceControlPanel = BuildServiceControlPanel();
-
         var fieldsScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         fieldsScroll.Controls.Add(grid);
 
         page.Controls.Add(fieldsScroll);
-        page.Controls.Add(serviceControlPanel);
         page.Controls.Add(note);
         page.Controls.Add(buttonPanel);
 

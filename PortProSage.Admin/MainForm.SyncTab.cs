@@ -18,7 +18,7 @@ public partial class MainForm
 
     private TabPage BuildSyncTab()
     {
-        var page = new TabPage("Sync");
+        var page = new TabPage("Automatic Sync");
         var grid = NewFieldGrid();
         const string f = AppSettingsFileName;
 
@@ -45,7 +45,7 @@ public partial class MainForm
         RefreshAllTabsFromConfig += RefreshCutoffInvoiceDateControls;
         AddFolderRow(grid, "Trigger folder", _syncTriggerFolder, f, "PortProSage:Sync:TriggerFolder",
             "The folder the running Service watches for new manual sync requests - both the command-line Trigger " +
-            "tool and this Admin app's Run tab drop a request file here.\n\n" +
+            "tool and this Admin app's Manual Run tab drop a request file here.\n\n" +
             "Example: C:\\PortProSageSync\\requests");
         AddFolderRow(grid, "Processed trigger folder", _syncProcessedTriggerFolder, f, "PortProSage:Sync:ProcessedTriggerFolder",
             "Where a request file (and its result) get moved once the Service has finished processing it. The " +
@@ -77,13 +77,16 @@ public partial class MainForm
             "Example: 60 keeps the most recent 60 days of logs; anything older is deleted the next time any sync " +
             "runs (not on a fixed schedule of its own).");
 
-        var save = new Button { Text = "Save Sync settings", Dock = DockStyle.Bottom, Height = 32 };
+        var save = new Button { Text = "Save Automatic Sync settings", Dock = DockStyle.Bottom, Height = 32 };
         save.Click += (_, _) => SaveSyncTab();
+
+        var serviceControlPanel = BuildServiceControlPanel();
 
         var fieldsScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         fieldsScroll.Controls.Add(grid);
 
         page.Controls.Add(fieldsScroll);
+        page.Controls.Add(serviceControlPanel);
         page.Controls.Add(save);
 
         RefreshAllTabsFromConfig += RefreshSyncTab;
