@@ -200,6 +200,89 @@ public partial class MainForm : Form
     private Action? RefreshAllTabsFromConfig;
 
     // ---------------------------------------------------------------------
+    // Cutoff Invoice Date - one setting (SyncSettings.CutoffInvoiceDate),
+    // shown and editable on BOTH the Sync tab and the Run tab (see
+    // MainForm.SyncTab.cs / MainForm.RunTab.cs for where each is laid out).
+    // Unlike every other field in this app, this one saves immediately on
+    // change rather than waiting for a tab's own Save button - it needs to
+    // stay in sync between two tabs the instant either one changes it, and a
+    // date-with-cutoff toggle is closer in spirit to the Automatic/Manual Run
+    // controls (an immediate action) than to a batch of fields you edit and
+    // then commit together.
+    // ---------------------------------------------------------------------
+
+    private DateTimePicker _syncCutoffInvoiceDate = new() { ShowCheckBox = true, Checked = false, Width = 220 };
+    private DateTimePicker _runCutoffInvoiceDate = new() { ShowCheckBox = true, Checked = false, Width = 220 };
+    private bool _suppressCutoffInvoiceDateEvents;
+
+    private const string CutoffInvoiceDateHelpText =
+        "The LOWER bound - if set, no invoice dated BEFORE this fixed date is ever processed, by Manual Run OR the " +
+        "Automatic Service, regardless of mode. (For the separate UPPER bound - holding back the most recent N " +
+        "days - see \"Automatic Sync - Processing Delay (Days)\" on the Sync tab; that one's a rolling number of " +
+        "days, this one's a fixed calendar date.)\n\n" +
+        "This exists to catch, in our own code, a real failure that's happened more than once: Sage 50's own " +
+        "\"Do Not Allow Transactions Dated Before\" company setting rejects a too-old invoice mid-write, which " +
+        "terminates the whole sync process immediately. Setting this here stops it before that ever happens - the " +
+        "invoice is just skipped and logged, nothing crashes.\n\n" +
+        "Shared between the Sync tab and the Run tab - changing it in either place updates both immediately (saved " +
+        "right away, not on a tab's own Save button).\n\n" +
+        "Uncheck the box to remove the cutoff entirely - every invoice is eligible regardless of date (the default).";
+
+    private void WireCutoffInvoiceDateControl(DateTimePicker picker)
+    {
+        // DateTimePicker has no CheckedChanged event (a real WinForms gap) - Click
+        // fires after the checkbox's internal state has already updated, so it
+        // catches a checkbox toggle; ValueChanged catches an actual date edit.
+        // SaveCutoffInvoiceDate just re-reads current Checked/Value either way, so
+        // it doesn't matter which one fired or if both fire for the same change.
+        picker.Click += (_, _) => SaveCutoffInvoiceDate(picker);
+        picker.ValueChanged += (_, _) => SaveCutoffInvoiceDate(picker);
+    }
+
+    private void RefreshCutoffInvoiceDateControls()
+    {
+        if (_appSettings is null) return;
+
+        _suppressCutoffInvoiceDateEvents = true;
+        try
+        {
+            var raw = _appSettings.GetString("PortProSage.Sync.CutoffInvoiceDate", "");
+            if (DateTimeOffset.TryParse(raw, out var date))
+            {
+                _syncCutoffInvoiceDate.Checked = true;
+                _syncCutoffInvoiceDate.Value = date.LocalDateTime.Date;
+                _runCutoffInvoiceDate.Checked = true;
+                _runCutoffInvoiceDate.Value = date.LocalDateTime.Date;
+            }
+            else
+            {
+                _syncCutoffInvoiceDate.Checked = false;
+                _runCutoffInvoiceDate.Checked = false;
+            }
+        }
+        finally
+        {
+            _suppressCutoffInvoiceDateEvents = false;
+        }
+    }
+
+    private void SaveCutoffInvoiceDate(DateTimePicker source)
+    {
+        if (_appSettings is null || _suppressCutoffInvoiceDateEvents) return;
+
+        if (source.Checked)
+        {
+            _appSettings.SetString("PortProSage.Sync.CutoffInvoiceDate", source.Value.Date.ToString("yyyy-MM-dd"));
+        }
+        else
+        {
+            _appSettings.SetOptionalString("PortProSage.Sync.CutoffInvoiceDate", null);
+        }
+        _appSettings.Save();
+        RefreshCutoffInvoiceDateControls();
+    }
+
+    // ---------------------------------------------------------------------
     // Shared field helpers - every editable control shows its file+JSON path
     // in the status bar, but ONLY when clicked/focused/toggled, never inline.
     // ---------------------------------------------------------------------
@@ -249,22 +332,56 @@ public partial class MainForm : Form
         // these (URLs, file paths, tokens). Numeric spinners and checkboxes
         // stay their natural compact size - stretching a NumericUpDown or
         // CheckBox wide doesn't help readability, just looks broken.
-        if (stretchInput && input is not (NumericUpDown or CheckBox))
+        var willStretch = stretchInput && input is not (NumericUpDown or CheckBox);
+        input.Anchor = willStretch ? AnchorStyles.Left | AnchorStyles.Right : AnchorStyles.Left;
+
+        grid.Controls.Add(label, 0, row);
+
+        if (willStretch)
         {
-            input.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+            // Content fills the whole column, so the help icon's fixed column-2
+            // position already sits right next to where it visually ends.
+            grid.Controls.Add(input, 1, row);
+            if (!string.IsNullOrEmpty(helpText))
+            {
+                grid.Controls.Add(CreateHelpIcon(labelText.Replace("\n", " "), helpText), 2, row);
+            }
         }
         else
         {
-            input.Anchor = AnchorStyles.Left;
+            // Content doesn't fill the column - column 2's fixed far-right position
+            // would leave a big empty gap after it. Wrap the help icon together
+            // with the content instead, so it sits immediately next to where the
+            // content actually ends.
+            AddWrappedWithHelp(grid, row, input, labelText, helpText);
         }
 
-        grid.Controls.Add(label, 0, row);
-        grid.Controls.Add(input, 1, row);
-        if (!string.IsNullOrEmpty(helpText))
-        {
-            grid.Controls.Add(CreateHelpIcon(labelText.Replace("\n", " "), helpText), 2, row);
-        }
         WireSource(input, fileName, jsonPath);
+    }
+
+    /// <summary>Places `content` (already sized/anchored by the caller) alone in
+    /// column 1 if there's no help text, or wrapped together with a help icon
+    /// immediately following it if there is - used for any row whose content
+    /// doesn't stretch to fill the column, so the icon lands right next to the
+    /// content instead of stranded at the column's fixed far-right edge.</summary>
+    private void AddWrappedWithHelp(TableLayoutPanel grid, int row, Control content, string labelText, string helpText)
+    {
+        if (string.IsNullOrEmpty(helpText))
+        {
+            grid.Controls.Add(content, 1, row);
+            return;
+        }
+
+        var wrap = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            AutoSize = true
+        };
+        wrap.Controls.Add(content);
+        wrap.Controls.Add(CreateHelpIcon(labelText.Replace("\n", " "), helpText));
+        grid.Controls.Add(wrap, 1, row);
     }
 
     /// <summary>Like AddRow, but with an extra button (e.g. "Test Connection") next
@@ -295,13 +412,16 @@ public partial class MainForm : Form
         };
         wrap.Controls.Add(input);
         wrap.Controls.Add(button);
+        if (!string.IsNullOrEmpty(helpText))
+        {
+            // Wrapped together with the input+button, not column 2's fixed
+            // far-right position - so the icon sits right next to the button
+            // instead of stranded past a large empty gap.
+            wrap.Controls.Add(CreateHelpIcon(labelText.Replace("\n", " "), helpText));
+        }
 
         grid.Controls.Add(label, 0, row);
         grid.Controls.Add(wrap, 1, row);
-        if (!string.IsNullOrEmpty(helpText))
-        {
-            grid.Controls.Add(CreateHelpIcon(labelText.Replace("\n", " "), helpText), 2, row);
-        }
         WireSource(input, fileName, jsonPath);
     }
 

@@ -91,6 +91,9 @@ public partial class MainForm
             "with BOTH endpoints included (e.g. Start=90, End=95 processes 90, 91, 92, 93, 94, 95 - 6 invoices, not 5).\n\n" +
             "Every mode except Continue is a one-time override - it never reads or changes the saved Continue " +
             "position, so the next Continue run behaves exactly as if the override run never happened.");
+        AddRow(grid, "Cutoff (Lower) Invoice Date", _runCutoffInvoiceDate, "(request - not a settings file)", "PortProSage:Sync:CutoffInvoiceDate",
+            CutoffInvoiceDateHelpText, stretchInput: false);
+        WireCutoffInvoiceDateControl(_runCutoffInvoiceDate);
         AddRow(grid, "From", _runFrom, "(request)", "SyncRequest.From",
             "Start of the date window - only used by Invoice date / Last changed date modes.\n\n" +
             "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.",
@@ -364,7 +367,12 @@ public partial class MainForm
             "",
             $"Write mode: {(_sage50DryRun.Checked ? "DRY RUN (simulated - nothing written to Sage 50)" : "REAL WRITE (changes Sage 50 for real)")}",
             $"Sage 50 company file: {_sage50CompanyDataPath.Text}",
-            $"Mode: {_runMode.SelectedItem}"
+            "",
+            // Emphasized on its own line, in caps - the actual mode governs which
+            // invoices get selected, and it's too easy to click through a
+            // confirmation dialog without registering a value buried in a sentence.
+            $"MODE: {_runMode.SelectedItem?.ToString()?.ToUpperInvariant()}",
+            ""
         };
 
         if (request.UseWatermark)

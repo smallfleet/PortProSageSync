@@ -146,11 +146,10 @@ public partial class MainForm
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         box.AutoSize = true;
         box.Margin = new Padding(3, 8, 3, 3);
-        grid.Controls.Add(box, 1, row);
-        if (!string.IsNullOrEmpty(helpText))
-        {
-            grid.Controls.Add(CreateHelpIcon(box.Text, helpText), 2, row);
-        }
+        // A checkbox never fills the column (AutoSize sizes it to its own Text) -
+        // wrap it with the help icon so the icon sits right after the label text
+        // instead of stranded at column 2's fixed far-right position.
+        AddWrappedWithHelp(grid, row, box, box.Text, helpText);
         WireSource(box, fileName, jsonPath);
     }
 
@@ -159,6 +158,12 @@ public partial class MainForm
         _taxCodesGrid.Columns.Add("Abbreviation", "PortPro Abbreviation");
         _taxCodesGrid.Columns.Add("Sage50Code", "Sage 50 Tax Code");
         _taxCodesGrid.RowHeadersVisible = false;
+
+        // Proportional widths (FillWeight, not pixels) - same pattern as the
+        // History tab's grids: sums to 100, so these read directly as percentages.
+        _taxCodesGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        _taxCodesGrid.Columns["Abbreviation"].FillWeight = 50;
+        _taxCodesGrid.Columns["Sage50Code"].FillWeight = 50;
     }
 
     private void SetupChargeAccountMapGrid()
@@ -168,7 +173,15 @@ public partial class MainForm
         _chargeAccountMapGrid.Columns.Add("Sage50AccountName", "Sage 50 Account Name (reference only)");
         _chargeAccountMapGrid.Columns.Add("Sage50AccountNumber", "Sage 50 Account Number (used)");
         _chargeAccountMapGrid.RowHeadersVisible = false;
-        foreach (DataGridViewColumn col in _chargeAccountMapGrid.Columns) col.Width = 190;
+
+        // Proportional widths (FillWeight, not pixels) - the two reference-only
+        // columns get less room than the charge name (what's matched on) and the
+        // account number (what actually gets used).
+        _chargeAccountMapGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        _chargeAccountMapGrid.Columns["PortProChargeName"].FillWeight = 30;
+        _chargeAccountMapGrid.Columns["PortProChargeNumber"].FillWeight = 15;
+        _chargeAccountMapGrid.Columns["Sage50AccountName"].FillWeight = 25;
+        _chargeAccountMapGrid.Columns["Sage50AccountNumber"].FillWeight = 30;
     }
 
     private void RefreshSage50Tab()

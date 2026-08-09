@@ -5,7 +5,7 @@ namespace PortProSage.Admin;
 public partial class MainForm
 {
     private NumericUpDown _syncPollingIntervalMinutes = new() { Minimum = 1, Maximum = 1440 };
-    private NumericUpDown _syncInitialLookbackDays = new() { Minimum = 1, Maximum = 3650 };
+    private NumericUpDown _syncProcessingDelayDays = new() { Minimum = 0, Maximum = 3650 };
     private TextBox _syncTriggerFolder = new();
     private TextBox _syncProcessedTriggerFolder = new();
     private TextBox _syncStateDatabasePath = new();
@@ -24,16 +24,25 @@ public partial class MainForm
 
         _syncMinimumLogLevel.Items.AddRange(new object[] { "Verbose", "Debug", "Information", "Warning", "Error", "Fatal" });
 
-        AddRow(grid, "Automatic Sync - Initial Lookback (Days)", _syncInitialLookbackDays, f, "PortProSage:Sync:InitialLookbackDays",
-            "Only matters the very first time the automatic poll ever runs, before any watermark has been saved yet. " +
-            "It sets how far back to look for changed invoices on that first run.\n\n" +
-            "Example: 7 means the very first automatic poll looks at invoices changed in the last 7 days. After that " +
-            "first run, it always continues from the saved watermark instead, regardless of this value - changing " +
-            "this later has no effect unless the watermark is cleared/reset.");
+        AddRow(grid, "Automatic Sync - Processing Delay (Days)", _syncProcessingDelayDays, f, "PortProSage:Sync:ProcessingDelayDays",
+            "Holds back the most recent N days - every watermark-driven run (the automatic poll, or a manual " +
+            "\"Continue\" run) only processes invoices up to (today minus this many days), never anything more " +
+            "recent, giving a just-changed invoice time to settle/be corrected in PortPro before it's synced to " +
+            "Sage 50.\n\n" +
+            "Example: if today is Aug 9 and this is 7, only invoices dated/changed up to Aug 2 are processed - " +
+            "nothing from Aug 3 onward yet. Nothing is permanently skipped: an invoice held back this way is simply " +
+            "picked up on a later run once it ages past the delay window.\n\n" +
+            "Also used, once, on the very first automatic run ever (before any watermark exists) to set how far " +
+            "back that first run's starting point is, counted from the same delayed upper bound above.\n\n" +
+            "0 disables the delay - runs process up to right now, with no holdback.");
         AddRow(grid, "Automatic Sync - Polling Interval (minutes)", _syncPollingIntervalMinutes, f, "PortProSage:Sync:PollingIntervalMinutes",
             "How often the automatic background poll checks PortPro for changed invoices, when the Service is running " +
             "continuously (not counting manual triggers, which are checked every 15 seconds regardless of this).\n\n" +
             "Example: 15 means PortPro is checked for new/changed invoices once every 15 minutes.");
+        AddRow(grid, "Cutoff (Lower) Invoice Date", _syncCutoffInvoiceDate, f, "PortProSage:Sync:CutoffInvoiceDate",
+            CutoffInvoiceDateHelpText, stretchInput: false);
+        WireCutoffInvoiceDateControl(_syncCutoffInvoiceDate);
+        RefreshAllTabsFromConfig += RefreshCutoffInvoiceDateControls;
         AddFolderRow(grid, "Trigger folder", _syncTriggerFolder, f, "PortProSage:Sync:TriggerFolder",
             "The folder the running Service watches for new manual sync requests - both the command-line Trigger " +
             "tool and this Admin app's Run tab drop a request file here.\n\n" +
@@ -85,7 +94,7 @@ public partial class MainForm
     {
         if (_appSettings is null) return;
         _syncPollingIntervalMinutes.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.PollingIntervalMinutes", 15), _syncPollingIntervalMinutes.Minimum, _syncPollingIntervalMinutes.Maximum);
-        _syncInitialLookbackDays.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.InitialLookbackDays", 7), _syncInitialLookbackDays.Minimum, _syncInitialLookbackDays.Maximum);
+        _syncProcessingDelayDays.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.ProcessingDelayDays", 7), _syncProcessingDelayDays.Minimum, _syncProcessingDelayDays.Maximum);
         _syncTriggerFolder.Text = _appSettings.GetString("PortProSage.Sync.TriggerFolder");
         _syncProcessedTriggerFolder.Text = _appSettings.GetString("PortProSage.Sync.ProcessedTriggerFolder");
         _syncStateDatabasePath.Text = _appSettings.GetString("PortProSage.Sync.StateDatabasePath");
@@ -104,7 +113,7 @@ public partial class MainForm
     {
         if (_appSettings is null) return;
         _appSettings.SetInt("PortProSage.Sync.PollingIntervalMinutes", (int)_syncPollingIntervalMinutes.Value);
-        _appSettings.SetInt("PortProSage.Sync.InitialLookbackDays", (int)_syncInitialLookbackDays.Value);
+        _appSettings.SetInt("PortProSage.Sync.ProcessingDelayDays", (int)_syncProcessingDelayDays.Value);
         _appSettings.SetString("PortProSage.Sync.TriggerFolder", _syncTriggerFolder.Text);
         _appSettings.SetString("PortProSage.Sync.ProcessedTriggerFolder", _syncProcessedTriggerFolder.Text);
         _appSettings.SetString("PortProSage.Sync.StateDatabasePath", _syncStateDatabasePath.Text);
@@ -149,13 +158,16 @@ public partial class MainForm
         };
         wrap.Controls.Add(textBox);
         wrap.Controls.Add(openButton);
+        if (!string.IsNullOrEmpty(helpText))
+        {
+            // Wrapped together with the textbox+button, not column 2's fixed
+            // far-right position - so the icon sits right next to the button
+            // instead of stranded past a large empty gap.
+            wrap.Controls.Add(CreateHelpIcon(labelText.Replace("\n", " "), helpText));
+        }
 
         grid.Controls.Add(label, 0, row);
         grid.Controls.Add(wrap, 1, row);
-        if (!string.IsNullOrEmpty(helpText))
-        {
-            grid.Controls.Add(CreateHelpIcon(labelText.Replace("\n", " "), helpText), 2, row);
-        }
         WireSource(textBox, fileName, jsonPath);
     }
 

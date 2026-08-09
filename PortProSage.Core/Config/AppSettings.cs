@@ -236,13 +236,43 @@ public class ChargeAccountMapping
 
 public class SyncSettings
 {
+    /// <summary>
+    /// If set, no invoice dated before this is ever processed by ANY run - manual
+    /// or automatic, regardless of mode. Checked in SyncOrchestrator.RunAsync
+    /// against each invoice's own date (BillingDate, falling back to
+    /// CompletedDate) before it's ever handed to Sage 50, the same way the zero/
+    /// negative-amount filter already works. This exists specifically to catch,
+    /// in our own code, the exact situation that has repeatedly killed a run
+    /// outright: Sage 50's own "Do Not Allow Transactions Dated Before" company
+    /// setting rejects a too-old invoice mid-write, which
+    /// Sage50Client.TerminateOnFatalWriteError treats as unrecoverable and
+    /// terminates the whole process over. Filtering it out here instead turns that
+    /// into an ordinary, logged skip - nothing crashes, and every other eligible
+    /// invoice in the same run still gets processed. Null (the default) disables
+    /// this check entirely - every invoice is eligible regardless of date.
+    /// </summary>
+    public DateTimeOffset? CutoffInvoiceDate { get; set; }
+
     /// <summary>How often the automatic "last changed date" sync runs, in minutes.</summary>
     public int PollingIntervalMinutes { get; set; } = 15;
 
     /// <summary>
-    /// On first run (no watermark stored yet), how many days back to look for changed invoices.
+    /// Serves two roles under one number, both driven by the same "hold back N
+    /// days" idea:
+    ///   1. Every watermark-driven run (the automatic poll, or a manual "Continue"
+    ///      run) caps its upper date bound at (now - this many days), not raw
+    ///      "now" - e.g. if today is Aug 9 and this is 7, nothing dated after
+    ///      Aug 2 is processed yet. This gives a recently-changed invoice time to
+    ///      settle/be corrected in PortPro before it's ever synced to Sage 50.
+    ///      Nothing is permanently skipped - the persisted watermark never
+    ///      advances past this capped bound either, so a held-back invoice is
+    ///      simply picked up on a later run once it ages past the delay window.
+    ///   2. On the very first run ever (no watermark saved yet), it also sets how
+    ///      far back that first run's LOWER bound starts - e.g. 7 means the very
+    ///      first run covers invoices from 7 days before the (already-delayed)
+    ///      upper bound above.
     /// </summary>
-    public int InitialLookbackDays { get; set; } = 7;
+    public int ProcessingDelayDays { get; set; } = 7;
 
     /// <summary>Folder the service watches for manual trigger request files dropped by PortProSage.Trigger.</summary>
     public string TriggerFolder { get; set; } = "C:\\PortProSageSync\\requests";

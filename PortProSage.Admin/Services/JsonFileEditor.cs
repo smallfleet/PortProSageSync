@@ -109,6 +109,13 @@ public class JsonFileEditor
     }
 
     public void SetString(string path, string value) => SetLeaf(path, JsonValue.Create(value));
+
+    /// <summary>Writes an actual JSON null (not an empty string) when value is
+    /// blank - for a nullable setting like SyncSettings.CutoffInvoiceDate, where
+    /// "" would fail to bind as DateTimeOffset? on the Service side, but a real
+    /// JSON null correctly binds to null (cutoff disabled).</summary>
+    public void SetOptionalString(string path, string? value) =>
+        SetLeaf(path, string.IsNullOrWhiteSpace(value) ? null : JsonValue.Create(value));
     public void SetBool(string path, bool value) => SetLeaf(path, JsonValue.Create(value));
     public void SetInt(string path, int value) => SetLeaf(path, JsonValue.Create(value));
     public void SetArray(string path, JsonArray value) => SetLeaf(path, value);

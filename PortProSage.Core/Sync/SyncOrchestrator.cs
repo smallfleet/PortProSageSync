@@ -61,9 +61,13 @@ public class SyncOrchestrator
         // any other persisted state - see SyncRequest.UseWatermark's doc comment.
         if (request.UseWatermark)
         {
-            request.From = result.WatermarkBeforeRun
-                ?? DateTimeOffset.UtcNow.AddDays(-Math.Max(1, _syncSettings.InitialLookbackDays));
-            request.To = DateTimeOffset.UtcNow;
+            // Upper bound capped at "now minus ProcessingDelayDays", not raw "now" -
+            // see SyncSettings.ProcessingDelayDays's doc comment. The watermark
+            // never advances past this capped bound (below), so a held-back
+            // invoice is simply picked up on a later run once it clears the delay.
+            var upperBound = DateTimeOffset.UtcNow.AddDays(-Math.Max(0, _syncSettings.ProcessingDelayDays));
+            request.From = result.WatermarkBeforeRun ?? upperBound.AddDays(-Math.Max(1, _syncSettings.ProcessingDelayDays));
+            request.To = upperBound;
         }
 
         _logger.LogInformation(
@@ -91,6 +95,26 @@ public class SyncOrchestrator
                         skipped.ReferenceNumber, skipped.Id, skipped.TotalAmount);
                 }
                 invoices = invoices.Where(i => i.TotalAmount > 0m).ToList();
+            }
+
+            // Invoices dated before the configured cutoff (if any) are never
+            // attempted - see SyncSettings.CutoffInvoiceDate's doc comment for why:
+            // this is what actually stops the run-killing Sage 50 rejection at the
+            // source, instead of hitting it mid-write.
+            if (_syncSettings.CutoffInvoiceDate is { } cutoff)
+            {
+                var tooOld = invoices.Where(i => (i.BillingDate ?? i.CompletedDate) is { } d && d < cutoff).ToList();
+                if (tooOld.Count > 0)
+                {
+                    result.InvoicesSkippedBeforeCutoff = tooOld.Count;
+                    foreach (var skipped in tooOld)
+                    {
+                        _logger.LogInformation(
+                            "Skipping invoice {Ref} (id={Id}) - dated {Date}, before the configured cutoff {Cutoff}.",
+                            skipped.ReferenceNumber, skipped.Id, skipped.BillingDate ?? skipped.CompletedDate, cutoff);
+                    }
+                    invoices = invoices.Except(tooOld).ToList();
+                }
             }
 
             // Process strictly in ascending invoice-number order (ordinal string

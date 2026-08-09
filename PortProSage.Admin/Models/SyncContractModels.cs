@@ -47,6 +47,7 @@ public class SyncResult
     public int InvoicesImported { get; set; }
     public int InvoicesSkippedAlreadyImported { get; set; }
     public int InvoicesSkippedZeroOrNegativeAmount { get; set; }
+    public int InvoicesSkippedBeforeCutoff { get; set; }
     public int InvoicesFailedValidation { get; set; }
     public int InvoicesFailedImport { get; set; }
     public List<InvoiceProcessingOutcome> Outcomes { get; set; } = new();

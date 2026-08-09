@@ -105,26 +105,26 @@ public partial class MainForm
         _historyGrid.Columns.Add("Seq", "#");
         _historyGrid.Columns.Add("RequestId", "Request ID");
         _historyGrid.Columns.Add("Source", "Source");
-        _historyGrid.Columns.Add("ProcessId", "PID");
         _historyGrid.Columns.Add("Mode", "Mode");
         _historyGrid.Columns.Add("Started", "Started");
         _historyGrid.Columns.Add("Finished", "Finished");
         _historyGrid.Columns.Add("Fetched", "Fetched");
         _historyGrid.Columns.Add("Imported", "Imported");
         _historyGrid.Columns.Add("Skipped", "Already imported");
+        _historyGrid.Columns.Add("SkippedCutoff", "Before cutoff");
         _historyGrid.Columns.Add("FailedVal", "Failed validation");
         _historyGrid.Columns.Add("FailedImp", "Failed write");
         _historyGrid.Columns.Add("Status", "Status");
 
         _historyGrid.Columns["Seq"].Width = 45;
         _historyGrid.Columns["Source"].Width = 110;
-        _historyGrid.Columns["ProcessId"].Width = 60;
         _historyGrid.Columns["Mode"].Width = 130;
         _historyGrid.Columns["Started"].Width = 130;
         _historyGrid.Columns["Finished"].Width = 130;
         _historyGrid.Columns["Fetched"].Width = 60;
         _historyGrid.Columns["Imported"].Width = 65;
         _historyGrid.Columns["Skipped"].Width = 100;
+        _historyGrid.Columns["SkippedCutoff"].Width = 90;
         _historyGrid.Columns["FailedVal"].Width = 100;
         _historyGrid.Columns["FailedImp"].Width = 90;
         _historyGrid.Columns["Status"].Width = 100;
@@ -133,6 +133,13 @@ public partial class MainForm
         // absorb whatever's left - Request IDs are a consistent-length GUID, so
         // this settles at a fitting width rather than an arbitrarily large one.
         _historyGrid.Columns["RequestId"].AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
+
+        // Now that Request ID no longer soaks up the leftover space, something
+        // else has to, or the grid just leaves a growing gray gap on the right as
+        // the window widens (confirmed live - that's exactly what happened).
+        // Status is the last column, so it stretching doesn't disrupt the visual
+        // flow of the numeric/date columns in the middle of the table.
+        _historyGrid.Columns["Status"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
     }
 
     private void SetupOutcomesGrid()
@@ -297,13 +304,13 @@ public partial class MainForm
                 seqByRequestId.GetValueOrDefault(entry.RequestId, 0),
                 entry.RequestId,
                 source,
-                entry.Result?.ProcessId.ToString() ?? "",
                 mode,
                 entry.Result?.StartedAtUtc.ToLocalTime().ToString("g") ?? entry.Request?.RequestedAtUtc.ToLocalTime().ToString("g") ?? "",
                 finishedText,
                 entry.Result?.InvoicesFetched.ToString() ?? "",
                 entry.Result?.InvoicesImported.ToString() ?? "",
                 entry.Result?.InvoicesSkippedAlreadyImported.ToString() ?? "",
+                entry.Result?.InvoicesSkippedBeforeCutoff.ToString() ?? "",
                 entry.Result?.InvoicesFailedValidation.ToString() ?? "",
                 entry.Result?.InvoicesFailedImport.ToString() ?? "",
                 status);
@@ -488,7 +495,6 @@ public partial class MainForm
             lines.Add("");
             lines.Add($"Started:  {entry.Result.StartedAtUtc.ToLocalTime():G}");
             lines.Add($"Finished: {entry.Result.FinishedAtUtc.ToLocalTime():G}");
-            lines.Add($"Process ID: {entry.Result.ProcessId}");
 
             if (entry.Result.Skipped)
             {
@@ -504,6 +510,7 @@ public partial class MainForm
             lines.Add($"Imported (real writes this run): {entry.Result.InvoicesImported}");
             lines.Add($"Already imported (skipped): {entry.Result.InvoicesSkippedAlreadyImported}");
             lines.Add($"Zero/negative amount (skipped): {entry.Result.InvoicesSkippedZeroOrNegativeAmount}");
+            lines.Add($"Before cutoff invoice date (skipped): {entry.Result.InvoicesSkippedBeforeCutoff}");
             lines.Add($"Failed validation: {entry.Result.InvoicesFailedValidation}");
             lines.Add($"Failed write: {entry.Result.InvoicesFailedImport}");
             lines.Add("");
