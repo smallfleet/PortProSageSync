@@ -17,9 +17,18 @@ public class RunHistoryEntry
     /// or the Automatic Service's own periodic poll.</summary>
     public bool IsManual { get; set; }
 
-    /// <summary>True when this entry has no *.result.json - reconstructed from log lines
-    /// instead (this happens for the automatic poll, which never writes a result file -
-    /// only manual/file-triggered runs go through TriggerFileManager.Archive).</summary>
+    /// <summary>True for one cycle of the Automatic Service's own periodic poll
+    /// (Worker.RunAutomaticLastChangedSyncAsync) - which now writes a request/result
+    /// file pair the same way Manual Run does (see TriggerFileManager.WriteResult),
+    /// so a crashed cycle (request written, no result) is detected identically to an
+    /// orphaned Manual Run instead of needing separate log-reconstruction logic.</summary>
+    public bool IsAutomaticPoll { get; set; }
+
+    /// <summary>True when this entry has no on-disk request/result file at all and was
+    /// reconstructed purely from "Starting sync .../Finished sync ..." log lines - a
+    /// fallback for automatic-poll cycles that ran before Worker.cs started writing
+    /// real files for them (see IsAutomaticPoll). New auto-poll runs no longer need
+    /// this path.</summary>
     public bool ReconstructedFromLog { get; set; }
 
     /// <summary>Set by MainForm.RefreshHistoryList (WMI-based, needs live process
@@ -52,7 +61,7 @@ public static class RunHistoryService
 
     private const string TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff zzz";
 
-    public static List<RunHistoryEntry> ListRuns(string triggerFolder, string processedFolder, string logFolder, string manualRunFolder)
+    public static List<RunHistoryEntry> ListRuns(string triggerFolder, string processedFolder, string logFolder, string manualRunFolder, string autoPollFolder)
     {
         var byId = new Dictionary<string, RunHistoryEntry>();
 
@@ -95,10 +104,26 @@ public static class RunHistoryService
             }
         }
 
-        // Anything left (mainly the automatic poll, which never writes a result
-        // file) is reconstructed from the "Starting sync .../Finished sync ..."
-        // log lines themselves - covers today's and yesterday's log so a run
-        // near midnight isn't missed.
+        // The Automatic Service's own poll cycles - same on-disk shape as Manual
+        // Run's folder (request written before the run, result written after, no
+        // archiving/moving), so a crashed cycle (request with no result) is exactly
+        // as detectable as an orphaned Manual Run.
+        if (Directory.Exists(autoPollFolder))
+        {
+            foreach (var requestFile in Directory.EnumerateFiles(autoPollFolder, "*.request.json"))
+            {
+                var id = Path.GetFileName(requestFile).Replace(".request.json", "");
+                var request = TryDeserialize<SyncRequest>(requestFile);
+                var resultFile = Path.Combine(autoPollFolder, $"{id}.result.json");
+                var result = File.Exists(resultFile) ? TryDeserialize<SyncResult>(resultFile) : null;
+                byId[id] = new RunHistoryEntry { RequestId = id, Request = request, Result = result, IsPending = result is null, IsAutomaticPoll = true };
+            }
+        }
+
+        // Fallback only - covers automatic-poll cycles that ran before Worker.cs
+        // started writing real request/result files for them (see IsAutomaticPoll),
+        // reconstructed from "Starting sync .../Finished sync ..." log lines. Skips
+        // anything already found as a real file above via knownIds.
         foreach (var entry in ReconstructFromLogs(logFolder, byId.Keys))
         {
             byId[entry.RequestId] = entry;
@@ -111,7 +136,8 @@ public static class RunHistoryService
     {
         if (!Directory.Exists(logFolder)) yield break;
 
-        var starts = new Dictionary<string, DateTimeOffset>();
+        var starts = new Dictionary<string, (DateTimeOffset Timestamp, string FilterType, bool UseWatermark)>();
+        var finishedIds = new HashSet<string>();
 
         foreach (var day in new[] { DateTimeOffset.Now, DateTimeOffset.Now.AddDays(-1) })
         {
@@ -129,7 +155,8 @@ public static class RunHistoryService
                     var id = startMatch.Groups["id"].Value;
                     if (DateTimeOffset.TryParseExact(startMatch.Groups["ts"].Value, TimestampFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out var startTs))
                     {
-                        starts[id] = startTs;
+                        starts[id] = (startTs, startMatch.Groups["filter"].Value.Trim('"'),
+                            string.Equals(startMatch.Groups["watermark"].Value, "true", StringComparison.OrdinalIgnoreCase));
                     }
                     continue;
                 }
@@ -138,6 +165,7 @@ public static class RunHistoryService
                 if (!finishMatch.Success) continue;
 
                 var finishId = finishMatch.Groups["id"].Value;
+                finishedIds.Add(finishId);
                 if (knownIds.Contains(finishId)) continue; // already have a real result.json for this one
 
                 if (!DateTimeOffset.TryParseExact(finishMatch.Groups["ts"].Value, TimestampFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out var finishTs))
@@ -152,7 +180,7 @@ public static class RunHistoryService
                     Result = new SyncResult
                     {
                         RequestId = finishId,
-                        StartedAtUtc = starts.TryGetValue(finishId, out var s) ? s : finishTs,
+                        StartedAtUtc = starts.TryGetValue(finishId, out var s) ? s.Timestamp : finishTs,
                         FinishedAtUtc = finishTs,
                         InvoicesFetched = int.Parse(finishMatch.Groups["fetched"].Value),
                         InvoicesImported = int.Parse(finishMatch.Groups["imported"].Value),
@@ -163,6 +191,36 @@ public static class RunHistoryService
                     }
                 };
             }
+        }
+
+        // A "Starting sync" with no matching "Finished sync" anywhere in either
+        // day's log - the automatic poll started this cycle and the process died
+        // before it could finish (crashed, or hit a fatal condition like
+        // Sage50Client.TerminateOnFatalWriteError's Environment.Exit). Confirmed
+        // live 2026-08-09 this made the run completely invisible in History &
+        // Logs, since previously only a matched start/finish pair produced an
+        // entry at all - a start with no finish was silently dropped. Yielded
+        // here as a pending entry (no Result) so MainForm.RefreshHistoryList's
+        // existing "interrupted, synthesize Finished from the log" handling
+        // picks it up the same way an orphaned Manual Run already does.
+        foreach (var (id, info) in starts)
+        {
+            if (finishedIds.Contains(id) || knownIds.Contains(id)) continue;
+
+            yield return new RunHistoryEntry
+            {
+                RequestId = id,
+                ReconstructedFromLog = true,
+                IsPending = true,
+                Request = new SyncRequest
+                {
+                    RequestId = id,
+                    FilterType = Enum.TryParse<FilterType>(info.FilterType, out var filterType) ? filterType : FilterType.LastChangedDate,
+                    UseWatermark = info.UseWatermark,
+                    RequestedAtUtc = info.Timestamp,
+                    RequestedBy = "automatic poll"
+                }
+            };
         }
     }
 

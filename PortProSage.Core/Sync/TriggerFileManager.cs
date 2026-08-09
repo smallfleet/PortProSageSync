@@ -65,4 +65,21 @@ public static class TriggerFileManager
         var destResult = Path.Combine(processedFolder, resultFileName);
         File.WriteAllText(destResult, JsonSerializer.Serialize(result, JsonOptions));
     }
+
+    /// <summary>Writes just the result half of a request/result pair whose request was
+    /// already written via Write(folder, request) - no Archive/Move step, since the
+    /// automatic poll (Worker.RunAutomaticLastChangedSyncAsync) builds and runs its
+    /// own SyncRequest in one step rather than picking up a pre-existing pending file.
+    /// Writing the request BEFORE calling RunAsync and the result only AFTER (i.e.
+    /// only if the process didn't die mid-run) gives every automatic poll cycle the
+    /// exact same on-disk lifecycle as a Manual Run: request-only-on-disk means
+    /// interrupted, request+result means completed - so RunHistoryService can detect
+    /// both the same way instead of needing separate log-reconstruction logic for
+    /// the automatic case.</summary>
+    public static void WriteResult(string folder, string requestId, SyncResult result)
+    {
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, $"{requestId}.result.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(result, JsonOptions));
+    }
 }

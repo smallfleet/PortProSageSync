@@ -84,11 +84,81 @@ public partial class MainForm : Form
         var reload = new Button { Text = "Reload", Location = new Point(680, 5), Width = 80 };
         reload.Click += (_, _) => TryLoadConfig();
 
+        // Right-aligned (Anchor, not a fixed coordinate like the buttons above) so
+        // it stays pinned to the right edge if the window is ever resized wider,
+        // rather than leaving a growing gap.
+        const int readmeWidth = 70;
+        const string readmeHelpText =
+            "Opens README.md - the technical overview of how this whole system works (automatic sync, manual " +
+            "triggers, validation/auto-matching rules, log/troubleshooting locations) - in whatever application " +
+            "is associated with .md files on this computer (Notepad, VS Code, a browser, etc).\n\n" +
+            "Looked for next to this app, next to the configured Service folder, and at the repo root on this " +
+            "development machine - if none of those have it, you'll see a message saying so instead of it just " +
+            "silently doing nothing.";
+        var readme = new Button { Text = "Readme", Width = readmeWidth, Anchor = AnchorStyles.Top | AnchorStyles.Right };
+        readme.Click += (_, _) => OpenReadme();
+        var readmeHelp = CreateHelpIcon("Readme", readmeHelpText);
+        readmeHelp.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+
+        panel.SizeChanged += (_, _) =>
+        {
+            readmeHelp.Location = new Point(panel.Width - readmeHelp.Width - 8, 8);
+            readme.Location = new Point(readmeHelp.Left - readme.Width - 6, 5);
+        };
+        readmeHelp.Location = new Point(panel.Width - readmeHelp.Width - 8, 8);
+        readme.Location = new Point(readmeHelp.Left - readme.Width - 6, 5);
+
         panel.Controls.Add(label);
         panel.Controls.Add(_serviceFolderBox);
         panel.Controls.Add(browse);
         panel.Controls.Add(reload);
+        panel.Controls.Add(readme);
+        panel.Controls.Add(readmeHelp);
         return panel;
+    }
+
+    /// <summary>Finds README.md next to this app, next to the configured Service
+    /// folder (both the folder itself and walking up to a typical dev repo root),
+    /// or at the hardcoded dev-machine repo path - covers both a normal dev
+    /// checkout and a production install, as long as Install-Production.ps1 copied
+    /// the docs alongside the published Service (see DEPLOYMENT.md).</summary>
+    private void OpenReadme()
+    {
+        var candidates = new List<string> { Path.Combine(AppContext.BaseDirectory, "README.md") };
+
+        var serviceFolder = _serviceFolderBox.Text;
+        if (!string.IsNullOrWhiteSpace(serviceFolder))
+        {
+            candidates.Add(Path.Combine(serviceFolder, "README.md"));
+            candidates.Add(Path.Combine(serviceFolder, "..", "README.md"));
+            candidates.Add(Path.Combine(serviceFolder, "..", "..", "..", "..", "README.md")); // typical dev ...\PortProSage.Service\bin\Debug\net48 depth -> repo root
+        }
+
+        candidates.Add(@"C:\PortProSageSync\README.md");
+
+        var found = candidates.Select(Path.GetFullPath).FirstOrDefault(File.Exists);
+        if (found is null)
+        {
+            MessageBox.Show(this,
+                "Could not find README.md in any of the usual locations (next to this app, next to the Service " +
+                "folder, or the repo root).",
+                "Readme not found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = found,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Could not open:\n{found}\n\n{ex.Message}", "Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     /// <summary>

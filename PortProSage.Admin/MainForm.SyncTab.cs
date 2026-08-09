@@ -12,6 +12,7 @@ public partial class MainForm
     private TextBox _syncLogFolder = new();
     private TextBox _syncFailedTransactionsFolder = new();
     private ComboBox _syncMinimumLogLevel = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 250 };
+    private NumericUpDown _syncLogRetentionDays = new() { Minimum = 0, Maximum = 3650 };
 
     private const int FieldHalfWidth = 420;
 
@@ -23,15 +24,16 @@ public partial class MainForm
 
         _syncMinimumLogLevel.Items.AddRange(new object[] { "Verbose", "Debug", "Information", "Warning", "Error", "Fatal" });
 
-        AddRow(grid, "Polling interval (minutes)", _syncPollingIntervalMinutes, f, "PortProSage:Sync:PollingIntervalMinutes",
-            "How often the automatic background poll checks PortPro for changed invoices, when the Service is running " +
-            "continuously (not counting manual triggers, which are checked every 15 seconds regardless of this).\n\n" +
-            "Example: 15 means PortPro is checked for new/changed invoices once every 15 minutes.");
-        AddRow(grid, "Initial lookback (days)", _syncInitialLookbackDays, f, "PortProSage:Sync:InitialLookbackDays",
+        AddRow(grid, "Automatic Sync - Initial Lookback (Days)", _syncInitialLookbackDays, f, "PortProSage:Sync:InitialLookbackDays",
             "Only matters the very first time the automatic poll ever runs, before any watermark has been saved yet. " +
             "It sets how far back to look for changed invoices on that first run.\n\n" +
             "Example: 7 means the very first automatic poll looks at invoices changed in the last 7 days. After that " +
-            "first run, it always continues from the saved watermark instead, regardless of this value.");
+            "first run, it always continues from the saved watermark instead, regardless of this value - changing " +
+            "this later has no effect unless the watermark is cleared/reset.");
+        AddRow(grid, "Automatic Sync - Polling Interval (minutes)", _syncPollingIntervalMinutes, f, "PortProSage:Sync:PollingIntervalMinutes",
+            "How often the automatic background poll checks PortPro for changed invoices, when the Service is running " +
+            "continuously (not counting manual triggers, which are checked every 15 seconds regardless of this).\n\n" +
+            "Example: 15 means PortPro is checked for new/changed invoices once every 15 minutes.");
         AddFolderRow(grid, "Trigger folder", _syncTriggerFolder, f, "PortProSage:Sync:TriggerFolder",
             "The folder the running Service watches for new manual sync requests - both the command-line Trigger " +
             "tool and this Admin app's Run tab drop a request file here.\n\n" +
@@ -57,6 +59,14 @@ public partial class MainForm
             "produces far more detail (useful when actively troubleshooting), Warning/Error/Fatal produce much less.\n\n" +
             "Example: Information logs each invoice processed and each write to Sage 50, without every low-level HTTP detail.",
             stretchInput: false);
+        AddRow(grid, "Cleanup log after execution (Days)", _syncLogRetentionDays, f, "PortProSage:Sync:LogRetentionDays",
+            "Checked at the end of every sync run (manual, automatic, or trigger) - any daily log file in Log folder " +
+            "older than this many days is PERMANENTLY DELETED. This is NOT reversible; a removed log file cannot " +
+            "be recovered.\n\n" +
+            "0 means cleanup is turned OFF - nothing is ever removed automatically, regardless of how old the logs " +
+            "get.\n\n" +
+            "Example: 60 keeps the most recent 60 days of logs; anything older is deleted the next time any sync " +
+            "runs (not on a fixed schedule of its own).");
 
         var save = new Button { Text = "Save Sync settings", Dock = DockStyle.Bottom, Height = 32 };
         save.Click += (_, _) => SaveSyncTab();
@@ -83,6 +93,7 @@ public partial class MainForm
         _syncFailedTransactionsFolder.Text = _appSettings.GetString("PortProSage.Sync.FailedTransactionsFolder");
         var level = _appSettings.GetString("PortProSage.Sync.MinimumLogLevel", "Information");
         _syncMinimumLogLevel.SelectedItem = _syncMinimumLogLevel.Items.Cast<string>().FirstOrDefault(i => i == level) ?? "Information";
+        _syncLogRetentionDays.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.LogRetentionDays", 0), _syncLogRetentionDays.Minimum, _syncLogRetentionDays.Maximum);
 
         // Also feeds the Run/Results tabs - they need the real TriggerFolder/
         // ProcessedTriggerFolder/LogFolder values, not a guess.
@@ -100,6 +111,7 @@ public partial class MainForm
         _appSettings.SetString("PortProSage.Sync.LogFolder", _syncLogFolder.Text);
         _appSettings.SetString("PortProSage.Sync.FailedTransactionsFolder", _syncFailedTransactionsFolder.Text);
         _appSettings.SetString("PortProSage.Sync.MinimumLogLevel", _syncMinimumLogLevel.SelectedItem?.ToString() ?? "Information");
+        _appSettings.SetInt("PortProSage.Sync.LogRetentionDays", (int)_syncLogRetentionDays.Value);
         _appSettings.Save();
 
         RefreshRunTabFolders();

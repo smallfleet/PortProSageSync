@@ -42,7 +42,8 @@ public class SyncOrchestrator
         var result = new SyncResult
         {
             RequestId = request.RequestId,
-            StartedAtUtc = DateTimeOffset.UtcNow
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id
         };
 
         // Pre-image of the persisted "continue from" state - captured before
@@ -228,6 +229,19 @@ public class SyncOrchestrator
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to write/email the failed-transactions report for sync {RequestId}", request.RequestId);
+        }
+
+        // Checked at the end of every run, not on a separate timer - see
+        // LogRetentionService's doc comment. No-op unless LogRetentionDays is
+        // explicitly set above 0; a cleanup failure (e.g. today's file still
+        // locked) must never fail the sync itself.
+        try
+        {
+            LogRetentionService.CleanupOldLogs(_syncSettings, _logger);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Log retention cleanup failed for sync {RequestId}", request.RequestId);
         }
 
         return result;

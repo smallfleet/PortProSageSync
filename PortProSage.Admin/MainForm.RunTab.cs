@@ -10,6 +10,7 @@ public partial class MainForm
     private string _processedTriggerFolder = "";
     private string _logFolder = "";
     private string _manualRunFolder = "";
+    private string _autoPollFolder = "";
     private Process? _manualRunProcess;
 
     private ComboBox _runMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
@@ -279,11 +280,12 @@ public partial class MainForm
         _triggerFolder = _appSettings.GetString("PortProSage.Sync.TriggerFolder");
         _processedTriggerFolder = _appSettings.GetString("PortProSage.Sync.ProcessedTriggerFolder");
         _logFolder = _appSettings.GetString("PortProSage.Sync.LogFolder");
-        // A subfolder of TriggerFolder, not TriggerFolder itself - the Worker's
-        // trigger-folder scan is non-recursive, so Manual Run's request/result
-        // files here are never picked up (and duplicated) by the Automatic
-        // Service's own trigger-watching.
+        // Subfolders of TriggerFolder, not TriggerFolder itself - the Worker's
+        // trigger-folder scan is non-recursive, so neither Manual Run's nor the
+        // Automatic Service's own request/result files here get picked up (and
+        // duplicated) by the trigger-watching scan.
         _manualRunFolder = string.IsNullOrWhiteSpace(_triggerFolder) ? "" : Path.Combine(_triggerFolder, "manual");
+        _autoPollFolder = string.IsNullOrWhiteSpace(_triggerFolder) ? "" : Path.Combine(_triggerFolder, "auto-poll");
         RefreshHistoryList();
     }
 

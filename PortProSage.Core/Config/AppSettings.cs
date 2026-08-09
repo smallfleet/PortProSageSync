@@ -270,4 +270,15 @@ public class SyncSettings
     /// Warning is usually enough once promoted to production.
     /// </summary>
     public string MinimumLogLevel { get; set; } = "Information";
+
+    /// <summary>
+    /// How many days of daily rolling log files (LogFolder) to keep - checked at
+    /// the end of every sync run (see LogRetentionService), not on a separate
+    /// timer, so it's tied to actual activity rather than needing its own
+    /// scheduling. A file whose date in its name (portpro-sage-sync-yyyyMMdd.log)
+    /// is older than today minus this many days is deleted permanently - this is
+    /// NOT recoverable. 0 disables cleanup entirely (the default posture: never
+    /// delete anything unless explicitly configured to).
+    /// </summary>
+    public int LogRetentionDays { get; set; } = 0;
 }

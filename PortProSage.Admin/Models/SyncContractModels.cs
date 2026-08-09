@@ -40,6 +40,9 @@ public class SyncResult
     public string RequestId { get; set; } = string.Empty;
     public DateTimeOffset StartedAtUtc { get; set; }
     public DateTimeOffset FinishedAtUtc { get; set; }
+    public int ProcessId { get; set; }
+    public bool Skipped { get; set; }
+    public string? SkipReason { get; set; }
     public int InvoicesFetched { get; set; }
     public int InvoicesImported { get; set; }
     public int InvoicesSkippedAlreadyImported { get; set; }

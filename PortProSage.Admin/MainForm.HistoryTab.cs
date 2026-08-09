@@ -102,8 +102,10 @@ public partial class MainForm
         // sized to fit a small number, not stretched for no reason.
         _historyGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
 
+        _historyGrid.Columns.Add("Seq", "#");
         _historyGrid.Columns.Add("RequestId", "Request ID");
         _historyGrid.Columns.Add("Source", "Source");
+        _historyGrid.Columns.Add("ProcessId", "PID");
         _historyGrid.Columns.Add("Mode", "Mode");
         _historyGrid.Columns.Add("Started", "Started");
         _historyGrid.Columns.Add("Finished", "Finished");
@@ -114,7 +116,9 @@ public partial class MainForm
         _historyGrid.Columns.Add("FailedImp", "Failed write");
         _historyGrid.Columns.Add("Status", "Status");
 
+        _historyGrid.Columns["Seq"].Width = 45;
         _historyGrid.Columns["Source"].Width = 110;
+        _historyGrid.Columns["ProcessId"].Width = 60;
         _historyGrid.Columns["Mode"].Width = 130;
         _historyGrid.Columns["Started"].Width = 130;
         _historyGrid.Columns["Finished"].Width = 130;
@@ -125,10 +129,10 @@ public partial class MainForm
         _historyGrid.Columns["FailedImp"].Width = 90;
         _historyGrid.Columns["Status"].Width = 100;
 
-        // Request ID (a long GUID-like string) is the one column that should
-        // absorb whatever width is left over, not every column stretching
-        // proportionally.
-        _historyGrid.Columns["RequestId"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+        // Sized to fit its actual displayed content (all rows), not stretched to
+        // absorb whatever's left - Request IDs are a consistent-length GUID, so
+        // this settles at a fitting width rather than an arbitrarily large one.
+        _historyGrid.Columns["RequestId"].AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
     }
 
     private void SetupOutcomesGrid()
@@ -187,9 +191,19 @@ public partial class MainForm
 
         var selectedId = (_historyGrid.SelectedRows.Count > 0) ? _historyGrid.SelectedRows[0].Cells["RequestId"].Value?.ToString() : null;
 
-        _historyEntries = RunHistoryService.ListRuns(_triggerFolder, _processedTriggerFolder, _logFolder, _manualRunFolder);
+        _historyEntries = RunHistoryService.ListRuns(_triggerFolder, _processedTriggerFolder, _logFolder, _manualRunFolder, _autoPollFolder);
         _historyGrid.Rows.Clear();
         RefreshPreviousRunSection();
+
+        // A short, stable reference number for each run, cheaper to say/type than
+        // the full Request ID GUID - assigned by chronological (ascending) order so
+        // a given run keeps the same number forever as new runs are added, rather
+        // than by the grid's own descending display order, which would renumber
+        // every existing row each time a new run appears.
+        var seqByRequestId = _historyEntries
+            .OrderBy(e => e.SortKey)
+            .Select((e, idx) => (e.RequestId, Seq: idx + 1))
+            .ToDictionary(x => x.RequestId, x => x.Seq);
 
         // Which manual request (if any) a currently-live --run-once process actually
         // belongs to - the only way to tell a pending manual entry that's genuinely
@@ -203,16 +217,29 @@ public partial class MainForm
         {
             var entry = _historyEntries[i];
 
-            if (entry.IsManual && entry.IsPending)
+            // Three flavors of "pending with no result", all needing a live-process
+            // check: a Manual Run (its own dedicated --run-once process, matched by
+            // RequestId in the command line), an automatic-poll cycle whose request
+            // file has no matching result file (crashed, or hit Sage50Client.
+            // TerminateOnFatalWriteError's Environment.Exit before RunAsync could
+            // return and Worker.cs could write one), and the legacy log-reconstructed
+            // fallback for auto-poll cycles that predate that file-based tracking.
+            // The Automatic Service has no per-cycle process to match against like
+            // Manual Run does, so both auto-poll flavors are only "live" if this is
+            // the single most recent thing in all of history AND the Automatic
+            // Service is actually running right now.
+            var isAutoPollFlavor = entry.IsAutomaticPoll || entry.ReconstructedFromLog;
+            if (entry.IsPending && (entry.IsManual || isAutoPollFlavor))
             {
-                entry.IsLiveProcess = liveManualCommandLine.Contains(entry.RequestId, StringComparison.OrdinalIgnoreCase);
+                entry.IsLiveProcess = entry.IsManual
+                    ? liveManualCommandLine.Contains(entry.RequestId, StringComparison.OrdinalIgnoreCase)
+                    : i == 0 && liveState == ServiceRunState.AutomaticRunning;
 
                 // Tie up the loose end: the process that was supposed to handle this
-                // request is gone and never wrote a result.json (crashed, force-
-                // killed, or hit a fatal condition that terminates immediately - see
-                // Sage50Client.TerminateOnFatalWriteError). Pull the last thing it
-                // actually logged so there's still an end time and something to look
-                // at here, instead of "Running" forever with a blank Finished column.
+                // request is gone without ever writing a result. Pull the last thing
+                // it actually logged so there's still an end time and something to
+                // look at here, instead of "Running" forever with a blank Finished
+                // column.
                 if (!entry.IsLiveProcess && !string.IsNullOrWhiteSpace(_logFolder))
                 {
                     var window = GetLogWindow(entry, i);
@@ -224,26 +251,38 @@ public partial class MainForm
                 }
             }
 
-            var mode = entry.Request is not null
-                ? (entry.Request.UseWatermark ? "Continue" : entry.Request.FilterType.ToString())
-                : "(auto-poll)";
-            var source = entry.ReconstructedFromLog ? "Automatic Service"
+            // A pre-flight-skipped automatic-poll cycle (Worker.cs found another
+            // Service process already running) never actually ran anything - show
+            // that plainly in Mode/Status instead of the usual FilterType-derived
+            // text, which would otherwise misleadingly read as a real Continue/
+            // LastChangedDate run that just happened to fetch 0 invoices.
+            var mode = entry.Result?.Skipped == true
+                ? "Skipped - Process Running"
+                : entry.Request is not null
+                    ? (entry.Request.UseWatermark ? "Continue" : entry.Request.FilterType.ToString())
+                    : "(auto-poll)";
+            var source = entry.IsAutomaticPoll || entry.ReconstructedFromLog ? "Automatic Service"
                 : entry.IsManual ? "Manual Run"
                 : "Trigger file";
 
             string status;
             string finishedText;
-            if (!entry.IsPending)
+            if (entry.Result?.Skipped == true)
+            {
+                status = "Skipped";
+                finishedText = entry.Result.FinishedAtUtc.ToLocalTime().ToString("g");
+            }
+            else if (!entry.IsPending)
             {
                 status = "Completed";
                 finishedText = entry.Result?.FinishedAtUtc.ToLocalTime().ToString("g") ?? "";
             }
-            else if (entry.IsManual && entry.IsLiveProcess)
+            else if ((entry.IsManual || isAutoPollFlavor) && entry.IsLiveProcess)
             {
                 status = "Running";
                 finishedText = "";
             }
-            else if (entry.IsManual)
+            else if (entry.IsManual || isAutoPollFlavor)
             {
                 status = "Interrupted (no result)";
                 finishedText = entry.LastLogActivityUtc?.ToLocalTime().ToString("g") ?? "";
@@ -255,8 +294,10 @@ public partial class MainForm
             }
 
             var rowIndex = _historyGrid.Rows.Add(
+                seqByRequestId.GetValueOrDefault(entry.RequestId, 0),
                 entry.RequestId,
                 source,
+                entry.Result?.ProcessId.ToString() ?? "",
                 mode,
                 entry.Result?.StartedAtUtc.ToLocalTime().ToString("g") ?? entry.Request?.RequestedAtUtc.ToLocalTime().ToString("g") ?? "",
                 finishedText,
@@ -402,7 +443,10 @@ public partial class MainForm
         var lines = new List<string>
         {
             $"Request ID: {entry.RequestId}",
-            entry.ReconstructedFromLog ? "Source: Automatic poll (reconstructed from the log - no request/result file exists for auto-poll runs)" :
+            (entry.IsAutomaticPoll || entry.ReconstructedFromLog) && entry.IsPending && !entry.IsLiveProcess
+                ? "Source: Automatic poll - started this cycle but the process is no longer running (see below)"
+                : entry.IsAutomaticPoll ? "Source: Automatic poll" :
+                entry.ReconstructedFromLog ? "Source: Automatic poll (reconstructed from the log - predates this install writing a request/result file per cycle)" :
                 entry.IsManual && entry.IsPending && !entry.IsLiveProcess ? "Source: Manual trigger - the process handling it is no longer running (see below)" :
                 entry.IsPending ? "Source: Manual trigger - still pending, not processed yet" : "Source: Manual trigger",
         };
@@ -424,7 +468,7 @@ public partial class MainForm
             lines.Add("");
             lines.Add($"Started: {entry.Request.RequestedAtUtc.ToLocalTime():G}");
 
-            if (entry.IsManual && entry.IsLiveProcess)
+            if (entry.IsLiveProcess)
             {
                 lines.Add("Still running - no result yet.");
             }
@@ -444,6 +488,16 @@ public partial class MainForm
             lines.Add("");
             lines.Add($"Started:  {entry.Result.StartedAtUtc.ToLocalTime():G}");
             lines.Add($"Finished: {entry.Result.FinishedAtUtc.ToLocalTime():G}");
+            lines.Add($"Process ID: {entry.Result.ProcessId}");
+
+            if (entry.Result.Skipped)
+            {
+                lines.Add("");
+                lines.Add("SKIPPED - nothing was actually attempted this cycle.");
+                lines.Add(entry.Result.SkipReason ?? "(no reason recorded)");
+                return string.Join(Environment.NewLine, lines);
+            }
+
             lines.Add($"Duration: {(entry.Result.FinishedAtUtc - entry.Result.StartedAtUtc).TotalSeconds:0.0} sec");
             lines.Add("");
             lines.Add($"Fetched: {entry.Result.InvoicesFetched}");

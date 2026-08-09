@@ -61,6 +61,25 @@ public class SyncResult
     public string RequestId { get; set; } = string.Empty;
     public DateTimeOffset StartedAtUtc { get; set; }
     public DateTimeOffset FinishedAtUtc { get; set; }
+
+    /// <summary>The OS process ID that actually ran this - a Manual Run gets its
+    /// own dedicated process, but the Automatic Service's periodic poll and
+    /// trigger-file processing all share one long-running process, so several
+    /// history entries can (and normally will) show the same PID. Set once, at
+    /// the very start of SyncOrchestrator.RunAsync, so every run type gets it for
+    /// free.</summary>
+    public int ProcessId { get; set; }
+
+    /// <summary>True when this cycle was never actually attempted - the Automatic
+    /// Service's pre-flight check (Worker.RunAutomaticLastChangedSyncAsync) found
+    /// another PortProSage.Service.exe process already running and skipped this
+    /// cycle rather than risk two processes opening Sage 50 at the same time. When
+    /// true, StartedAtUtc == FinishedAtUtc (nothing actually ran) and every other
+    /// count on this result is meaningless/zero - see SkipReason for why.</summary>
+    public bool Skipped { get; set; }
+
+    public string? SkipReason { get; set; }
+
     public int InvoicesFetched { get; set; }
     public int InvoicesImported { get; set; }
     public int InvoicesSkippedAlreadyImported { get; set; }
