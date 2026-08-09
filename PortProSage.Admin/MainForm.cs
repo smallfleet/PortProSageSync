@@ -44,10 +44,12 @@ public partial class MainForm : Form
         _tabs = new TabControl { Dock = DockStyle.Fill };
         _tabs.TabPages.Add(BuildRunTab()); // "Manual Run"
         _tabs.TabPages.Add(BuildSyncTab()); // "Automatic Sync" - includes the Start/Stop Automatic Service controls
+        _tabs.TabPages.Add(BuildWatermarkTab());
         _tabs.TabPages.Add(BuildResultsTab());
         _tabs.TabPages.Add(BuildPortProTab());
         _tabs.TabPages.Add(BuildSage50Tab());
         _tabs.TabPages.Add(BuildEmailTab());
+        _tabs.TabPages.Add(BuildAboutTab()); // Last tab - company/contact info
 
         Controls.Add(_tabs);
         Controls.Add(topBar);
@@ -345,6 +347,61 @@ public partial class MainForm : Form
         _appSettings.SetBool("PortProSage.Sync.ShowCommandWindow", source.Checked);
         _appSettings.Save();
         RefreshShowCommandWindowControls();
+    }
+
+    // ---------------------------------------------------------------------
+    // Split run by day - one setting (SyncSettings.SplitRunByDay), shown and
+    // editable on BOTH the Automatic Sync tab and the Manual Run tab, same
+    // shared/immediate-save pattern as Cutoff Invoice Date and Show command
+    // window above. Unlike Show command window, this one IS read by
+    // SyncOrchestrator itself (not just an Admin-app launch preference).
+    // ---------------------------------------------------------------------
+
+    private CheckBox _syncSplitRunByDay = new() { Text = "Split run into daily batches", AutoSize = true };
+    private CheckBox _runSplitRunByDay = new() { Text = "Split run into daily batches", AutoSize = true };
+    private bool _suppressSplitRunByDayEvents;
+
+    private const string SplitRunByDayHelpText =
+        "Checked (default): a run whose invoice-date window spans more than one day is processed one day at a " +
+        "time - each day is fetched, imported, and committed (its progress durably saved) before moving to the " +
+        "next. If the process dies partway through a wide window (e.g. a first-ever run covering weeks of " +
+        "backlog), whatever days already completed stay committed instead of the whole window needing to be " +
+        "retried from scratch. Every batch, including a single day, is recorded in the log as \"Batch N of M\".\n\n" +
+        "Unchecked: the entire window is fetched and processed as ONE batch, exactly like before this setting " +
+        "existed - only recommended for a narrow window you already know is small.\n\n" +
+        "Applies to BOTH Manual Run and the Automatic Service - shared between the Automatic Sync tab and the " +
+        "Manual Run tab, saved immediately when changed on either. Has no effect on Invoice number range mode, " +
+        "which has no date window to split.";
+
+    private void WireSplitRunByDayControl(CheckBox box)
+    {
+        box.CheckedChanged += (_, _) => SaveSplitRunByDay(box);
+    }
+
+    private void RefreshSplitRunByDayControls()
+    {
+        if (_appSettings is null) return;
+
+        _suppressSplitRunByDayEvents = true;
+        try
+        {
+            var split = _appSettings.GetBool("PortProSage.Sync.SplitRunByDay", true);
+            _syncSplitRunByDay.Checked = split;
+            _runSplitRunByDay.Checked = split;
+        }
+        finally
+        {
+            _suppressSplitRunByDayEvents = false;
+        }
+    }
+
+    private void SaveSplitRunByDay(CheckBox source)
+    {
+        if (_appSettings is null || _suppressSplitRunByDayEvents) return;
+
+        _appSettings.SetBool("PortProSage.Sync.SplitRunByDay", source.Checked);
+        _appSettings.Save();
+        RefreshSplitRunByDayControls();
     }
 
     // ---------------------------------------------------------------------

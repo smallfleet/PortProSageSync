@@ -274,6 +274,26 @@ public class SyncSettings
     /// </summary>
     public int ProcessingDelayDays { get; set; } = 7;
 
+    /// <summary>
+    /// When true (the default), a run whose resolved invoice-date window
+    /// (SyncResult.EffectiveFromUtc..EffectiveToUtc) spans more than one day is
+    /// split into a sequence of single-day batches, each fetched, processed, and
+    /// committed (its own persisted-watermark advance) in turn - so if the
+    /// process dies partway through a wide window (e.g. a first-ever run
+    /// covering weeks of backlog), whatever days already completed stay durably
+    /// committed instead of the whole window having to be retried from scratch.
+    /// Every batch - including day 1 of an automatic poll's normal few-hour
+    /// window - is logged individually ("Batch N of M"), and a run that only
+    /// ever produces one batch (either because SplitRunByDay is false, or the
+    /// window is a day or narrower to begin with) still logs that single batch
+    /// the same way, so the log format never depends on how many batches there
+    /// turned out to be. False processes the entire resolved window as one
+    /// batch, exactly as this always worked before this setting existed.
+    /// Applies to Manual Run and the Automatic Service alike; has no effect on
+    /// Invoice number range mode, which has no date window to split.
+    /// </summary>
+    public bool SplitRunByDay { get; set; } = true;
+
     /// <summary>Folder the service watches for manual trigger request files dropped by PortProSage.Trigger.</summary>
     public string TriggerFolder { get; set; } = "C:\\PortProSageSync\\requests";
 

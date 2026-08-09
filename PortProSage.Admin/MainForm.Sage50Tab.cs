@@ -18,6 +18,11 @@ public partial class MainForm
     private TextBox _sage50AccountsUnverifiable = new() { Width = 400 };
     private DataGridView _taxCodesGrid = new() { Width = 400, Height = 120, AllowUserToAddRows = true };
     private DataGridView _chargeAccountMapGrid = new() { Dock = DockStyle.Fill, AllowUserToAddRows = true };
+    private SplitContainer _sage50Split = null!;
+
+    // Guards against re-locking a bad SplitterDistance in permanently - see
+    // ResizeSage50SplitToFieldsHeight's doc comment.
+    private bool _sage50SplitSized;
 
     private const string ChargeAccountMapHelpText =
         "Controls exactly which Sage 50 GL account each PortPro charge name posts to. Matched by PortPro Charge Name " +
@@ -34,7 +39,7 @@ public partial class MainForm
         var page = new TabPage("Sage 50");
         var grid = NewFieldGrid();
         const string f = AppSettingsFileName;
-        const int fieldPercent = 50;
+        const int fieldPercent = 25;
 
         AddPercentRow(grid, "App name", _sage50AppName, f, "PortProSage:Sage50:AppName",
             "The friendly application name the Sage 50 SDK asks for when a third-party app registers itself before " +
@@ -107,7 +112,7 @@ public partial class MainForm
             "recognized this way is NOT imported as its own line item - instead Sage 50 calculates and applies that " +
             "tax code directly to the invoice's real revenue lines.\n\n" +
             "Example: Abbreviation 'HST' -> Sage 50 code 'H' (this company's code for HST 13%, posting to account 2310).",
-            60);
+            30);
 
         SetupChargeAccountMapGrid();
         WireSource(_chargeAccountMapGrid, f, "PortProSage:Sage50:ChargeAccountMap");
@@ -140,18 +145,49 @@ public partial class MainForm
         mapPanel.Controls.Add(_chargeAccountMapGrid);
         mapPanel.Controls.Add(mapLabel);
 
-        // User-resizable split, not a fixed guessed height - both the field
-        // list and the charge map grid can need more room depending on how
-        // many charges are mapped.
-        var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 340 };
-        split.Panel1.Controls.Add(fieldsScroll);
-        split.Panel2.Controls.Add(mapPanel);
+        // User-resizable split, sized to the fields' own real (now-compact)
+        // height rather than a guessed constant - PreferredSize reflects the
+        // actual sum of the AddPercentRow/AddCheckRow rows above. Whatever this
+        // doesn't need goes to Panel2 (the charge account map grid)
+        // automatically, since SplitContainer always sizes Panel2 to
+        // "whatever's left".
+        _sage50Split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal };
+        _sage50Split.Panel1.Controls.Add(fieldsScroll);
+        _sage50Split.Panel2.Controls.Add(mapPanel);
+        ResizeSage50SplitToFieldsHeight(grid);
+        // This tab isn't necessarily the one selected when the form first
+        // loads, so the attempt above may have run before _sage50Split had its
+        // real, final size - retry once it's actually shown, matching the
+        // History & Logs tab's same "may not be visible yet" fix.
+        page.Enter += (_, _) => ResizeSage50SplitToFieldsHeight(grid);
 
-        page.Controls.Add(split);
+        page.Controls.Add(_sage50Split);
         page.Controls.Add(save);
 
         RefreshAllTabsFromConfig += RefreshSage50Tab;
         return page;
+    }
+
+    /// <summary>Sets _sage50Split's SplitterDistance to the fields grid's real
+    /// PreferredSize height - guarded so a bad attempt (this tab not yet shown,
+    /// so PreferredSize/the split's own Height aren't reliable yet) doesn't
+    /// lock in a wrong value: only marks itself done once the computed height
+    /// looks sane (grid.PreferredSize.Height > 0, i.e. rows have actually been
+    /// measured) AND the assignment itself succeeds (SplitContainer validates
+    /// SplitterDistance against its own current Height, which can itself still
+    /// be unrealized at the very first attempt).</summary>
+    private void ResizeSage50SplitToFieldsHeight(TableLayoutPanel grid)
+    {
+        if (_sage50SplitSized || grid.PreferredSize.Height <= 0) return;
+
+        try
+        {
+            _sage50Split.SplitterDistance = Math.Max(200, grid.PreferredSize.Height + 16);
+            _sage50SplitSized = true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+        }
     }
 
     /// <summary>Places `content` at a fixed PERCENTAGE of the row's available width -
@@ -169,7 +205,8 @@ public partial class MainForm
     {
         var row = grid.RowCount++;
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var label = new Label { Text = labelText, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 8, 3, 3) };
+
+        var label = new Label { Text = labelText, AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Top, Margin = new Padding(3, 8, 3, 3) };
         grid.Controls.Add(label, 0, row);
 
         var trailing = trailingControls.ToList();
@@ -178,41 +215,59 @@ public partial class MainForm
             trailing.Add(CreateHelpIcon(labelText.Replace("\n", " "), helpText));
         }
 
-        content.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        // Fixed width (computed below), not Anchor=Left|Right stretch - the
+        // width itself IS the "percent of the row" behavior here.
+        content.Anchor = AnchorStyles.Left;
         content.Margin = new Padding(3, 4, 3, 4);
 
-        Control share;
-        if (trailing.Count == 0)
+        // FlowLayoutPanel, not a nested Dock=Fill TableLayoutPanel (the
+        // previous implementation) - a TableLayoutPanel row using AutoSize
+        // does not reliably compute a correct height, or even render its
+        // content at all once a height is forced on it, when the row's own
+        // cell content is itself a Dock=Fill nested TableLayoutPanel;
+        // confirmed live twice (first a large empty-looking gap between
+        // fields, then collapsed/invisible field content once the row height
+        // was forced explicitly to close that gap). FlowLayoutPanel's own
+        // AutoSize computation doesn't have that ambiguity - it's the exact
+        // mechanism AddRow/AddCheckRow already use successfully everywhere
+        // else in this app.
+        var wrap = new FlowLayoutPanel
         {
-            share = content;
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Margin = new Padding(0)
+        };
+        wrap.Controls.Add(content);
+        foreach (var t in trailing)
+        {
+            t.Anchor = AnchorStyles.Left;
+            t.Margin = new Padding(4, 4, 0, 3);
+            wrap.Controls.Add(t);
         }
-        else
+        grid.Controls.Add(wrap, 1, row);
+
+        // content's own pixel WIDTH is set to `percent`% of the grid's column-1
+        // width by hand, refreshed whenever the grid resizes - not via nested
+        // TableLayoutPanel percent columns (see why above). Column 1's width is
+        // whatever's left of the grid after its own fixed 220px label column,
+        // 34px (unused here - the help icon lives inside `wrap` instead, not
+        // grid's own column 2) and padding. grid.ClientSize isn't reliably real
+        // yet the first time this runs (this tab may not be the one selected
+        // when the form first loads), so this is refreshed again once it is -
+        // see BuildSage50Tab's page.Enter hook.
+        void ApplyWidth()
         {
-            var inner = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = trailing.Count + 1, RowCount = 1, Margin = new Padding(0) };
-            inner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            foreach (var t in trailing)
-            {
-                inner.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, t.Width + 10));
-                t.Anchor = AnchorStyles.Left;
-                t.Margin = new Padding(4, 4, 0, 3);
-            }
-            inner.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            inner.Controls.Add(content, 0, 0);
-            for (var i = 0; i < trailing.Count; i++)
-            {
-                inner.Controls.Add(trailing[i], i + 1, 0);
-            }
-            share = inner;
+            var column1Width = Math.Max(150, grid.ClientSize.Width - grid.Padding.Horizontal - 220 - 34);
+            var trailingWidth = trailing.Sum(t => t.Width + t.Margin.Horizontal);
+            content.Width = Math.Max(80, (int)(column1Width * percent / 100.0) - trailingWidth);
         }
 
-        var outer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0) };
-        outer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, percent));
-        outer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100 - percent));
-        outer.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        outer.Controls.Add(share, 0, 0);
-        // Column 1 (the remaining (100-percent)%) is deliberately left empty.
+        grid.SizeChanged += (_, _) => ApplyWidth();
+        ApplyWidth();
 
-        grid.Controls.Add(outer, 1, row);
         WireSource(content, fileName, jsonPath);
     }
 

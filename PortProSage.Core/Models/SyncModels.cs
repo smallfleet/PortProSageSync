@@ -106,6 +106,28 @@ public class SyncResult
     public int InvoicesFailedImport { get; set; }
     public List<InvoiceProcessingOutcome> Outcomes { get; set; } = new();
 
+    /// <summary>The actual invoice-date window this run covered - captured once,
+    /// right after SyncOrchestrator.RunAsync resolves request.From/To (whether
+    /// from an explicit Invoice date/Last changed date range, or resolved from
+    /// the watermark for a Continue run), before day-batching (see BatchCount)
+    /// mutates request.From/To per batch. Null for Invoice number range mode,
+    /// which has no date concept at all. Unlike WatermarkBeforeRun/AfterRun
+    /// (which only ever move for a watermark-driven run), this is always
+    /// populated for any date-based mode - it's what History & Logs' "Inv Start
+    /// Date"/"Inv End Date" columns and the Previous Run section actually show,
+    /// since the watermark is misleading for an explicit-range run that never
+    /// touches it.</summary>
+    public DateTimeOffset? EffectiveFromUtc { get; set; }
+    public DateTimeOffset? EffectiveToUtc { get; set; }
+
+    /// <summary>How many day-sized batches this run split into - see
+    /// SyncSettings.SplitRunByDay's doc comment. Always at least 1 (a run that
+    /// isn't split, or has no date range at all, is still "1 batch" - recorded
+    /// here and logged the same way as a genuinely multi-batch run, not treated
+    /// as a special case). 0 only for a run that never even started (e.g. the
+    /// pre-flight Skipped case, or the "nothing to process yet" early exit).</summary>
+    public int BatchCount { get; set; }
+
     /// <summary>
     /// Pre/post snapshot of the persisted "continue from where we left off" state -
     /// read once at the very start of the run and once at the very end, always

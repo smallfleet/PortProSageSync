@@ -110,148 +110,207 @@ public class SyncOrchestrator
         {
             await _sage50.ConnectAsync(ct);
 
-            var invoices = await _portPro.GetInvoicesAsync(request, ct);
-            result.InvoicesFetched = invoices.Count;
+            // Captured once, before the batch loop below starts overwriting
+            // request.From/To with each batch's own narrower sub-window - see
+            // SyncResult.EffectiveFromUtc's doc comment.
+            result.EffectiveFromUtc = request.From;
+            result.EffectiveToUtc = request.To;
 
-            // Only invoices with a positive total are eligible for import - a
-            // zero/negative-amount invoice has nothing to post and is silently
-            // skipped (not an error, not counted as imported).
-            var zeroOrNegative = invoices.Where(i => i.TotalAmount <= 0m).ToList();
-            if (zeroOrNegative.Count > 0)
-            {
-                result.InvoicesSkippedZeroOrNegativeAmount = zeroOrNegative.Count;
-                foreach (var skipped in zeroOrNegative)
-                {
-                    _logger.LogInformation(
-                        "Skipping invoice {Ref} (id={Id}) - total amount {Amount} is not greater than zero.",
-                        skipped.ReferenceNumber, skipped.Id, skipped.TotalAmount);
-                }
-                invoices = invoices.Where(i => i.TotalAmount > 0m).ToList();
-            }
+            var batches = ComputeBatches(request.From, request.To, _syncSettings.SplitRunByDay);
+            result.BatchCount = batches.Count;
+            var hitMaxCap = false;
 
-            // Invoices dated before the configured cutoff (if any) are never
-            // attempted - see SyncSettings.CutoffInvoiceDate's doc comment for why:
-            // this is what actually stops the run-killing Sage 50 rejection at the
-            // source, instead of hitting it mid-write.
-            if (_syncSettings.CutoffInvoiceDate is { } cutoff)
+            for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
             {
-                var tooOld = invoices.Where(i => (i.BillingDate ?? i.CompletedDate) is { } d && d < cutoff).ToList();
-                if (tooOld.Count > 0)
+                var (batchFrom, batchTo) = batches[batchIndex];
+                request.From = batchFrom;
+                request.To = batchTo;
+
+                _logger.LogInformation(
+                    "Batch {BatchNum} of {BatchTotal} for {RequestId}: {From} to {To}",
+                    batchIndex + 1, batches.Count, request.RequestId,
+                    batchFrom?.ToString("yyyy-MM-dd HH:mm") ?? "(no date filter)",
+                    batchTo?.ToString("yyyy-MM-dd HH:mm") ?? "(no date filter)");
+
+                var invoices = await _portPro.GetInvoicesAsync(request, ct);
+                var batchFetched = invoices.Count;
+                result.InvoicesFetched += batchFetched;
+
+                // Only invoices with a positive total are eligible for import - a
+                // zero/negative-amount invoice has nothing to post and is silently
+                // skipped (not an error, not counted as imported).
+                var zeroOrNegative = invoices.Where(i => i.TotalAmount <= 0m).ToList();
+                if (zeroOrNegative.Count > 0)
                 {
-                    result.InvoicesSkippedBeforeCutoff = tooOld.Count;
-                    foreach (var skipped in tooOld)
+                    result.InvoicesSkippedZeroOrNegativeAmount += zeroOrNegative.Count;
+                    foreach (var skipped in zeroOrNegative)
                     {
                         _logger.LogInformation(
-                            "Skipping invoice {Ref} (id={Id}) - dated {Date}, before the configured cutoff {Cutoff}.",
-                            skipped.ReferenceNumber, skipped.Id, skipped.BillingDate ?? skipped.CompletedDate, cutoff);
+                            "Skipping invoice {Ref} (id={Id}) - total amount {Amount} is not greater than zero.",
+                            skipped.ReferenceNumber, skipped.Id, skipped.TotalAmount);
                     }
-                    invoices = invoices.Except(tooOld).ToList();
-                }
-            }
-
-            // Process strictly in ascending invoice-number order (ordinal string
-            // comparison - correctly orders this account's consistent "PREFIX_NNNNNN"
-            // reference numbers) so the anchor updated below is always monotonic
-            // within a run: once N is processed, every invoice still to come is
-            // guaranteed to be numbered higher than N. This is what makes it safe to
-            // advance the anchor per-invoice instead of only once at the end of the
-            // whole batch.
-            var orderedInvoices = invoices
-                .OrderBy(i => i.ReferenceNumber, StringComparer.Ordinal)
-                .ToList();
-
-            foreach (var invoice in orderedInvoices)
-            {
-                ct.ThrowIfCancellationRequested();
-                var outcome = await ProcessOneInvoiceAsync(invoice, ct);
-                result.Outcomes.Add(outcome);
-
-                // A single, consistently-formatted line per genuinely-transferred invoice
-                // (skips ALREADY_IMPORTED/DRYRUN, which didn't actually post anything this
-                // run) - logged here, inside RunAsync itself, so both the automatic poll
-                // (Worker.cs) and manual/diagnostic runs (Diagnostics.cs) produce it
-                // identically without each caller having to remember to. The Admin app's
-                // "Invoice Transferred" tab parses this line back out of the full log
-                // rather than reading result.json, since the automatic poll never writes
-                // a result.json at all - the log is the only record that exists for it.
-                if (outcome.Success && outcome.Sage50InvoiceNumber is not null &&
-                    outcome.Sage50InvoiceNumber != "ALREADY_IMPORTED" &&
-                    !outcome.Sage50InvoiceNumber.StartsWith("DRYRUN-", StringComparison.Ordinal))
-                {
-                    _logger.LogInformation(
-                        "TRANSFER: Ref={Ref} Sage50Number={SageNo} PortProDate={PortProDate} Sage50Date={Sage50Date} TotalAmount={TotalAmount} TaxCharged={TaxCharged}",
-                        outcome.ReferenceNumber, outcome.Sage50InvoiceNumber,
-                        outcome.PortProInvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
-                        outcome.Sage50InvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
-                        outcome.TotalAmount, outcome.TaxCharged);
+                    invoices = invoices.Where(i => i.TotalAmount > 0m).ToList();
                 }
 
-                if (outcome.Success)
+                // Invoices dated before the configured cutoff (if any) are never
+                // attempted - see SyncSettings.CutoffInvoiceDate's doc comment for why:
+                // this is what actually stops the run-killing Sage 50 rejection at the
+                // source, instead of hitting it mid-write.
+                var batchBeforeCutoff = 0;
+                if (_syncSettings.CutoffInvoiceDate is { } cutoff)
                 {
-                    if (outcome.Sage50InvoiceNumber == "ALREADY_IMPORTED")
-                        result.InvoicesSkippedAlreadyImported++;
+                    var tooOld = invoices.Where(i => (i.BillingDate ?? i.CompletedDate) is { } d && d < cutoff).ToList();
+                    batchBeforeCutoff = tooOld.Count;
+                    if (tooOld.Count > 0)
+                    {
+                        result.InvoicesSkippedBeforeCutoff += tooOld.Count;
+                        foreach (var skipped in tooOld)
+                        {
+                            _logger.LogInformation(
+                                "Skipping invoice {Ref} (id={Id}) - dated {Date}, before the configured cutoff {Cutoff}.",
+                                skipped.ReferenceNumber, skipped.Id, skipped.BillingDate ?? skipped.CompletedDate, cutoff);
+                        }
+                        invoices = invoices.Except(tooOld).ToList();
+                    }
+                }
+
+                // Process strictly in ascending invoice-number order (ordinal string
+                // comparison - correctly orders this account's consistent "PREFIX_NNNNNN"
+                // reference numbers) so the anchor updated below is always monotonic
+                // within a run: once N is processed, every invoice still to come is
+                // guaranteed to be numbered higher than N. This is what makes it safe to
+                // advance the anchor per-invoice instead of only once at the end of the
+                // whole batch.
+                var orderedInvoices = invoices
+                    .OrderBy(i => i.ReferenceNumber, StringComparer.Ordinal)
+                    .ToList();
+
+                var batchImported = 0;
+                var batchAlreadyImported = 0;
+                var batchFailedValidation = 0;
+                var batchFailedImport = 0;
+
+                foreach (var invoice in orderedInvoices)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var outcome = await ProcessOneInvoiceAsync(invoice, ct);
+                    result.Outcomes.Add(outcome);
+
+                    // A single, consistently-formatted line per genuinely-transferred invoice
+                    // (skips ALREADY_IMPORTED/DRYRUN, which didn't actually post anything this
+                    // run) - logged here, inside RunAsync itself, so both the automatic poll
+                    // (Worker.cs) and manual/diagnostic runs (Diagnostics.cs) produce it
+                    // identically without each caller having to remember to. The Admin app's
+                    // "Invoice Transferred" tab parses this line back out of the full log
+                    // rather than reading result.json, since the automatic poll never writes
+                    // a result.json at all - the log is the only record that exists for it.
+                    if (outcome.Success && outcome.Sage50InvoiceNumber is not null &&
+                        outcome.Sage50InvoiceNumber != "ALREADY_IMPORTED" &&
+                        !outcome.Sage50InvoiceNumber.StartsWith("DRYRUN-", StringComparison.Ordinal))
+                    {
+                        _logger.LogInformation(
+                            "TRANSFER: Ref={Ref} Sage50Number={SageNo} PortProDate={PortProDate} Sage50Date={Sage50Date} TotalAmount={TotalAmount} TaxCharged={TaxCharged}",
+                            outcome.ReferenceNumber, outcome.Sage50InvoiceNumber,
+                            outcome.PortProInvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
+                            outcome.Sage50InvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
+                            outcome.TotalAmount, outcome.TaxCharged);
+                    }
+
+                    if (outcome.Success)
+                    {
+                        if (outcome.Sage50InvoiceNumber == "ALREADY_IMPORTED")
+                        {
+                            result.InvoicesSkippedAlreadyImported++;
+                            batchAlreadyImported++;
+                        }
+                        else
+                        {
+                            result.InvoicesImported++;
+                            batchImported++;
+                        }
+                    }
+                    else if (outcome.Messages.Any(m => m.StartsWith("VALIDATION:")))
+                    {
+                        result.InvoicesFailedValidation++;
+                        batchFailedValidation++;
+                    }
                     else
-                        result.InvoicesImported++;
-                }
-                else if (outcome.Messages.Any(m => m.StartsWith("VALIDATION:")))
-                {
-                    result.InvoicesFailedValidation++;
-                }
-                else
-                {
-                    result.InvoicesFailedImport++;
-                }
-
-                // Only a watermark-driven run ("continue from where we left off")
-                // advances persisted state - an explicit range is a one-time override
-                // that leaves both markers exactly as they were, so the next
-                // no-range run picks up from here, not from the explicit range's edge.
-                // Advanced immediately after EACH invoice (success or failure - a
-                // permanently-failing invoice must not be re-attempted forever), not
-                // batched until the end of the loop: if the process is killed mid-run
-                // (see Sage50Client.TerminateOnFatalWriteError), everything already
-                // handled before the failure must already be durably anchored, and
-                // nothing after it should be. SetLastChangedWatermark/
-                // SetLastProcessedInvoiceNumber only ever move forward, so this is
-                // safe even if a value here were ever out of order.
-                if (request.UseWatermark)
-                {
-                    if (invoice.UpdatedAt is not null)
                     {
-                        _state.SetLastChangedWatermark(invoice.UpdatedAt.Value);
+                        result.InvoicesFailedImport++;
+                        batchFailedImport++;
                     }
 
-                    if (!string.IsNullOrEmpty(invoice.ReferenceNumber))
+                    // Only a watermark-driven run ("continue from where we left off")
+                    // advances persisted state - an explicit range is a one-time override
+                    // that leaves both markers exactly as they were, so the next
+                    // no-range run picks up from here, not from the explicit range's edge.
+                    // Advanced immediately after EACH invoice (success or failure - a
+                    // permanently-failing invoice must not be re-attempted forever), not
+                    // batched until the end of the loop: if the process is killed mid-run
+                    // (see Sage50Client.TerminateOnFatalWriteError), everything already
+                    // handled before the failure must already be durably anchored, and
+                    // nothing after it should be. SetLastChangedWatermark/
+                    // SetLastProcessedInvoiceNumber only ever move forward, so this is
+                    // safe even if a value here were ever out of order.
+                    if (request.UseWatermark)
                     {
-                        _state.SetLastProcessedInvoiceNumber(invoice.ReferenceNumber);
-                        result.LastProcessedInvoiceNumberAfterRun = invoice.ReferenceNumber;
+                        if (invoice.UpdatedAt is not null)
+                        {
+                            _state.SetLastChangedWatermark(invoice.UpdatedAt.Value);
+                        }
+
+                        if (!string.IsNullOrEmpty(invoice.ReferenceNumber))
+                        {
+                            _state.SetLastProcessedInvoiceNumber(invoice.ReferenceNumber);
+                            result.LastProcessedInvoiceNumberAfterRun = invoice.ReferenceNumber;
+                        }
+                    }
+
+                    // Checkpoint after every invoice - see the onProgress parameter's
+                    // doc comment. FinishedAtUtc doubles as "as of" for a checkpoint
+                    // that never becomes final, so a caller/viewer has a meaningful
+                    // timestamp even without IsFinal ever being set.
+                    result.FinishedAtUtc = DateTimeOffset.UtcNow;
+                    onProgress?.Invoke(result);
+
+                    if (request.MaxInvoicesToProcess is not null && result.Outcomes.Count >= request.MaxInvoicesToProcess.Value)
+                    {
+                        _logger.LogInformation(
+                            "Reached MaxInvoicesToProcess={Max} - stopping this run early; {Remaining} more eligible invoice(s) were fetched but not processed.",
+                            request.MaxInvoicesToProcess.Value, orderedInvoices.Count - result.Outcomes.Count);
+                        hitMaxCap = true;
+                        break;
                     }
                 }
 
-                // Checkpoint after every invoice - see the onProgress parameter's
-                // doc comment. FinishedAtUtc doubles as "as of" for a checkpoint
-                // that never becomes final, so a caller/viewer has a meaningful
-                // timestamp even without IsFinal ever being set.
-                result.FinishedAtUtc = DateTimeOffset.UtcNow;
-                onProgress?.Invoke(result);
-
-                if (request.MaxInvoicesToProcess is not null && result.Outcomes.Count >= request.MaxInvoicesToProcess.Value)
+                // Commit this batch's watermark now, before moving to the next one -
+                // NOT gated on "did this batch actually have any invoices" (unlike the
+                // old single-batch code this replaced): a batch that was successfully
+                // fetched and checked is fully accounted for regardless of what it
+                // contained, so a genuinely-empty day shouldn't be left to be re-fetched
+                // forever. This is exactly the "split... commit it" behavior requested -
+                // if the process dies on batch 3 of 10, batches 1-2 are already durably
+                // committed and only batch 3 onward needs to be retried next time.
+                if (request.UseWatermark && batchTo is not null)
                 {
-                    _logger.LogInformation(
-                        "Reached MaxInvoicesToProcess={Max} - stopping this run early; {Remaining} more eligible invoice(s) were fetched but not processed.",
-                        request.MaxInvoicesToProcess.Value, orderedInvoices.Count - result.Outcomes.Count);
-                    break;
+                    _state.SetLastChangedWatermark(batchTo.Value);
                 }
+
+                _logger.LogInformation(
+                    "Batch {BatchNum} of {BatchTotal} complete: fetched={Fetched} imported={Imported} alreadyImported={AlreadyImported} " +
+                    "zeroAmount={ZeroAmount} beforeCutoff={BeforeCutoff} failedValidation={FailedValidation} failedImport={FailedImport}",
+                    batchIndex + 1, batches.Count, batchFetched, batchImported, batchAlreadyImported,
+                    zeroOrNegative.Count, batchBeforeCutoff, batchFailedValidation, batchFailedImport);
+
+                if (hitMaxCap) break;
             }
 
-            if (request.UseWatermark && orderedInvoices.Count > 0 && request.To is not null)
-            {
-                // Also fold in the run's own "to" boundary so the date watermark
-                // covers the whole fetched window, not just up to the last invoice's
-                // own updatedAt (which may be earlier than "to" if nothing changed
-                // right at the edge of the window).
-                _state.SetLastChangedWatermark(request.To.Value);
-            }
+            // Restore the overall window, not whichever batch happened to run last -
+            // nothing in this method reads request.From/To again, but leaving the
+            // shared request object sitting on the final batch's narrow sub-window
+            // would be a surprise to any future caller/reader.
+            request.From = result.EffectiveFromUtc;
+            request.To = result.EffectiveToUtc;
         }
         catch (Exception ex)
         {
@@ -312,6 +371,34 @@ public class SyncOrchestrator
         // returned result as their own final write.
         result.IsFinal = true;
         return result;
+    }
+
+    /// <summary>Splits [from, to] into contiguous, non-overlapping day-length
+    /// windows (the last one truncated to end exactly at "to") - see
+    /// SyncSettings.SplitRunByDay's doc comment. Falls back to a single batch
+    /// covering the whole window (unchanged) when either bound is null (Invoice
+    /// number range mode - no dates to split) or splitByDay is false. A
+    /// zero-width window (from == to, e.g. the very edge of a clamped range)
+    /// still produces exactly one batch, never zero - see SyncResult.BatchCount's
+    /// doc comment for why every run, however small, is still "1 batch".</summary>
+    private static List<(DateTimeOffset? From, DateTimeOffset? To)> ComputeBatches(
+        DateTimeOffset? from, DateTimeOffset? to, bool splitByDay)
+    {
+        if (from is null || to is null || !splitByDay || from.Value >= to.Value)
+        {
+            return new List<(DateTimeOffset?, DateTimeOffset?)> { (from, to) };
+        }
+
+        var batches = new List<(DateTimeOffset?, DateTimeOffset?)>();
+        var cursor = from.Value;
+        while (cursor < to.Value)
+        {
+            var end = cursor.AddDays(1);
+            if (end > to.Value) end = to.Value;
+            batches.Add((cursor, end));
+            cursor = end;
+        }
+        return batches;
     }
 
     private async Task<InvoiceProcessingOutcome> ProcessOneInvoiceAsync(PortProInvoice invoice, CancellationToken ct)

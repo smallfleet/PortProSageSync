@@ -57,6 +57,20 @@ public class SyncResult
     /// result file at all, so counts showed blank in History &amp; Logs).</summary>
     public bool IsFinal { get; set; }
 
+    /// <summary>The actual invoice-date window this run covered - mirrors Core's
+    /// SyncResult.EffectiveFromUtc/EffectiveToUtc. Null for Invoice number range
+    /// mode (no date concept) or for a historical entry recorded before this
+    /// field existed. This is what History &amp; Logs' "Inv Start Date"/"Inv End
+    /// Date" columns and the Previous Run section show - not the watermark, which
+    /// is only meaningful for a watermark-driven run.</summary>
+    public DateTimeOffset? EffectiveFromUtc { get; set; }
+    public DateTimeOffset? EffectiveToUtc { get; set; }
+
+    /// <summary>How many day-sized batches this run split into - mirrors Core's
+    /// SyncResult.BatchCount. 0 for a historical entry recorded before this field
+    /// existed, or a run that never started (e.g. Skipped).</summary>
+    public int BatchCount { get; set; }
+
     public List<InvoiceProcessingOutcome> Outcomes { get; set; } = new();
 
     /// <summary>Pre/post snapshot of the persisted "continue from" state - see

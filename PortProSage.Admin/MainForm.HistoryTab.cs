@@ -36,7 +36,15 @@ public partial class MainForm
         var refreshButton = new Button { Text = "Refresh", Dock = DockStyle.Top, Height = 30 };
         refreshButton.Click += (_, _) => RefreshHistoryList();
 
-        var topPanel = new Panel { Dock = DockStyle.Fill };
+        // Fixed height, not a resizable SplitContainer - deterministically
+        // shows exactly 15 rows, computed from the fixed row/header heights
+        // pinned in SetupHistoryGrid. A Panel's Height is a plain absolute
+        // value with none of SplitContainer.SplitterDistance's baggage (it
+        // validates against the container's OWN current size, which isn't
+        // reliably known until the tab has actually been shown at least once -
+        // confirmed live, repeatedly, trying to make that work before settling
+        // on this instead).
+        var topPanel = new Panel { Dock = DockStyle.Top, Height = HistoryGridHeaderHeight + HistoryGridRowHeight * 15 + 2 };
         topPanel.Controls.Add(_historyGrid);
 
         var detailTabs = new TabControl { Dock = DockStyle.Fill };
@@ -67,22 +75,32 @@ public partial class MainForm
 
         detailTabs.TabPages.Add(summaryPage);
         detailTabs.TabPages.Add(outcomesPage);
+        detailTabs.TabPages.Add(transferredPage);
         detailTabs.TabPages.Add(warningsPage);
         detailTabs.TabPages.Add(failedPage);
         detailTabs.TabPages.Add(logPage);
-        detailTabs.TabPages.Add(transferredPage);
 
-        var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 220 };
-        split.Panel1.Controls.Add(topPanel);
-        split.Panel2.Controls.Add(detailTabs);
-
-        page.Controls.Add(split);
+        // detailTabs (Dock=Fill) picks up whatever topPanel's fixed 15-row
+        // height doesn't use - added before refreshButton/topPanel below so it
+        // doesn't matter for Dock=Fill (always "whatever's left" regardless of
+        // add order), only their own relative order among each other matters
+        // (refreshButton added last so it lands at the true top edge, above
+        // topPanel - see the "last-docked-control-ends-up-on-top" note
+        // elsewhere in this app).
+        page.Controls.Add(detailTabs);
+        page.Controls.Add(topPanel);
         page.Controls.Add(refreshButton);
 
         _historyGrid.SelectionChanged += (_, _) => ShowSelectedHistoryEntry();
 
         return page;
     }
+
+    // Pinned to known, fixed values (not left to font/DPI-dependent defaults)
+    // so topPanel's Height (BuildResultsTab) can be computed directly at
+    // construction time, with nothing left to measure or retry later.
+    private const int HistoryGridRowHeight = 22;
+    private const int HistoryGridHeaderHeight = 26;
 
     private void SetupHistoryGrid()
     {
@@ -96,6 +114,10 @@ public partial class MainForm
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.SetProperty,
             null, _historyGrid, new object[] { true });
 
+        _historyGrid.RowTemplate.Height = HistoryGridRowHeight;
+        _historyGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+        _historyGrid.ColumnHeadersHeight = HistoryGridHeaderHeight;
+
         // Explicit widths, not a uniform Fill across every column - only the
         // genuinely long string column (Request ID) should be wide; date columns
         // are sized to fit an actual date/time string, and count columns are
@@ -106,8 +128,10 @@ public partial class MainForm
         _historyGrid.Columns.Add("RequestId", "Request ID");
         _historyGrid.Columns.Add("Source", "Source");
         _historyGrid.Columns.Add("Mode", "Mode");
-        _historyGrid.Columns.Add("Started", "Started");
-        _historyGrid.Columns.Add("Finished", "Finished");
+        _historyGrid.Columns.Add("Started", "Process Start");
+        _historyGrid.Columns.Add("Finished", "Process End");
+        _historyGrid.Columns.Add("InvStart", "Inv Start Date");
+        _historyGrid.Columns.Add("InvEnd", "Inv End Date");
         _historyGrid.Columns.Add("Fetched", "Fetched");
         _historyGrid.Columns.Add("Imported", "Imported");
         _historyGrid.Columns.Add("Skipped", "Already imported");
@@ -121,6 +145,8 @@ public partial class MainForm
         _historyGrid.Columns["Mode"].Width = 130;
         _historyGrid.Columns["Started"].Width = 130;
         _historyGrid.Columns["Finished"].Width = 130;
+        _historyGrid.Columns["InvStart"].Width = 100;
+        _historyGrid.Columns["InvEnd"].Width = 100;
         _historyGrid.Columns["Fetched"].Width = 60;
         _historyGrid.Columns["Imported"].Width = 65;
         _historyGrid.Columns["Skipped"].Width = 100;
@@ -316,6 +342,8 @@ public partial class MainForm
                 mode,
                 entry.Result?.StartedAtUtc.ToLocalTime().ToString("g") ?? entry.Request?.RequestedAtUtc.ToLocalTime().ToString("g") ?? "",
                 finishedText,
+                entry.Result?.EffectiveFromUtc?.ToLocalTime().ToString("g") ?? "",
+                entry.Result?.EffectiveToUtc?.ToLocalTime().ToString("g") ?? "",
                 entry.Result?.InvoicesFetched.ToString() ?? "",
                 entry.Result?.InvoicesImported.ToString() ?? "",
                 entry.Result?.InvoicesSkippedAlreadyImported.ToString() ?? "",
@@ -482,7 +510,7 @@ public partial class MainForm
         if (entry.Result is null && entry.Request is not null)
         {
             lines.Add("");
-            lines.Add($"Started: {entry.Request.RequestedAtUtc.ToLocalTime():G}");
+            lines.Add($"Process Start: {entry.Request.RequestedAtUtc.ToLocalTime():G}");
 
             if (entry.IsLiveProcess)
             {
@@ -502,8 +530,14 @@ public partial class MainForm
         if (entry.Result is not null)
         {
             lines.Add("");
-            lines.Add($"Started:  {entry.Result.StartedAtUtc.ToLocalTime():G}");
-            lines.Add($"Finished: {entry.Result.FinishedAtUtc.ToLocalTime():G}");
+            lines.Add($"Process Start: {entry.Result.StartedAtUtc.ToLocalTime():G}");
+            lines.Add($"Process End:   {entry.Result.FinishedAtUtc.ToLocalTime():G}");
+            lines.Add($"Inv Start Date: {entry.Result.EffectiveFromUtc?.ToLocalTime().ToString("G") ?? "(n/a - no date filter this run)"}");
+            lines.Add($"Inv End Date:   {entry.Result.EffectiveToUtc?.ToLocalTime().ToString("G") ?? "(n/a - no date filter this run)"}");
+            if (entry.Result.BatchCount > 1)
+            {
+                lines.Add($"Batches: {entry.Result.BatchCount} (split by day)");
+            }
 
             if (entry.Result.Skipped)
             {

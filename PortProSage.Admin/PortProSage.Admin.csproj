@@ -24,6 +24,15 @@
          from a manual one-off run (run-once), including ones started
          outside this app. -->
     <PackageReference Include="System.Management" Version="8.0.0" />
+    <!-- Same provider PortProSage.Core uses for state.db (Admin can't reference
+         Core itself - different target frameworks), so the Watermark tab
+         (MainForm.WatermarkTab.cs / WatermarkStateService) talks to the same
+         SQLite file directly instead. Pinned to a newer major version than
+         Core's 8.0.8 (net48-constrained) rather than matching it exactly -
+         8.0.8's SQLitePCLRaw.lib.e_sqlite3 2.1.6 transitive dependency has a
+         known high-severity advisory (GHSA-2m69-gcr7-jv3q); 10.0.x, which also
+         matches Admin's net10.0-windows TFM, pulls a patched version instead. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
   </ItemGroup>
 
 </Project>
