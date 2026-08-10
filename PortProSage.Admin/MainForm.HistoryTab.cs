@@ -385,8 +385,16 @@ public partial class MainForm
     {
         if (_pendingRequestId is null || _pendingProcessedFolder is null) { _resultPollTimer.Stop(); return; }
 
+        // IsFinal, not just "a result file exists" - since SyncOrchestrator started
+        // checkpointing progress after every invoice (see SyncResult.IsFinal's doc
+        // comment), a result.json exists almost immediately after a run starts, long
+        // before it's actually done. Checking existence alone (as this used to)
+        // stopped polling - and this whole window's history display - at the FIRST
+        // checkpoint, confirmed live 2026-08-10: the grid and Full log both froze on
+        // an early mid-run snapshot and never updated again, even though the run kept
+        // going and genuinely finished minutes later.
         var result = TriggerService.TryReadResult(_pendingProcessedFolder, _pendingRequestId);
-        if (result is not null)
+        if (result is { IsFinal: true })
         {
             _pendingRequestId = null;
             _resultPollTimer.Stop();
