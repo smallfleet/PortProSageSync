@@ -94,6 +94,40 @@ public partial class MainForm
         return matches;
     }
 
+    private const string Sage50ProcessName = "Sage50Accounting";
+
+    /// <summary>Heuristic pre-flight check - Sage 50 only allows one login per
+    /// username at a time, and a sync that starts while Sage 50 Accounting is
+    /// already open under the SAME username fails immediately with "Someone
+    /// else is already using the program under this name" (confirmed live
+    /// 2026-08-10 - the run then shows fetched=0/imported=0 with no obvious
+    /// explanation unless you go digging in the raw log file). This can't tell
+    /// which username that open session is actually logged in as - no Sage 50
+    /// SDK access from this net10.0 app, only the net48 Service process has
+    /// that - so it's a warning to confirm past, not a hard block:
+    /// Sage50Accounting.exe running doesn't necessarily mean it's the SAME
+    /// username configured here. Returns true if it's safe to proceed (either
+    /// Sage 50 isn't open, or the operator confirmed anyway).</summary>
+    private bool ConfirmProceedIfSage50AppOpen()
+    {
+        if (Process.GetProcessesByName(Sage50ProcessName).Length == 0)
+        {
+            return true;
+        }
+
+        var confirm = MessageBox.Show(this,
+            "Sage 50 Accounting appears to already be open on this machine.\n\n" +
+            "Sage 50 only allows one login per username at a time - if that open session is using the same " +
+            $"username configured here (\"{_sage50UserName.Text}\"), this run will fail immediately with " +
+            "\"Someone else is already using the program under this name\" and nothing will be fetched or " +
+            "imported.\n\n" +
+            "Close Sage 50 Accounting first if it's logged in under that username, or continue anyway if " +
+            "you're sure it's a different one.\n\n" +
+            "Continue anyway?",
+            "Sage 50 is already open", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        return confirm == DialogResult.Yes;
+    }
+
     private static string? GetCommandLine(int processId)
     {
         try
@@ -218,6 +252,8 @@ public partial class MainForm
                 "Already running", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
+
+        if (!ConfirmProceedIfSage50AppOpen()) return;
 
         var confirm = MessageBox.Show(this, BuildAutomaticStartConfirmationText(exePath),
             "Confirm start - Automatic Service", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
@@ -370,8 +406,7 @@ public partial class MainForm
 
             var output = (stdoutTask.Result + stderrTask.Result).Trim();
             var succeeded = process.ExitCode == 0;
-            MessageBox.Show(this,
-                $"{(succeeded ? "SUCCESS" : "FAILED")}\n\n{(string.IsNullOrWhiteSpace(output) ? "(no output captured)" : output)}",
+            MessageBox.Show(this, BuildConnectionTestMessage(diagnoseMode, succeeded, output),
                 title, MessageBoxButtons.OK, succeeded ? MessageBoxIcon.Information : MessageBoxIcon.Error);
         }
         catch (Exception ex)
@@ -382,5 +417,37 @@ public partial class MainForm
         {
             Cursor = Cursors.Default;
         }
+    }
+
+    /// <summary>Turns --diagnose's full console output (every startup log line, and
+    /// on failure a multi-line .NET exception with a full stack trace) into a
+    /// short, plain-language result for this dialog - the raw dump is only useful
+    /// in the actual log file, not as a message box. CheckPortProAsync/
+    /// CheckSage50Async (Diagnostics.cs) already log a single well-written
+    /// "FAILED: ..." line listing the handful of most likely causes for that
+    /// stage - this just extracts exactly that one line and discards everything
+    /// else (the startup noise above it and the exception/stack trace below it).</summary>
+    private static string BuildConnectionTestMessage(string diagnoseMode, bool succeeded, string output)
+    {
+        var target = diagnoseMode == "sage50" ? "Sage 50" : "PortPro";
+
+        if (succeeded)
+        {
+            return $"SUCCESS - connected to {target} without any errors.";
+        }
+
+        var failedLine = output
+            .Split('\n')
+            .Select(l => l.Trim())
+            .FirstOrDefault(l => l.Contains("FAILED:", StringComparison.Ordinal));
+
+        // Diagnostics.cs's own message already starts with "could not connect to
+        // Sage 50/PortPro. ..." - shown as-is under a plain "FAILED" heading rather
+        // than repeating "could not connect" a second time here.
+        var reason = failedLine is not null
+            ? failedLine.Substring(failedLine.IndexOf("FAILED:", StringComparison.Ordinal) + "FAILED:".Length).Trim()
+            : $"An unexpected error occurred connecting to {target} - see today's log file (History & Logs tab) for details.";
+
+        return $"FAILED\n\n{reason}";
     }
 }

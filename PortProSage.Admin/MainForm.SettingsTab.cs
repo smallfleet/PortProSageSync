@@ -1,3 +1,5 @@
+using PortProSage.Admin.Services;
+
 namespace PortProSage.Admin;
 
 public partial class MainForm
@@ -10,6 +12,11 @@ public partial class MainForm
     private TextBox _emailUsername = new() { Width = FieldHalfWidth };
     private TextBox _emailPassword = new() { UseSystemPasswordChar = true, Width = FieldHalfWidth };
     private TextBox _emailRecipients = new() { Width = FieldHalfWidth };
+
+    // Read-only - reflects whatever is actually in state.db's imported_invoice
+    // table right now, re-read every time RefreshImportedInvoiceCount() runs
+    // (tab load and the Refresh button here), not a cached/stale value.
+    private TextBox _importedInvoiceCount = new() { ReadOnly = true, Enabled = false, Width = 320 };
 
     private TabPage BuildSettingsTab()
     {
@@ -89,6 +96,60 @@ public partial class MainForm
             "Example: 60 keeps the most recent 60 days of logs; anything older is deleted the next time any sync " +
             "runs (not on a fixed schedule of its own).");
 
+        var applyCleanupNowButton = new Button
+        {
+            Text = "Apply Now",
+            AutoSize = true,
+            Padding = new Padding(10, 4, 10, 4),
+            Margin = new Padding(3, 4, 3, 4)
+        };
+        applyCleanupNowButton.Click += (_, _) => ApplyLogCleanupNow();
+        var applyCleanupRow = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        grid.Controls.Add(new Label { Text = "Clear History Now", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 8, 3, 3) }, 0, applyCleanupRow);
+        AddWrappedWithHelp(grid, applyCleanupRow, applyCleanupNowButton, "Clear History Now",
+            "Runs the log-retention cleanup right now, using whichever \"Cleanup log after execution (Days)\" " +
+            "value is currently SAVED (save above first if you just changed it) - deletes any daily log file " +
+            "older than that many days immediately, instead of waiting for it to happen automatically at the end " +
+            "of the next sync run.\n\n" +
+            "This is NOT reversible - a deleted log file cannot be recovered. If the saved value is 0, cleanup is " +
+            "disabled and nothing will be deleted.");
+
+        AddSectionHeading(grid, "Reset Imported-Invoice Tracking");
+
+        AddRowWithButton(grid, "Currently tracked as already imported", _importedInvoiceCount, "(state database)", "imported_invoice",
+            "How many PortPro invoices this app currently believes it already posted to Sage 50 - checked before " +
+            "every invoice and used to silently skip it (\"ALREADY_IMPORTED\") WITHOUT re-verifying against Sage " +
+            "50 itself. If you've switched to a different or fresh Sage 50 company file, this count still reflects " +
+            "the OLD file, not the one currently in use.",
+            "Refresh", (_, _) => RefreshImportedInvoiceCount(), inputWidth: 320);
+
+        var clearImportedButton = new Button
+        {
+            Text = "Clear All Imported-Invoice Records",
+            AutoSize = true,
+            Padding = new Padding(10, 4, 10, 4),
+            Margin = new Padding(3, 8, 3, 3)
+        };
+        clearImportedButton.Click += (_, _) => ClearImportedInvoiceTracking();
+        var clearRow = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        grid.Controls.Add(clearImportedButton, 1, clearRow);
+
+        var clearImportedNote = new Label
+        {
+            Text = "Only clear this if you're certain the Sage 50 company file currently in use does NOT already " +
+                   "contain these invoices - otherwise they'll be posted again as duplicates on the next run.",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            MaximumSize = new Size(700, 0),
+            Margin = new Padding(3, 2, 3, 8)
+        };
+        var noteRow = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        grid.Controls.Add(clearImportedNote, 0, noteRow);
+        grid.SetColumnSpan(clearImportedNote, 3);
+
         var save = new Button { Text = "Save Settings", Dock = DockStyle.Bottom, Height = 32 };
         save.Click += (_, _) => SaveSettingsTab();
 
@@ -127,6 +188,133 @@ public partial class MainForm
         // Also feeds the Run/Results tabs - they need the real TriggerFolder/
         // ProcessedTriggerFolder/LogFolder values, not a guess.
         RefreshRunTabFolders();
+        RefreshImportedInvoiceCount();
+    }
+
+    private void RefreshImportedInvoiceCount()
+    {
+        var path = _syncStateDatabasePath.Text;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            _importedInvoiceCount.Text = "(state database path not loaded yet)";
+            return;
+        }
+
+        _importedInvoiceCount.Text = $"{ImportedInvoiceStateService.CountImported(path):N0} invoice(s)";
+    }
+
+    private void ClearImportedInvoiceTracking()
+    {
+        var path = _syncStateDatabasePath.Text;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            MessageBox.Show(this, "Load the Service config first (Settings tab) so the state database path is known.",
+                "Not ready", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var (runState, _) = GetServiceRunState();
+        if (runState != ServiceRunState.NotRunning)
+        {
+            MessageBox.Show(this,
+                "Something is currently running (the Automatic Service or a Manual Run) - stop it first. Clearing " +
+                "this tracking while a sync is actively reading/writing the same state database could conflict " +
+                "with it.",
+                "Stop the running sync first", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var count = ImportedInvoiceStateService.CountImported(path);
+        if (count == 0)
+        {
+            MessageBox.Show(this, "Nothing to clear - there are no imported-invoice records currently tracked.",
+                "Nothing to do", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var message =
+            $"WARNING: This will permanently clear all {count:N0} record(s) of which PortPro invoices this app " +
+            "has already imported into Sage 50, AND run the log-retention cleanup now (deletes any daily log " +
+            "file older than the currently saved \"Cleanup log after execution (Days)\" setting - see Clear " +
+            "History Now above for what that does on its own).\n\n" +
+            "The imported-invoice part does NOT touch Sage 50 itself - it only clears this app's own local " +
+            "tracking. After this, EVERY invoice will be treated as brand new on the next run:\n\n" +
+            "- If the Sage 50 company file currently in use genuinely does NOT already contain these invoices " +
+            "(e.g. you're on a fresh/new company file), this is exactly what you want - they'll import normally.\n\n" +
+            "- If Sage 50 ALREADY has some of them, they will be POSTED AGAIN AS DUPLICATES.\n\n" +
+            "Only proceed if you're certain the current Sage 50 company file doesn't already contain these " +
+            "invoices. Neither part of this can be undone.\n\n" +
+            "Do you want to proceed?";
+
+        var confirm = MessageBox.Show(this, message, "Confirm clear imported-invoice tracking",
+            MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (confirm != DialogResult.Yes) return;
+
+        var removed = ImportedInvoiceStateService.ClearAll(path);
+        RefreshImportedInvoiceCount();
+
+        // Bundled with the reset, not just left for the next sync run to
+        // trigger automatically - a fresh start for the imported-invoice
+        // tracking is exactly the kind of moment old logs are no longer
+        // relevant either.
+        var deletedLogs = RunLogCleanup();
+
+        MessageBox.Show(this,
+            $"Cleared {removed:N0} imported-invoice record(s)." +
+            (deletedLogs.Count > 0 ? $"\nAlso deleted {deletedLogs.Count:N0} old log file(s)." : ""),
+            "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    /// <summary>Deletes old log files using whichever LogFolder/LogRetentionDays
+    /// are currently SAVED (not unsaved edits still sitting in the fields) -
+    /// same "tests/acts on what's saved" convention as Test Connection. Returns
+    /// the file names actually deleted.</summary>
+    private List<string> RunLogCleanup()
+    {
+        if (_appSettings is null) return new List<string>();
+
+        var logFolder = _appSettings.GetString("PortProSage.Sync.LogFolder");
+        var retentionDays = _appSettings.GetInt("PortProSage.Sync.LogRetentionDays", 0);
+        return LogCleanupService.CleanupOldLogs(logFolder, retentionDays);
+    }
+
+    private void ApplyLogCleanupNow()
+    {
+        if (_appSettings is null) return;
+
+        var logFolder = _appSettings.GetString("PortProSage.Sync.LogFolder");
+        var retentionDays = _appSettings.GetInt("PortProSage.Sync.LogRetentionDays", 0);
+
+        if (retentionDays <= 0)
+        {
+            MessageBox.Show(this,
+                "\"Cleanup log after execution (Days)\" is currently saved as 0 (disabled) - nothing will be " +
+                "deleted. Set it to a positive number and Save Settings first if you want this to actually " +
+                "remove old logs.",
+                "Cleanup disabled", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(logFolder) || !Directory.Exists(logFolder))
+        {
+            MessageBox.Show(this, $"Log folder not found:\n{logFolder}", "Not found",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        var confirm = MessageBox.Show(this,
+            $"This will PERMANENTLY delete every daily log file older than {cutoff:yyyy-MM-dd} ({retentionDays} " +
+            $"day(s)) in:\n{logFolder}\n\nThis cannot be undone. Do you want to proceed?",
+            "Confirm log cleanup", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (confirm != DialogResult.Yes) return;
+
+        var deleted = LogCleanupService.CleanupOldLogs(logFolder, retentionDays);
+        MessageBox.Show(this,
+            deleted.Count > 0
+                ? $"Deleted {deleted.Count:N0} log file(s) older than {retentionDays} day(s)."
+                : "No log files were old enough to delete.",
+            "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void SaveSettingsTab()

@@ -473,6 +473,8 @@ public partial class MainForm
             return;
         }
 
+        if (!ConfirmProceedIfSage50AppOpen()) return;
+
         if (!File.Exists(ServiceExePath))
         {
             MessageBox.Show(this, $"Could not find PortProSage.Service.exe in:\n{_serviceFolderBox.Text}", "Not found",

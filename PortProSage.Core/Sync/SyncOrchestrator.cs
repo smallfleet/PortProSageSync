@@ -335,10 +335,26 @@ public class SyncOrchestrator
         catch (Exception ex)
         {
             _logger.LogError(ex, "Sync {RequestId} failed", request.RequestId);
+
+            // Include the innermost exception's own message too, not just the
+            // outer wrapper - confirmed live 2026-08-10: a Sage 50 "already
+            // open under this username" failure surfaced here as just the
+            // generic outer InvalidOperationException text ("Failed to open
+            // the Sage 50 company file. Verify..."), while the actually
+            // diagnostic text ("Someone else is already using the program
+            // under this name...") was buried in the inner
+            // SimplyErrorMessageException, visible only by opening the raw
+            // log file. History & Logs reads this Messages list directly, so
+            // the specific cause needs to be in there, not just a generic
+            // troubleshooting checklist.
+            var innermost = ex;
+            while (innermost.InnerException is not null) innermost = innermost.InnerException;
+            var detail = ReferenceEquals(innermost, ex) ? ex.Message : $"{ex.Message} ---> {innermost.Message}";
+
             result.Outcomes.Add(new InvoiceProcessingOutcome
             {
                 Success = false,
-                Messages = { $"FATAL: {ex.Message}" }
+                Messages = { $"FATAL: {detail}" }
             });
         }
 
