@@ -48,7 +48,7 @@ public partial class MainForm : Form
         _tabs.TabPages.Add(BuildResultsTab());
         _tabs.TabPages.Add(BuildPortProTab());
         _tabs.TabPages.Add(BuildSage50Tab());
-        _tabs.TabPages.Add(BuildEmailTab());
+        _tabs.TabPages.Add(BuildSettingsTab()); // "Settings" - Email + Folder Locations
         _tabs.TabPages.Add(BuildAboutTab()); // Last tab - company/contact info
 
         Controls.Add(_tabs);

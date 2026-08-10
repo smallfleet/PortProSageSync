@@ -45,11 +45,7 @@ public partial class MainForm
         AddRowWithButton(grid, "Current Watermark Invoice #", _currentWatermarkInvoice, "(state database)", "watermark.last_processed_invoice_number",
             "", "Refresh", (_, _) => RefreshCurrentWatermarkDisplay(), inputWidth: 320);
 
-        AddSectionHeading(grid, "Reset / Change Watermark",
-            "Directly overrides the state database - use this to unstick a watermark that's gotten ahead of a " +
-            "raised Processing Delay Days, or to deliberately re-scan an earlier range. Starts as a copy of the " +
-            "current watermark above - edit only what you need to change. Saving asks for confirmation first, " +
-            "since the current value cannot be recovered once overwritten.");
+        AddSectionHeading(grid, "Reset / Change Watermark");
 
         AddRow(grid, "New Watermark Date", _newWatermarkDate, "(state database - not a settings file)", "watermark.last_changed_date",
             NewWatermarkDateHelpText, stretchInput: false);
@@ -113,7 +109,7 @@ public partial class MainForm
     /// the two sub-sections of this tab. Margins match a normal AddRow row's
     /// (top 8/bottom 3-4), not an oversized custom gap - see the standard
     /// row rhythm used throughout the rest of the app (e.g. the PortPro tab).</summary>
-    private static void AddSectionHeading(TableLayoutPanel grid, string heading, string subText)
+    private static void AddSectionHeading(TableLayoutPanel grid, string heading, string subText = "")
     {
         var headingRow = grid.RowCount++;
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -126,6 +122,8 @@ public partial class MainForm
         };
         grid.Controls.Add(headingLabel, 0, headingRow);
         grid.SetColumnSpan(headingLabel, 3);
+
+        if (string.IsNullOrEmpty(subText)) return;
 
         var subRow = grid.RowCount++;
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));

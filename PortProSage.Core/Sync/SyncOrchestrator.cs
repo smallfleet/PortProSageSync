@@ -120,6 +120,19 @@ public class SyncOrchestrator
             result.BatchCount = batches.Count;
             var hitMaxCap = false;
 
+            // Set the moment ANY invoice in this run fails (validation or write) -
+            // once true, the watermark stops advancing for every invoice/batch after
+            // that point too, even ones that succeed. Invoices are processed in
+            // ascending order and the watermark is a single "everything up to here is
+            // durably done" marker with no concept of a gap - letting a LATER success
+            // advance it past an EARLIER failure would mean that failure never gets
+            // retried on the next run. The failed invoice (and everything after it)
+            // simply gets re-fetched and re-attempted next time; anything that
+            // already succeeded this run is safely re-skipped via IsAlreadyImported
+            // (tracked by PortPro invoice id, independent of the watermark), so
+            // nothing is double-posted by retrying past the failure point.
+            var watermarkBlocked = false;
+
             for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
             {
                 var (batchFrom, batchTo) = batches[batchIndex];
@@ -233,26 +246,31 @@ public class SyncOrchestrator
                     {
                         result.InvoicesFailedValidation++;
                         batchFailedValidation++;
+                        watermarkBlocked = true;
                     }
                     else
                     {
                         result.InvoicesFailedImport++;
                         batchFailedImport++;
+                        watermarkBlocked = true;
                     }
 
                     // Only a watermark-driven run ("continue from where we left off")
                     // advances persisted state - an explicit range is a one-time override
                     // that leaves both markers exactly as they were, so the next
                     // no-range run picks up from here, not from the explicit range's edge.
-                    // Advanced immediately after EACH invoice (success or failure - a
-                    // permanently-failing invoice must not be re-attempted forever), not
-                    // batched until the end of the loop: if the process is killed mid-run
-                    // (see Sage50Client.TerminateOnFatalWriteError), everything already
-                    // handled before the failure must already be durably anchored, and
-                    // nothing after it should be. SetLastChangedWatermark/
+                    // Advanced immediately after EACH invoice (success OR already-imported
+                    // - either one means this invoice has been genuinely read and settled,
+                    // not just attempted), not batched until the end of the loop: if the
+                    // process is killed mid-run (see Sage50Client.TerminateOnFatalWriteError),
+                    // everything already settled before that must already be durably
+                    // anchored. Skipped once watermarkBlocked is set (see its doc comment) -
+                    // a failed invoice, and everything processed after it in this same run,
+                    // must NOT be anchored past, so the failure gets retried next time
+                    // instead of being silently skipped forever. SetLastChangedWatermark/
                     // SetLastProcessedInvoiceNumber only ever move forward, so this is
                     // safe even if a value here were ever out of order.
-                    if (request.UseWatermark)
+                    if (request.UseWatermark && !watermarkBlocked)
                     {
                         if (invoice.UpdatedAt is not null)
                         {
@@ -284,14 +302,16 @@ public class SyncOrchestrator
                 }
 
                 // Commit this batch's watermark now, before moving to the next one -
-                // NOT gated on "did this batch actually have any invoices" (unlike the
-                // old single-batch code this replaced): a batch that was successfully
-                // fetched and checked is fully accounted for regardless of what it
-                // contained, so a genuinely-empty day shouldn't be left to be re-fetched
-                // forever. This is exactly the "split... commit it" behavior requested -
-                // if the process dies on batch 3 of 10, batches 1-2 are already durably
-                // committed and only batch 3 onward needs to be retried next time.
-                if (request.UseWatermark && batchTo is not null)
+                // NOT gated on "did this batch actually have any invoices" (a batch
+                // that was successfully fetched and checked is fully accounted for
+                // regardless of what it contained, so a genuinely-empty day shouldn't
+                // be left to be re-fetched forever) but IS gated on watermarkBlocked
+                // (see its doc comment) - once any invoice in this run has failed, no
+                // later batch boundary gets to commit past it either, or the failure
+                // would never be retried. If the process dies on batch 3 of 10 with
+                // no failures yet, batches 1-2 are already durably committed and only
+                // batch 3 onward needs to be retried next time.
+                if (request.UseWatermark && batchTo is not null && !watermarkBlocked)
                 {
                     _state.SetLastChangedWatermark(batchTo.Value);
                 }

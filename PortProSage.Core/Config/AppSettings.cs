@@ -147,6 +147,22 @@ public class Sage50Settings
     public string DefaultRevenueAccount { get; set; } = string.Empty;
 
     /// <summary>
+    /// When true, a charge whose specifically-mapped account (ChargeAccountMap's
+    /// Sage50AccountNumber) can't be confirmed in Sage 50 does NOT stop the run -
+    /// it's quietly posted to DefaultRevenueAccount instead, with a warning (not
+    /// an error) recorded. When false (the default), that same situation is a
+    /// hard error and the invoice fails. This is a deliberately blunt, whole-run
+    /// escape hatch for InvoiceValidationService's per-line account check being
+    /// unreliable for reasons that are hard to diagnose case by case (see
+    /// AccountsUnverifiableBySdk's doc comment for one confirmed example) -
+    /// checking this box means "when in doubt, just use my default account
+    /// instead of stopping everything." If DefaultRevenueAccount itself can't be
+    /// confirmed either, that's still a hard error either way - there's nowhere
+    /// further to fall back to.
+    /// </summary>
+    public bool IgnoreAccountMismatchUseDefault { get; set; } = false;
+
+    /// <summary>
     /// Optional charge-to-account lookup table, matched against each PortPro
     /// pricing line's charge name (case-insensitive). A charge with no matching
     /// row here, or a row whose Sage50AccountNumber is blank, falls back to

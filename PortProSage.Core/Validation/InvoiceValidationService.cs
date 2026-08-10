@@ -189,8 +189,33 @@ public class InvoiceValidationService
 
             if (!await _sage50.AccountExistsAsync(revenueAccount, ct))
             {
-                result.Errors.Add($"Revenue account '{revenueAccount}' for charge '{line.Name}' does not exist in Sage 50's chart of accounts.");
-                continue;
+                // "Ignore account 1-on-1 match and apply default" (Sage 50 tab) - only
+                // kicks in when the account that failed isn't already the default (no
+                // further fallback exists past that), and only falls back once: if the
+                // default ALSO can't be confirmed, this is still a hard error either way.
+                if (_settings.IgnoreAccountMismatchUseDefault
+                    && !string.IsNullOrWhiteSpace(_settings.DefaultRevenueAccount)
+                    && !string.Equals(revenueAccount, _settings.DefaultRevenueAccount, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Warnings.Add(
+                        $"Charge '{line.Name}' was mapped to account '{revenueAccount}', which could not be " +
+                        $"confirmed in Sage 50 - used the Default revenue account '{_settings.DefaultRevenueAccount}' " +
+                        "instead (\"Ignore account 1-on-1 match and apply default\" is checked).");
+                    revenueAccount = _settings.DefaultRevenueAccount;
+
+                    if (!await _sage50.AccountExistsAsync(revenueAccount, ct))
+                    {
+                        result.Errors.Add(
+                            $"Charge '{line.Name}': neither the mapped account nor the Default revenue account " +
+                            $"'{revenueAccount}' could be confirmed in Sage 50's chart of accounts.");
+                        continue;
+                    }
+                }
+                else
+                {
+                    result.Errors.Add($"Revenue account '{revenueAccount}' for charge '{line.Name}' does not exist in Sage 50's chart of accounts.");
+                    continue;
+                }
             }
 
             result.ResolvedRevenueAccountByChargeName[line.Name] = revenueAccount;

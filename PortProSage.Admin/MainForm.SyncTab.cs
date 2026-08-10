@@ -14,6 +14,9 @@ public partial class MainForm
     // any arrow-key/spinner change).
     private Label _syncUpperCutoffDateLabel = new() { AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(10, 8, 3, 3) };
 
+    // Moved to the Settings tab's "Folder Locations" section (MainForm.SettingsTab.cs)
+    // - these fields/AddFolderRow calls live there now, but AddFolderRow/
+    // OpenInExplorer themselves stay here as shared helpers.
     private TextBox _syncTriggerFolder = new();
     private TextBox _syncProcessedTriggerFolder = new();
     private TextBox _syncStateDatabasePath = new();
@@ -30,8 +33,6 @@ public partial class MainForm
         var grid = NewFieldGrid();
         const string f = AppSettingsFileName;
 
-        _syncMinimumLogLevel.Items.AddRange(new object[] { "Verbose", "Debug", "Information", "Warning", "Error", "Fatal" });
-
         AddProcessingDelayRow(grid, f);
         AddRow(grid, "Automatic Sync - Polling Interval (minutes)", _syncPollingIntervalMinutes, f, "PortProSage:Sync:PollingIntervalMinutes",
             "How often the automatic background poll checks PortPro for changed invoices, when the Service is running " +
@@ -41,39 +42,6 @@ public partial class MainForm
             CutoffInvoiceDateHelpText, stretchInput: false);
         WireCutoffInvoiceDateControl(_syncCutoffInvoiceDate);
         RefreshAllTabsFromConfig += RefreshCutoffInvoiceDateControls;
-        AddFolderRow(grid, "Trigger folder", _syncTriggerFolder, f, "PortProSage:Sync:TriggerFolder",
-            "The folder the running Service watches for new manual sync requests - both the command-line Trigger " +
-            "tool and this Admin app's Manual Run tab drop a request file here.\n\n" +
-            "Example: C:\\PortProSageSync\\requests");
-        AddFolderRow(grid, "Processed trigger folder", _syncProcessedTriggerFolder, f, "PortProSage:Sync:ProcessedTriggerFolder",
-            "Where a request file (and its result) get moved once the Service has finished processing it. The " +
-            "History & Logs tab reads completed runs from here.\n\n" +
-            "Example: C:\\PortProSageSync\\requests\\processed");
-        AddFolderRow(grid, "State database path", _syncStateDatabasePath, f, "PortProSage:Sync:StateDatabasePath",
-            "The SQLite database file that remembers which PortPro invoices have already been imported, and the " +
-            "watermark used by \"continue from where we left off\". Do not point two different client deployments " +
-            "at the same file.\n\nExample: C:\\PortProSageSync\\state.db",
-            isFile: true);
-        AddFolderRow(grid, "Log folder", _syncLogFolder, f, "PortProSage:Sync:LogFolder",
-            "Where the Service writes its daily rolling log files (one file per day, kept for 30 days). The " +
-            "History & Logs tab reads these to show each run's full log.\n\nExample: C:\\PortProSageSync\\logs");
-        AddFolderRow(grid, "Failed transactions folder", _syncFailedTransactionsFolder, f, "PortProSage:Sync:FailedTransactionsFolder",
-            "Where a CSV report of any failed invoices from a run gets saved, with a microsecond-precision timestamp " +
-            "in the filename. Written every time a run has at least one failure, regardless of whether email is enabled.\n\n" +
-            "Example: C:\\PortProSageSync\\failed-transactions");
-        AddRow(grid, "Minimum log level", _syncMinimumLogLevel, f, "PortProSage:Sync:MinimumLogLevel",
-            "How much detail gets written to the log files. Information is the normal, recommended setting - Debug " +
-            "produces far more detail (useful when actively troubleshooting), Warning/Error/Fatal produce much less.\n\n" +
-            "Example: Information logs each invoice processed and each write to Sage 50, without every low-level HTTP detail.",
-            stretchInput: false);
-        AddRow(grid, "Cleanup log after execution (Days)", _syncLogRetentionDays, f, "PortProSage:Sync:LogRetentionDays",
-            "Checked at the end of every sync run (manual, automatic, or trigger) - any daily log file in Log folder " +
-            "older than this many days is PERMANENTLY DELETED. This is NOT reversible; a removed log file cannot " +
-            "be recovered.\n\n" +
-            "0 means cleanup is turned OFF - nothing is ever removed automatically, regardless of how old the logs " +
-            "get.\n\n" +
-            "Example: 60 keeps the most recent 60 days of logs; anything older is deleted the next time any sync " +
-            "runs (not on a fixed schedule of its own).");
         AddCheckRow(grid, _syncShowCommandWindow, f, "PortProSage:Sync:ShowCommandWindow", ShowCommandWindowHelpText);
         WireShowCommandWindowControl(_syncShowCommandWindow);
         RefreshAllTabsFromConfig += RefreshShowCommandWindowControls;
@@ -105,18 +73,6 @@ public partial class MainForm
         if (_appSettings is null) return;
         _syncPollingIntervalMinutes.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.PollingIntervalMinutes", 15), _syncPollingIntervalMinutes.Minimum, _syncPollingIntervalMinutes.Maximum);
         _syncProcessingDelayDays.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.ProcessingDelayDays", 7), _syncProcessingDelayDays.Minimum, _syncProcessingDelayDays.Maximum);
-        _syncTriggerFolder.Text = _appSettings.GetString("PortProSage.Sync.TriggerFolder");
-        _syncProcessedTriggerFolder.Text = _appSettings.GetString("PortProSage.Sync.ProcessedTriggerFolder");
-        _syncStateDatabasePath.Text = _appSettings.GetString("PortProSage.Sync.StateDatabasePath");
-        _syncLogFolder.Text = _appSettings.GetString("PortProSage.Sync.LogFolder");
-        _syncFailedTransactionsFolder.Text = _appSettings.GetString("PortProSage.Sync.FailedTransactionsFolder");
-        var level = _appSettings.GetString("PortProSage.Sync.MinimumLogLevel", "Information");
-        _syncMinimumLogLevel.SelectedItem = _syncMinimumLogLevel.Items.Cast<string>().FirstOrDefault(i => i == level) ?? "Information";
-        _syncLogRetentionDays.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.LogRetentionDays", 0), _syncLogRetentionDays.Minimum, _syncLogRetentionDays.Maximum);
-
-        // Also feeds the Run/Results tabs - they need the real TriggerFolder/
-        // ProcessedTriggerFolder/LogFolder values, not a guess.
-        RefreshRunTabFolders();
     }
 
     private void SaveSyncTab()
@@ -124,16 +80,8 @@ public partial class MainForm
         if (_appSettings is null) return;
         _appSettings.SetInt("PortProSage.Sync.PollingIntervalMinutes", (int)_syncPollingIntervalMinutes.Value);
         _appSettings.SetInt("PortProSage.Sync.ProcessingDelayDays", (int)_syncProcessingDelayDays.Value);
-        _appSettings.SetString("PortProSage.Sync.TriggerFolder", _syncTriggerFolder.Text);
-        _appSettings.SetString("PortProSage.Sync.ProcessedTriggerFolder", _syncProcessedTriggerFolder.Text);
-        _appSettings.SetString("PortProSage.Sync.StateDatabasePath", _syncStateDatabasePath.Text);
-        _appSettings.SetString("PortProSage.Sync.LogFolder", _syncLogFolder.Text);
-        _appSettings.SetString("PortProSage.Sync.FailedTransactionsFolder", _syncFailedTransactionsFolder.Text);
-        _appSettings.SetString("PortProSage.Sync.MinimumLogLevel", _syncMinimumLogLevel.SelectedItem?.ToString() ?? "Information");
-        _appSettings.SetInt("PortProSage.Sync.LogRetentionDays", (int)_syncLogRetentionDays.Value);
         _appSettings.Save();
 
-        RefreshRunTabFolders();
         MessageBox.Show(this, "Sync settings saved. The running Service needs a restart to pick up changes.", "Saved",
             MessageBoxButtons.OK, MessageBoxIcon.Information);
     }

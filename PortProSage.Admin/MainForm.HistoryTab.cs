@@ -566,28 +566,27 @@ public partial class MainForm
             lines.Add($"Failed write: {entry.Result.InvoicesFailedImport}");
             lines.Add("");
 
-            // Pre/post snapshot of persisted state - Start == End confirms an
-            // explicit-range run genuinely left the anchor untouched (the
+            // Pre/post snapshot of the persisted "continue from" DATE - Start == End
+            // confirms an explicit-range run genuinely left it untouched (the
             // guarantee UseWatermark=False is supposed to make); for a
-            // watermark-driven run, the gap between them is exactly how far
-            // this run advanced.
+            // watermark-driven run, the gap between them is exactly how far this
+            // run advanced. See the Watermark tab for the current persisted value
+            // directly - the invoice-number pair below is deliberately just what
+            // THIS run actually touched, not the persisted watermark, to avoid
+            // showing two different-looking "watermark" invoice numbers side by
+            // side (the persisted one barely ever changes for most run types,
+            // which read as a confusing mismatch against what was actually
+            // processed).
             lines.Add($"Start Watermark (date): {entry.Result.WatermarkBeforeRun?.ToLocalTime().ToString("G") ?? "(none yet)"}");
             lines.Add($"End Watermark (date):   {entry.Result.WatermarkAfterRun?.ToLocalTime().ToString("G") ?? "(none yet)"}");
-            lines.Add($"Start Watermark (invoice #): {entry.Result.LastProcessedInvoiceNumberBeforeRun ?? "(none yet)"}");
-            lines.Add($"End Watermark (invoice #):   {entry.Result.LastProcessedInvoiceNumberAfterRun ?? "(none yet)"}");
 
             var referenceNumbers = entry.Result.Outcomes
                 .Select(o => o.ReferenceNumber)
                 .Where(r => !string.IsNullOrEmpty(r))
                 .OrderBy(r => r, StringComparer.Ordinal)
                 .ToList();
-            if (referenceNumbers.Count > 0)
-            {
-                lines.Add($"Processed invoices: {referenceNumbers[0]} to {referenceNumbers[^1]} ({referenceNumbers.Count} total)");
-            }
-
-            if (entry.Result.LastProcessedInvoiceNumberAfterRun is not null)
-                lines.Add($"Anchor advanced to: {entry.Result.LastProcessedInvoiceNumberAfterRun}");
+            lines.Add($"Start Invoice #: {(referenceNumbers.Count > 0 ? referenceNumbers[0] : "(none)")}");
+            lines.Add($"End Invoice #:   {(referenceNumbers.Count > 0 ? referenceNumbers[^1] : "(none)")}");
         }
 
         return string.Join(Environment.NewLine, lines);

@@ -15,6 +15,7 @@ public partial class MainForm
     private CheckBox _sage50AutoCreateCustomers = new() { Text = "Auto-create missing customers" };
     private CheckBox _sage50AutoCreateItems = new() { Text = "Auto-create missing items/services" };
     private CheckBox _sage50DryRun = new() { Text = "Dry run (simulate writes - no real Sage 50 changes)" };
+    private CheckBox _sage50IgnoreAccountMismatchUseDefault = new() { Text = "Ignore account 1-on-1 match and apply default" };
     private TextBox _sage50AccountsUnverifiable = new() { Width = 400 };
     private DataGridView _taxCodesGrid = new() { Width = 400, Height = 120, AllowUserToAddRows = true };
     private DataGridView _chargeAccountMapGrid = new() { Dock = DockStyle.Fill, AllowUserToAddRows = true };
@@ -56,7 +57,7 @@ public partial class MainForm
             "every time it connects to Sage 50.\n\n" +
             "\"Test Connection\" attempts a real connect using whatever is currently SAVED to appsettings.Local.json " +
             "- Save Sage 50 settings first if you just changed something, or the test won't reflect your edits.",
-            fieldPercent, testConnectionButton);
+            fieldPercent + fieldPercent / 2, testConnectionButton); // 50% wider than the other fields on this tab
         AddPercentRow(grid, "Sage50 User Name (secret)", _sage50UserName, LocalSettingsFileName, "PortProSage:Sage50:UserName",
             "The Sage 50 login the Service uses to open the company file. Must be a dedicated account, never the " +
             "same one a human logs into Sage 50 with interactively - Sage 50 rejects two simultaneous sessions " +
@@ -80,16 +81,38 @@ public partial class MainForm
             "error instead of posting to an undefined account.\n\n" +
             "Example: 4100  ->  a 'PICK UP & DELIVERY' charge with no map entry posts to account 4100.",
             fieldPercent);
+        AddCheckRow(grid, _sage50IgnoreAccountMismatchUseDefault, f, "PortProSage:Sage50:IgnoreAccountMismatchUseDefault",
+            "Checked: if a charge's specific account (from the Charge account map below) can't be confirmed as a " +
+            "real Sage 50 account, the run does NOT stop - it just posts to the Default revenue account above " +
+            "instead, and makes a note of it (not an error, just a warning you can review later).\n\n" +
+            "Unchecked (the normal setting): a charge's mapped account must match a real Sage 50 account exactly. " +
+            "If it doesn't, that invoice fails right there and the run stops on it.\n\n" +
+            "Either way, if the Default revenue account itself can't be confirmed, that always stops the run - " +
+            "there's nothing left to fall back to at that point.\n\n" +
+            "Turn this on if you keep seeing an account rejected that you've personally checked and confirmed is " +
+            "really there in Sage 50 - rather than tracking down each one individually, this just tells the sync " +
+            "\"when in doubt, use my default account instead of stopping everything.\"");
         AddPercentRow(grid, "Default receivable account", _sage50DefaultReceivableAccount, f, "PortProSage:Sage50:DefaultReceivableAccount",
             "The GL accounts-receivable account assigned to a customer that gets auto-created because they didn't " +
             "already exist in Sage 50.\n\nExample: 1200",
             fieldPercent);
-        AddPercentRow(grid, "Accounts unverifiable by SDK\n(comma-separated)", _sage50AccountsUnverifiable, f, "PortProSage:Sage50:AccountsUnverifiableBySdk",
-            "A workaround list, not a mapping. Some Sage 50 accounts (confirmed for this company: currency-paired " +
-            "accounts like 4100/4110) make the SDK's own 'does this account exist?' check incorrectly return false, " +
-            "even though the account is real and valid. Any account number listed here skips that broken check and " +
-            "is trusted to exist - only add an account here after confirming directly in Sage 50 that it's real.\n\n" +
-            "Example: 4100, 4110",
+        AddPercentRow(grid, "Accounts To Trust\n(comma-separated)", _sage50AccountsUnverifiable, f, "PortProSage:Sage50:AccountsUnverifiableBySdk",
+            "USE THIS ONLY WHEN: a sync run fails with an error saying a GL account \"does not exist\" in Sage 50 " +
+            "- but when you open Sage 50 yourself and check the Chart of Accounts, that account IS actually there " +
+            "and set up correctly.\n\n" +
+            "This is a known quirk with a handful of Sage 50 accounts - the connecting software sometimes wrongly " +
+            "reports them as missing even though they're real. Listing an account number here tells the sync to " +
+            "trust it and skip that faulty check.\n\n" +
+            "STEPS if you hit this:\n" +
+            "1. Open the History & Logs tab, find the failed run, and read the exact account number in the error " +
+            "(e.g. \"Revenue account 4100 ... does not exist\").\n" +
+            "2. Open Sage 50 and confirm that account number is really there.\n" +
+            "3. If it IS there: add that number to this box (comma-separated) and save - the error should stop.\n" +
+            "4. If it is NOT there: do NOT add it here. That's a real setup problem - fix the account in Sage 50, " +
+            "or correct the \"Default revenue account\"/\"Default receivable account\"/Charge account map fields " +
+            "above instead.\n\n" +
+            "Current entries: 4100 and 4110 - this company's Canadian and US-dollar revenue accounts, confirmed " +
+            "real in Sage 50 in August 2026 but wrongly flagged as missing.",
             fieldPercent);
 
         AddCheckRow(grid, _sage50AutoCreateCustomers, f, "PortProSage:Sage50:AutoCreateCustomers",
@@ -332,6 +355,7 @@ public partial class MainForm
         _sage50AutoCreateCustomers.Checked = _appSettings.GetBool("PortProSage.Sage50.AutoCreateCustomers");
         _sage50AutoCreateItems.Checked = _appSettings.GetBool("PortProSage.Sage50.AutoCreateItems");
         _sage50DryRun.Checked = _appSettings.GetBool("PortProSage.Sage50.DryRun");
+        _sage50IgnoreAccountMismatchUseDefault.Checked = _appSettings.GetBool("PortProSage.Sage50.IgnoreAccountMismatchUseDefault");
         _sage50AccountsUnverifiable.Text = string.Join(", ", _appSettings.GetStringArray("PortProSage.Sage50.AccountsUnverifiableBySdk"));
 
         _taxCodesGrid.Rows.Clear();
@@ -364,6 +388,7 @@ public partial class MainForm
         _appSettings.SetBool("PortProSage.Sage50.AutoCreateCustomers", _sage50AutoCreateCustomers.Checked);
         _appSettings.SetBool("PortProSage.Sage50.AutoCreateItems", _sage50AutoCreateItems.Checked);
         _appSettings.SetBool("PortProSage.Sage50.DryRun", _sage50DryRun.Checked);
+        _appSettings.SetBool("PortProSage.Sage50.IgnoreAccountMismatchUseDefault", _sage50IgnoreAccountMismatchUseDefault.Checked);
         _appSettings.SetStringArray("PortProSage.Sage50.AccountsUnverifiableBySdk",
             _sage50AccountsUnverifiable.Text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
