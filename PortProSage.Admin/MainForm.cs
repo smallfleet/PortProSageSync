@@ -185,9 +185,10 @@ public partial class MainForm : Form
     {
         var candidates = new[]
         {
-            @"C:\PortProSageSync\bin",
+            @"C:\PortProSageSync\Service", // Install-Production.ps1 / PortProSageSyncInstaller.exe layout
             @"C:\PortProSageSync\PortProSage.Service\bin\Debug\net48",
-            @"C:\PortProSageSync\PortProSage.Service\bin\Release\net48"
+            @"C:\PortProSageSync\PortProSage.Service\bin\Release\net48",
+            @"C:\PortProSageSync\bin" // legacy manual-install layout, superseded by install-service.ps1's removal
         };
         return candidates.FirstOrDefault(c => File.Exists(Path.Combine(c, AppSettingsFileName))) ?? candidates[0];
     }
