@@ -210,9 +210,14 @@ dotnet publish PortProSage.Service -c Release -o C:\PortProSageSync\bin --self-c
 dotnet publish PortProSage.Trigger -c Release -o C:\PortProSageSync\bin --self-contained false
 
 # Install as a Windows Service (elevated PowerShell)
-.\install-service.ps1 -Action Install -BinPath "C:\PortProSageSync\bin\PortProSage.Service.exe"
-.\install-service.ps1 -Action Start
+New-Service -Name "PortProSageSync" -BinaryPathName "C:\PortProSageSync\bin\PortProSage.Service.exe" `
+    -DisplayName "PortPro to Sage 50 Invoice Sync" -StartupType Automatic
+Start-Service -Name "PortProSageSync"
 ```
+
+For a full production install (folders, `appsettings.Local.json`, service
+registration all in one step), use `Install-Production.ps1` instead - see
+DEPLOYMENT.md.
 
 ## Manual sync examples
 

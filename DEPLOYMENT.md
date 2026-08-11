@@ -163,15 +163,27 @@ New-Item -ItemType Directory -Force C:\PortProSageSync\requests, C:\PortProSageS
     C:\PortProSageSync\failed-transactions
 
 # 4. Register + start the Windows Service (elevated)
-.\install-service.ps1 -Action Install -BinPath "C:\PortProSageSync\Service\PortProSage.Service.exe"
-.\install-service.ps1 -Action Start
+New-Service -Name "PortProSageSync" -BinaryPathName "C:\PortProSageSync\Service\PortProSage.Service.exe" `
+    -DisplayName "PortPro to Sage 50 Invoice Sync" -StartupType Automatic
+Start-Service -Name "PortProSageSync"
 ```
 
-`install-service.ps1` (already in the repo) only handles service
-registration/start/stop/uninstall against an already-published exe - it's
-what `Install-Production.ps1` calls under the hood for that one step, and
-remains useful on its own for quick stop/start/uninstall without redoing
-the whole install.
+For quick stop/start/uninstall against an already-installed service, use
+the built-in cmdlets directly - no extra script needed:
+
+```powershell
+Stop-Service -Name "PortProSageSync"
+Start-Service -Name "PortProSageSync"
+sc.exe delete "PortProSageSync"   # uninstall
+```
+
+To update the binary path of an existing service (e.g. after moving the
+install), use `Install-Production.ps1` (it does this for you), or by hand:
+
+```powershell
+Stop-Service -Name "PortProSageSync"
+sc.exe config "PortProSageSync" binPath= "`"C:\PortProSageSync\Service\PortProSage.Service.exe`""
+```
 
 ## Before trusting it for real
 

@@ -39,3 +39,7 @@ Thumbs.db
 # version installed on each machine that builds/runs this service; populate
 # locally, don't commit (see PortProSage.Core.csproj for details).
 lib/Sage50SDK/
+
+# Build-Installer.ps1's output - staged publishes and the compiled
+# PortProSageSyncInstaller.exe. Regenerated per machine/SDK version, not source.
+/dist/
