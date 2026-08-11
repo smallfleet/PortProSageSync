@@ -36,6 +36,33 @@ public class Sage50Client : ISage50Client
     private readonly ILogger<Sage50Client> _logger;
     private bool _connected;
 
+    // Opened once, lazily, on first use and kept open for as long as this
+    // client stays connected (same lifetime as OpenDatabase/CloseDatabase
+    // itself - see ConnectAsync's doc comment on why the database connection
+    // is already long-lived, not per-call) - NOT closed and reopened around
+    // every single FindXxx/CreateXxx call like before. Confirmed live
+    // 2026-08-10: opening/closing a ledger has real, measurable overhead
+    // (each open/close round-trips into the Sage 50 engine), and a 120-
+    // invoice run was doing this 2-10+ times PER invoice (once for the
+    // customer lookup, once per pricing line for its item lookup, once per
+    // resolved account) - confirmed via the SDK's own docs that
+    // CustomerLedger/InventoryLedger/AccountLedger are meant to be reused
+    // this way ("LedgerBase: LoadByXxx() for lookup, InitializeNew()+Save()
+    // to create"), the same pattern the top-level database connection
+    // already relies on. Deliberately NOT applied to SalesJournal
+    // (OpenSalesJournal/CloseSalesJournal, in CreateInvoiceAsync) - that's
+    // the actual invoice POST, the SDK docs don't show a "reset for the next
+    // entry" method on it, and this file already has real incident history
+    // (see TerminateOnFatalWriteError) of a write leaving the SDK session in
+    // a bad state; a fresh journal per invoice is the safer trade here.
+    private SimplySDK.ReceivableModule.CustomerLedger? _customerLedger;
+    private SimplySDK.InventoryModule.InventoryLedger? _inventoryLedger;
+    private SimplySDK.GeneralModule.AccountLedger? _accountLedger;
+
+    private SimplySDK.ReceivableModule.CustomerLedger GetCustomerLedger() => _customerLedger ??= SDKInstanceManager.Instance.OpenCustomerLedger();
+    private SimplySDK.InventoryModule.InventoryLedger GetInventoryLedger() => _inventoryLedger ??= SDKInstanceManager.Instance.OpenInventoryLedger();
+    private SimplySDK.GeneralModule.AccountLedger GetAccountLedger() => _accountLedger ??= SDKInstanceManager.Instance.OpenAccountLedger();
+
     public Sage50Client(Sage50Settings settings, ILogger<Sage50Client> logger)
     {
         _settings = settings;
@@ -168,31 +195,24 @@ public class Sage50Client : ISage50Client
     {
         EnsureConnected();
 
-        var ledger = SDKInstanceManager.Instance.OpenCustomerLedger();
-        try
+        var ledger = GetCustomerLedger();
+        if (!ledger.LoadByName(name))
         {
-            if (!ledger.LoadByName(name))
-            {
-                return Task.FromResult<Sage50Customer?>(null);
-            }
+            return Task.FromResult<Sage50Customer?>(null);
+        }
 
-            // CustomerLedger (via APARLedgerBase) exposes Name plus address/contact
-            // fields - there's no separate "customer code" distinct from Name in this
-            // SDK, and no per-customer receivable-account override (Simply
-            // Accounting/Sage 50 posts all customers to one AR control account), so
-            // ReceivableAccount is left null here; Sage50Settings.DefaultReceivableAccount
-            // is what actually matters for posting.
-            return Task.FromResult<Sage50Customer?>(new Sage50Customer
-            {
-                Code = ledger.Name,
-                Name = ledger.Name,
-                ReceivableAccount = null
-            });
-        }
-        finally
+        // CustomerLedger (via APARLedgerBase) exposes Name plus address/contact
+        // fields - there's no separate "customer code" distinct from Name in this
+        // SDK, and no per-customer receivable-account override (Simply
+        // Accounting/Sage 50 posts all customers to one AR control account), so
+        // ReceivableAccount is left null here; Sage50Settings.DefaultReceivableAccount
+        // is what actually matters for posting.
+        return Task.FromResult<Sage50Customer?>(new Sage50Customer
         {
-            SDKInstanceManager.Instance.CloseCustomerLedger();
-        }
+            Code = ledger.Name,
+            Name = ledger.Name,
+            ReceivableAccount = null
+        });
     }
 
     public Task<Sage50Customer> CreateCustomerAsync(string name, string receivableAccount, CancellationToken ct)
@@ -213,7 +233,7 @@ public class Sage50Client : ISage50Client
             return Task.FromResult(new Sage50Customer { Code = name, Name = name, ReceivableAccount = receivableAccount });
         }
 
-        var ledger = SDKInstanceManager.Instance.OpenCustomerLedger();
+        var ledger = GetCustomerLedger();
         try
         {
             ledger.InitializeNew();
@@ -227,36 +247,25 @@ public class Sage50Client : ISage50Client
             TerminateOnFatalWriteError($"creating customer '{name}'", ex);
             throw; // unreachable - TerminateOnFatalWriteError never returns
         }
-        finally
-        {
-            SDKInstanceManager.Instance.CloseCustomerLedger();
-        }
     }
 
     public Task<Sage50Item?> FindItemByCodeOrDescriptionAsync(string codeOrDescription, CancellationToken ct)
     {
         EnsureConnected();
 
-        var ledger = SDKInstanceManager.Instance.OpenInventoryLedger();
-        try
+        var ledger = GetInventoryLedger();
+        if (!ledger.LoadByPartCode(codeOrDescription))
         {
-            if (!ledger.LoadByPartCode(codeOrDescription))
-            {
-                return Task.FromResult<Sage50Item?>(null);
-            }
+            return Task.FromResult<Sage50Item?>(null);
+        }
 
-            return Task.FromResult<Sage50Item?>(new Sage50Item
-            {
-                Code = ledger.Number,
-                Description = ledger.Name,
-                RevenueAccount = ExtractAccountNumber(ledger.RevenueAccount),
-                IsService = ledger.IsServiceType
-            });
-        }
-        finally
+        return Task.FromResult<Sage50Item?>(new Sage50Item
         {
-            SDKInstanceManager.Instance.CloseInventoryLedger();
-        }
+            Code = ledger.Number,
+            Description = ledger.Name,
+            RevenueAccount = ExtractAccountNumber(ledger.RevenueAccount),
+            IsService = ledger.IsServiceType
+        });
     }
 
     public Task<Sage50Item> CreateServiceItemAsync(string code, string description, string revenueAccount, CancellationToken ct)
@@ -278,7 +287,7 @@ public class Sage50Client : ISage50Client
             return Task.FromResult(new Sage50Item { Code = code, Description = description, RevenueAccount = revenueAccount, IsService = true });
         }
 
-        var ledger = SDKInstanceManager.Instance.OpenInventoryLedger();
+        var ledger = GetInventoryLedger();
         try
         {
             ledger.InitializeNew();
@@ -301,10 +310,6 @@ public class Sage50Client : ISage50Client
             TerminateOnFatalWriteError($"creating service item '{code}' ('{description}')", ex);
             throw; // unreachable - TerminateOnFatalWriteError never returns
         }
-        finally
-        {
-            SDKInstanceManager.Instance.CloseInventoryLedger();
-        }
     }
 
     public Task<bool> AccountExistsAsync(string accountNumber, CancellationToken ct)
@@ -322,23 +327,16 @@ public class Sage50Client : ISage50Client
             return Task.FromResult(true);
         }
 
-        var ledger = SDKInstanceManager.Instance.OpenAccountLedger();
-        try
-        {
-            // LoadByAccountNumber, not LoadByAccountDisplayString - confirmed live
-            // 2026-08-04 by testing both against 9 real accounts from this company's
-            // actual chart of accounts: LoadByAccountDisplayString returned false for
-            // every single one (including accounts LoadByAccountNumber correctly
-            // found), so it's not usable here in whatever form we tried.
-            var found = int.TryParse(accountNumber, out var numeric)
-                ? ledger.LoadByAccountNumber(numeric)
-                : ledger.LoadByAccountDisplayString(accountNumber);
-            return Task.FromResult(found);
-        }
-        finally
-        {
-            SDKInstanceManager.Instance.CloseAccountLedger();
-        }
+        var ledger = GetAccountLedger();
+        // LoadByAccountNumber, not LoadByAccountDisplayString - confirmed live
+        // 2026-08-04 by testing both against 9 real accounts from this company's
+        // actual chart of accounts: LoadByAccountDisplayString returned false for
+        // every single one (including accounts LoadByAccountNumber correctly
+        // found), so it's not usable here in whatever form we tried.
+        var found = int.TryParse(accountNumber, out var numeric)
+            ? ledger.LoadByAccountNumber(numeric)
+            : ledger.LoadByAccountDisplayString(accountNumber);
+        return Task.FromResult(found);
     }
 
     /// <summary>
@@ -530,6 +528,15 @@ public class Sage50Client : ISage50Client
     public void Dispose()
     {
         if (!_connected) return;
+
+        // Close whichever of the long-lived ledgers actually got opened (see
+        // GetCustomerLedger/GetInventoryLedger/GetAccountLedger) before closing
+        // the database itself - best-effort, same as CloseDatabase below; the
+        // process is going away either way, so a failure here just isn't worth
+        // more than a swallowed exception.
+        if (_customerLedger is not null) { try { SDKInstanceManager.Instance.CloseCustomerLedger(); } catch { } }
+        if (_inventoryLedger is not null) { try { SDKInstanceManager.Instance.CloseInventoryLedger(); } catch { } }
+        if (_accountLedger is not null) { try { SDKInstanceManager.Instance.CloseAccountLedger(); } catch { } }
 
         try
         {
