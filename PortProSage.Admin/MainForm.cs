@@ -15,6 +15,19 @@ namespace PortProSage.Admin;
 /// </summary>
 public partial class MainForm : Form
 {
+    /// <summary>Shown on the About tab so it's obvious at a glance whether a
+    /// freshly-built/installed exe actually is the one just built - confirmed live
+    /// 2026-08-12 there was no way to tell apart an old, already-running Admin.exe
+    /// from a newly rebuilt one just by looking at the UI.
+    ///
+    /// X.YY.ZZ, bumped by hand with every build handed out for testing/release:
+    ///   X  (major)  - a big feature release.
+    ///   YY (minor)  - a "major release" - a meaningful, release-worthy batch of
+    ///                 changes (e.g. what ships in the next production installer).
+    ///   ZZ (build)  - any other new exe, including small dev-test iterations.
+    /// </summary>
+    public const string AppVersion = "2.01.05";
+
     private readonly ToolStripStatusLabel _sourceLabel = new() { Text = "Click any field to see where it's stored." };
     private readonly TextBox _serviceFolderBox = new() { Width = 480 };
 
@@ -32,7 +45,7 @@ public partial class MainForm : Form
 
     public MainForm()
     {
-        Text = "PortProSage Admin";
+        Text = $"PortProSage Admin - v{AppVersion}";
         Width = 1000;
         Height = 760;
         StartPosition = FormStartPosition.CenterScreen;
@@ -57,6 +70,22 @@ public partial class MainForm : Form
         Controls.Add(statusStrip);
 
         _resultPollTimer.Tick += ResultPollTimer_Tick;
+
+        // Landing on History & Logs (by clicking it, or programmatically via
+        // SelectHistoryTab when a run starts) always shows the latest activity
+        // first - refreshed from disk, then the newest (top) row selected -
+        // rather than leaving whatever was selected the last time this tab was
+        // open. Confirmed live 2026-08-12 this was the expected default; picking
+        // an older run to inspect is still just a click away, this only changes
+        // what's shown automatically on arrival.
+        _tabs.SelectedIndexChanged += (_, _) =>
+        {
+            if (_tabs.SelectedTab?.Text.StartsWith("History", StringComparison.Ordinal) == true)
+            {
+                RefreshHistoryList();
+                SelectTopHistoryRow();
+            }
+        };
 
         Load += (_, _) => TryLoadConfig();
     }
@@ -103,13 +132,28 @@ public partial class MainForm : Form
         var readmeHelp = CreateHelpIcon("Readme", readmeHelpText);
         readmeHelp.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 
+        // Directly visible in the always-on-screen top bar, not just the window
+        // title bar (easy to miss/obscured when maximized) or the About tab
+        // (requires navigating there) - confirmed live 2026-08-12 there was no
+        // quick way to tell a freshly rebuilt exe apart from an old one still
+        // running, which cost real time chasing "changes aren't showing up".
+        var versionLabel = new Label
+        {
+            Text = $"v{AppVersion}",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Anchor = AnchorStyles.Top | AnchorStyles.Right
+        };
+
         panel.SizeChanged += (_, _) =>
         {
             readmeHelp.Location = new Point(panel.Width - readmeHelp.Width - 8, 8);
             readme.Location = new Point(readmeHelp.Left - readme.Width - 6, 5);
+            versionLabel.Location = new Point(panel.Width - versionLabel.Width - 8, 42);
         };
         readmeHelp.Location = new Point(panel.Width - readmeHelp.Width - 8, 8);
         readme.Location = new Point(readmeHelp.Left - readme.Width - 6, 5);
+        versionLabel.Location = new Point(panel.Width - versionLabel.Width - 8, 42);
 
         // Second row: always-visible process status + a Stop button that works
         // regardless of which tab (Manual Run / Automatic Sync) actually owns
@@ -130,6 +174,7 @@ public partial class MainForm : Form
         panel.Controls.Add(statusLabelCaption);
         panel.Controls.Add(_headerStatusLabel);
         panel.Controls.Add(_headerStopButton);
+        panel.Controls.Add(versionLabel);
         return panel;
     }
 

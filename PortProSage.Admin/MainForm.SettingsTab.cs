@@ -87,33 +87,17 @@ public partial class MainForm
             "produces far more detail (useful when actively troubleshooting), Warning/Error/Fatal produce much less.\n\n" +
             "Example: Information logs each invoice processed and each write to Sage 50, without every low-level HTTP detail.",
             stretchInput: false);
-        AddRow(grid, "Cleanup log after execution (Days)", _syncLogRetentionDays, f, "PortProSage:Sync:LogRetentionDays",
+        AddRowWithButton(grid, "Cleanup log after execution (Days)", _syncLogRetentionDays, f, "PortProSage:Sync:LogRetentionDays",
             "Checked at the end of every sync run (manual, automatic, or trigger) - any daily log file in Log folder " +
             "older than this many days is PERMANENTLY DELETED. This is NOT reversible; a removed log file cannot " +
             "be recovered.\n\n" +
             "0 means cleanup is turned OFF - nothing is ever removed automatically, regardless of how old the logs " +
             "get.\n\n" +
             "Example: 60 keeps the most recent 60 days of logs; anything older is deleted the next time any sync " +
-            "runs (not on a fixed schedule of its own).");
-
-        var applyCleanupNowButton = new Button
-        {
-            Text = "Apply Now",
-            AutoSize = true,
-            Padding = new Padding(10, 4, 10, 4),
-            Margin = new Padding(3, 4, 3, 4)
-        };
-        applyCleanupNowButton.Click += (_, _) => ApplyLogCleanupNow();
-        var applyCleanupRow = grid.RowCount++;
-        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        grid.Controls.Add(new Label { Text = "Clear History Now", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 8, 3, 3) }, 0, applyCleanupRow);
-        AddWrappedWithHelp(grid, applyCleanupRow, applyCleanupNowButton, "Clear History Now",
-            "Runs the log-retention cleanup right now, using whichever \"Cleanup log after execution (Days)\" " +
-            "value is currently SAVED (save above first if you just changed it) - deletes any daily log file " +
-            "older than that many days immediately, instead of waiting for it to happen automatically at the end " +
-            "of the next sync run.\n\n" +
-            "This is NOT reversible - a deleted log file cannot be recovered. If the saved value is 0, cleanup is " +
-            "disabled and nothing will be deleted.");
+            "runs (not on a fixed schedule of its own).\n\n" +
+            "\"Apply Now\" (button on the right) runs this cleanup immediately, using whichever value is currently " +
+            "SAVED (save above first if you just changed it), instead of waiting for the next sync run.",
+            "Apply Now", (_, _) => ApplyLogCleanupNow(), inputWidth: 80);
 
         AddSectionHeading(grid, "Reset Imported-Invoice Tracking");
 

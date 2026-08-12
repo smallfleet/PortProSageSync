@@ -335,7 +335,25 @@ public partial class MainForm
         }
     }
 
-    private void TestSage50Connection() => RunConnectionTest("sage50", "Sage 50 connection test");
+    private void TestSage50Connection()
+    {
+        // Shows exactly what's about to be tested (the currently SAVED company
+        // path/username, same source RunConnectionTest itself tests against) before
+        // actually connecting - confirmed live 2026-08-12 this was worth confirming
+        // up front rather than only finding out which company file/account was
+        // actually used after the fact from a pass/fail dialog.
+        var confirm = MessageBox.Show(this,
+            "This will attempt a real connection to Sage 50 using the currently SAVED configuration:\n\n" +
+            $"Company data path: {_sage50CompanyDataPath.Text}\n" +
+            $"Sage 50 username: {_sage50UserName.Text}\n\n" +
+            "(Save Sage 50 settings first if you just changed either of these - this tests what's saved, not " +
+            "unsaved edits still sitting in the fields.)\n\n" +
+            "Proceed?",
+            "Sage 50 connection test", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (confirm != DialogResult.Yes) return;
+
+        RunConnectionTest("sage50", "Sage 50 connection test");
+    }
 
     private void TestPortProConnection() => RunConnectionTest("portpro", "PortPro connection test");
 

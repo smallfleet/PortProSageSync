@@ -23,6 +23,13 @@ public partial class MainForm
             Text = "PortProSage Sync",
             Font = new Font(Font.FontFamily, 18f, FontStyle.Bold),
             AutoSize = true,
+            Margin = new Padding(0, 0, 0, 2)
+        });
+        stack.Controls.Add(new Label
+        {
+            Text = $"Version {AppVersion}",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
             Margin = new Padding(0, 0, 0, 10)
         });
 

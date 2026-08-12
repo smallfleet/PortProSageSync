@@ -359,9 +359,39 @@ public partial class MainForm
         {
             foreach (DataGridViewRow row in _historyGrid.Rows)
             {
-                if (row.Cells["RequestId"].Value?.ToString() == selectedId) { row.Selected = true; break; }
+                if (row.Cells["RequestId"].Value?.ToString() == selectedId)
+                {
+                    _historyGrid.CurrentCell = row.Cells[0];
+                    row.Selected = true;
+                    break;
+                }
             }
         }
+
+        // Rows.Clear()/Add() above transiently fires SelectionChanged with nothing
+        // selected, which blanks the detail panes (ShowSelectedHistoryEntry) - re-
+        // selecting a row via CurrentCell/Selected doesn't reliably re-fire that
+        // event in every case, so call it directly to guarantee the panes match
+        // whatever ended up selected. Confirmed live 2026-08-12: without this,
+        // clicking Refresh left the detail view blank until switching to a
+        // different row and back.
+        ShowSelectedHistoryEntry();
+    }
+
+    /// <summary>Selects the most recent (topmost) row - the grid is always ordered
+    /// newest-first (see RunHistoryService.ListRuns' OrderByDescending). Used
+    /// whenever the view should default to the latest activity instead of
+    /// preserving whatever was previously selected: switching to this tab, and
+    /// right after starting a new run (its own entry becomes the top row as soon
+    /// as the grid refreshes, since its RequestedAtUtc is newer than anything
+    /// already completed).</summary>
+    private void SelectTopHistoryRow()
+    {
+        if (_historyGrid.Rows.Count == 0) return;
+        _historyGrid.ClearSelection();
+        _historyGrid.CurrentCell = _historyGrid.Rows[0].Cells[0];
+        _historyGrid.Rows[0].Selected = true;
+        ShowSelectedHistoryEntry();
     }
 
     /// <summary>The log time-window for a history entry - Result's own

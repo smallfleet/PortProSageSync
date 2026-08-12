@@ -609,6 +609,7 @@ public partial class MainForm
 
         SelectHistoryTab();
         RefreshHistoryList();
+        SelectTopHistoryRow(); // the just-started run's own entry - newest RequestedAtUtc, so it's already the top row
     }
 
     private void StopManualRun()
