@@ -150,14 +150,15 @@ public partial class MainForm
         grid.Controls.Add(clearImportedNote, 0, noteRow);
         grid.SetColumnSpan(clearImportedNote, 3);
 
-        var save = new Button { Text = "Save Settings", Dock = DockStyle.Bottom, Height = 32 };
+        var save = new Button { Text = "Save Settings" };
         save.Click += (_, _) => SaveSettingsTab();
+        var saveBar = CreateActionButtonBar(save);
 
         var fieldsScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         fieldsScroll.Controls.Add(grid);
 
         page.Controls.Add(fieldsScroll);
-        page.Controls.Add(save);
+        page.Controls.Add(saveBar);
 
         RefreshAllTabsFromConfig += RefreshSettingsTab;
         return page;

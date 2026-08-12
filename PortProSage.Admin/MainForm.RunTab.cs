@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json.Nodes;
 using PortProSage.Admin.Models;
 using PortProSage.Admin.Services;
 
@@ -22,6 +23,7 @@ public partial class MainForm
     private Label _runDryRunStatus = new() { AutoSize = true };
     private Button _manualRunButton = new() { Text = "Manual Run", Width = 140, Height = 36 };
     private Button _manualRunStopButton = new() { Text = "Stop Manual Run", Width = 140, Height = 36, Enabled = false };
+    private Button _manualRunSaveButton = new() { Text = "Save", Width = 90, Height = 36 };
 
     // "Previous Run" section - a read-only snapshot of the most recently completed
     // run's parameters, so it's directly visible (not just documented) that
@@ -146,14 +148,30 @@ public partial class MainForm
 
         _manualRunButton.Click += (_, _) => StartManualRun();
         _manualRunStopButton.Click += (_, _) => StopManualRun();
+        _manualRunSaveButton.Click += (_, _) =>
+        {
+            SaveManualRunFields();
+            MessageBox.Show(this, "Manual Run field values saved - they'll be restored the next time this app opens.",
+                "Saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        };
+        // Same accent-color treatment as the other tabs' Save/Refresh buttons - see
+        // CreateActionButtonBar - so it reads as a real action, not another gray button
+        // indistinguishable from Manual Run/Stop Manual Run at a glance.
+        _manualRunSaveButton.BackColor = ActionButtonColor;
+        _manualRunSaveButton.ForeColor = Color.White;
+        _manualRunSaveButton.FlatStyle = FlatStyle.Flat;
+        _manualRunSaveButton.FlatAppearance.BorderSize = 0;
+        _manualRunSaveButton.Cursor = Cursors.Hand;
         var manualRunHelp = CreateHelpIcon("Manual Run", ManualRunHelpText);
 
         var buttonPanel = new Panel { Dock = DockStyle.Bottom, Height = 50 };
         _manualRunButton.Location = new Point(12, 8);
         _manualRunStopButton.Location = new Point(160, 8);
-        manualRunHelp.Location = new Point(310, 15);
+        _manualRunSaveButton.Location = new Point(310, 8);
+        manualRunHelp.Location = new Point(410, 15);
         buttonPanel.Controls.Add(_manualRunButton);
         buttonPanel.Controls.Add(_manualRunStopButton);
+        buttonPanel.Controls.Add(_manualRunSaveButton);
         buttonPanel.Controls.Add(manualRunHelp);
 
         var note = new Label
@@ -174,8 +192,68 @@ public partial class MainForm
         page.Controls.Add(buttonPanel);
 
         UpdateRunModeFieldStates();
+        LoadManualRunFields(); // restores whatever was last Saved (or last run) - not tied to RefreshAllTabsFromConfig,
+                                // since this is local UI state independent of which Service folder/config is loaded,
+                                // and re-loading it on every Reload would stomp in-progress edits.
         RefreshAllTabsFromConfig += () => _runDryRunStatus.Text = _sage50DryRun.Checked ? "DRY RUN (simulated - nothing written to Sage 50)" : "REAL WRITE (changes Sage 50 for real)";
         return page;
+    }
+
+    /// <summary>Persists the current Manual Run field values to the local
+    /// admin-settings.json (see MainForm.cs's SaveAdminSettings) - separate from
+    /// _appSettings/appsettings.json, since these are per-user UI convenience state
+    /// ("what did I last run"), not real Service configuration. Called both from the
+    /// dedicated Save button and automatically when a Manual Run actually starts, so
+    /// running it once is enough to have it remembered next time even if Save is
+    /// never clicked directly.</summary>
+    private void SaveManualRunFields()
+    {
+        SaveAdminSettings(json => json["ManualRun"] = new JsonObject
+        {
+            ["Mode"] = _runMode.SelectedItem?.ToString() ?? "",
+            ["From"] = _runFrom.Value.ToString("O"),
+            ["To"] = _runTo.Value.ToString("O"),
+            ["StartInvoiceNumber"] = _runStartInvoice.Text,
+            ["EndInvoiceNumber"] = _runEndInvoice.Text,
+            ["MaxInvoices"] = (double)_runMaxInvoices.Value
+        });
+    }
+
+    private void LoadManualRunFields()
+    {
+        if (LoadAdminSettings()["ManualRun"] is not JsonObject manualRun) return;
+
+        try
+        {
+            var mode = manualRun["Mode"]?.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(mode) && _runMode.Items.Contains(mode)) _runMode.SelectedItem = mode;
+
+            if (manualRun["From"]?.GetValue<string>() is { } fromText &&
+                DateTime.TryParse(fromText, null, System.Globalization.DateTimeStyles.RoundtripKind, out var from))
+            {
+                _runFrom.Value = from;
+            }
+            if (manualRun["To"]?.GetValue<string>() is { } toText &&
+                DateTime.TryParse(toText, null, System.Globalization.DateTimeStyles.RoundtripKind, out var to))
+            {
+                _runTo.Value = to;
+            }
+
+            _runStartInvoice.Text = manualRun["StartInvoiceNumber"]?.GetValue<string>() ?? _runStartInvoice.Text;
+            _runEndInvoice.Text = manualRun["EndInvoiceNumber"]?.GetValue<string>() ?? _runEndInvoice.Text;
+
+            if (manualRun["MaxInvoices"]?.GetValue<double>() is { } max &&
+                (decimal)max >= _runMaxInvoices.Minimum && (decimal)max <= _runMaxInvoices.Maximum)
+            {
+                _runMaxInvoices.Value = (decimal)max;
+            }
+
+            UpdateRunModeFieldStates();
+        }
+        catch
+        {
+            // Corrupt/partial saved state - leave whatever didn't parse at its default.
+        }
     }
 
     private void UpdateRunModeFieldStates()
@@ -495,6 +573,8 @@ public partial class MainForm
         var confirm = MessageBox.Show(this, BuildManualRunConfirmationText(request, requestPathPreview),
             "Confirm manual run", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (confirm != DialogResult.Yes) return;
+
+        SaveManualRunFields(); // so these values are what's shown next time, even if Save was never clicked directly
 
         Directory.CreateDirectory(_manualRunFolder);
         var requestPath = TriggerService.WriteRequest(_manualRunFolder, request);

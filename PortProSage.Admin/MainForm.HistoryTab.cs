@@ -33,8 +33,9 @@ public partial class MainForm
         SetupHistoryGrid();
         SetupOutcomesGrid();
 
-        var refreshButton = new Button { Text = "Refresh", Dock = DockStyle.Top, Height = 30 };
+        var refreshButton = new Button { Text = "Refresh" };
         refreshButton.Click += (_, _) => RefreshHistoryList();
+        var refreshBar = CreateActionButtonBar(refreshButton, DockStyle.Top, barHeight: 40);
 
         // Fixed height, not a resizable SplitContainer - deterministically
         // shows exactly 15 rows, computed from the fixed row/header heights
@@ -89,7 +90,7 @@ public partial class MainForm
         // elsewhere in this app).
         page.Controls.Add(detailTabs);
         page.Controls.Add(topPanel);
-        page.Controls.Add(refreshButton);
+        page.Controls.Add(refreshBar);
 
         _historyGrid.SelectionChanged += (_, _) => ShowSelectedHistoryEntry();
 

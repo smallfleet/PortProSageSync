@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using PortProSage.Admin.Models;
 using PortProSage.Admin.Services;
@@ -181,16 +182,68 @@ public partial class MainForm : Form
     /// run"), then this dev machine's known build output - either way, the user
     /// can override and it's just a starting guess, not a hard assumption.
     /// </summary>
+    // Remembers the last folder a config was actually loaded from, so restarting
+    // the app doesn't fall back to guessing every time - confirmed live 2026-08-11
+    // this was a real, repeated annoyance in production: the box isn't a .NET
+    // Settings-bound control, so with nothing persisted here it re-guessed (and
+    // got it wrong) on every single launch even after a successful manual fix.
+    private static string AdminSettingsFilePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PortProSageAdmin", "admin-settings.json");
+
+    /// <summary>Reads the whole local admin-settings.json as a JsonObject - every
+    /// feature that persists small UI state here (Service folder, Manual Run's
+    /// last-used fields, ...) reads/writes through this and SaveAdminSettings
+    /// rather than writing the file directly, so one feature's save never clobbers
+    /// another's already-saved keys.</summary>
+    private static JsonObject LoadAdminSettings()
+    {
+        try
+        {
+            if (!File.Exists(AdminSettingsFilePath)) return new JsonObject();
+            return JsonNode.Parse(File.ReadAllText(AdminSettingsFilePath)) as JsonObject ?? new JsonObject();
+        }
+        catch
+        {
+            return new JsonObject(); // corrupt/unreadable settings file - start fresh rather than crash
+        }
+    }
+
+    private static void SaveAdminSettings(Action<JsonObject> mutate)
+    {
+        try
+        {
+            var json = LoadAdminSettings();
+            mutate(json);
+            Directory.CreateDirectory(Path.GetDirectoryName(AdminSettingsFilePath)!);
+            File.WriteAllText(AdminSettingsFilePath, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch
+        {
+            // Best-effort only - a failed settings write should never block using the app.
+        }
+    }
+
+    private static string? LoadSavedServiceFolder()
+    {
+        try { return LoadAdminSettings()["ServiceFolder"]?.GetValue<string>(); }
+        catch { return null; }
+    }
+
+    private static void SaveServiceFolder(string folder) => SaveAdminSettings(json => json["ServiceFolder"] = folder);
+
     private static string GuessServiceFolder()
     {
-        var candidates = new[]
-        {
-            @"C:\PortProSageSync\Service", // Install-Production.ps1 / PortProSageSyncInstaller.exe layout
-            @"C:\PortProSageSync\PortProSage.Service\bin\Debug\net48",
-            @"C:\PortProSageSync\PortProSage.Service\bin\Release\net48",
-            @"C:\PortProSageSync\bin" // legacy manual-install layout, superseded by install-service.ps1's removal
-        };
-        return candidates.FirstOrDefault(c => File.Exists(Path.Combine(c, AppSettingsFileName))) ?? candidates[0];
+        const string defaultInstalledFolder = @"C:\PortProSageSync\Service"; // Install-Production.ps1 / PortProSageSyncInstaller.exe layout
+
+        var candidates = new List<string>();
+        var saved = LoadSavedServiceFolder();
+        if (!string.IsNullOrWhiteSpace(saved)) candidates.Add(saved);
+        candidates.Add(defaultInstalledFolder);
+        candidates.Add(@"C:\PortProSageSync\PortProSage.Service\bin\Debug\net48");
+        candidates.Add(@"C:\PortProSageSync\PortProSage.Service\bin\Release\net48");
+        candidates.Add(@"C:\PortProSageSync\bin"); // legacy manual-install layout, superseded by install-service.ps1's removal
+
+        return candidates.FirstOrDefault(c => File.Exists(Path.Combine(c, AppSettingsFileName))) ?? defaultInstalledFolder;
     }
 
     private void TryLoadConfig()
@@ -208,6 +261,7 @@ public partial class MainForm : Form
 
         _appSettings = new JsonFileEditor(appSettingsPath);
         _localSettings = new JsonFileEditor(localSettingsPath); // optional - fine if it doesn't exist yet
+        SaveServiceFolder(folder);
 
         RefreshAllTabsFromConfig?.Invoke();
     }
@@ -432,6 +486,34 @@ public partial class MainForm : Form
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 34));
         return grid;
+    }
+
+    // Windows' own accent blue - distinct from the default gray button so a
+    // primary action (Save, Refresh) actually catches the eye instead of
+    // blending into the surrounding gray form.
+    private static readonly Color ActionButtonColor = Color.FromArgb(0, 120, 215);
+
+    /// <summary>Wraps a button as a fixed-size, left-aligned, colored control inside
+    /// a thin docked bar - NOT a bare Dock=Top/Bottom button, which WinForms
+    /// silently stretches to the full width of its container regardless of any
+    /// Width set on it. Confirmed live 2026-08-11: several Save/Refresh buttons
+    /// built that way ended up as a wide, plain-gray strip that was easy to miss
+    /// entirely rather than read as a clickable button.</summary>
+    private static Panel CreateActionButtonBar(Button button, DockStyle dock = DockStyle.Bottom, int barHeight = 42)
+    {
+        button.AutoSize = false;
+        button.Width = Math.Max(button.Width, 160);
+        button.Height = 30;
+        button.Location = new Point(10, (barHeight - button.Height) / 2);
+        button.BackColor = ActionButtonColor;
+        button.ForeColor = Color.White;
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderSize = 0;
+        button.Cursor = Cursors.Hand;
+
+        var bar = new Panel { Dock = dock, Height = barHeight };
+        bar.Controls.Add(button);
+        return bar;
     }
 
     /// <param name="helpText">Plain-language explanation of this field plus a concrete

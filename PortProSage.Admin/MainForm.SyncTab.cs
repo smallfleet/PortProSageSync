@@ -52,8 +52,9 @@ public partial class MainForm
         BuildPreviousRunSection(grid, _syncPrevRunMode, _syncPrevRunFrom, _syncPrevRunTo, _syncPrevRunMaxInvoices,
             _syncPrevRunFirstInvoiceProcessed, _syncPrevRunLastInvoiceProcessed);
 
-        var save = new Button { Text = "Save Automatic Sync settings", Dock = DockStyle.Bottom, Height = 32 };
+        var save = new Button { Text = "Save Automatic Sync settings" };
         save.Click += (_, _) => SaveSyncTab();
+        var saveBar = CreateActionButtonBar(save);
 
         var serviceControlPanel = BuildServiceControlPanel();
 
@@ -62,7 +63,7 @@ public partial class MainForm
 
         page.Controls.Add(fieldsScroll);
         page.Controls.Add(serviceControlPanel);
-        page.Controls.Add(save);
+        page.Controls.Add(saveBar);
 
         RefreshAllTabsFromConfig += RefreshSyncTab;
         return page;

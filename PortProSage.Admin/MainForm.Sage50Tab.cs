@@ -158,8 +158,9 @@ public partial class MainForm
         mapLabel.Controls.Add(mapLabelText);
         mapLabel.Controls.Add(mapLabelHelp);
 
-        var save = new Button { Text = "Save Sage 50 settings", Dock = DockStyle.Bottom, Height = 32 };
+        var save = new Button { Text = "Save Sage 50 settings" };
         save.Click += (_, _) => SaveSage50Tab();
+        var saveBar = CreateActionButtonBar(save);
 
         var fieldsScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         fieldsScroll.Controls.Add(grid);
@@ -185,7 +186,7 @@ public partial class MainForm
         page.Enter += (_, _) => ResizeSage50SplitToFieldsHeight(grid);
 
         page.Controls.Add(_sage50Split);
-        page.Controls.Add(save);
+        page.Controls.Add(saveBar);
 
         RefreshAllTabsFromConfig += RefreshSage50Tab;
         return page;

@@ -57,14 +57,15 @@ public partial class MainForm
             "value from PortPro's own integration/API settings screen.",
             stretchInput: false);
 
-        var save = new Button { Text = "Save PortPro settings", Dock = DockStyle.Bottom, Height = 32 };
+        var save = new Button { Text = "Save PortPro settings" };
         save.Click += (_, _) => SavePortProTab();
+        var saveBar = CreateActionButtonBar(save);
 
         var fieldsScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         fieldsScroll.Controls.Add(grid);
 
         page.Controls.Add(fieldsScroll);
-        page.Controls.Add(save);
+        page.Controls.Add(saveBar);
 
         RefreshAllTabsFromConfig += RefreshPortProTab;
         return page;
