@@ -209,6 +209,22 @@ public class SyncOrchestrator
                     var outcome = await ProcessOneInvoiceAsync(invoice, ct);
                     result.Outcomes.Add(outcome);
 
+                    // Every outcome (success, failure, skip - not just genuine transfers,
+                    // see TRANSFER below) gets its own durable, immediate log line, not
+                    // just an entry in result.Outcomes - confirmed live 2026-08-12 that
+                    // result.json is a single file OVERWRITTEN whole on every checkpoint,
+                    // so one bad write (e.g. disk full mid-write) can silently destroy
+                    // EVERY earlier checkpointed outcome too, not just the newest one. The
+                    // log file, by contrast, is append-only - one failed write can't erase
+                    // lines already flushed to disk. The Admin app's "Per-invoice outcomes"
+                    // tab now falls back to parsing these lines (LogExtractorService.
+                    // ExtractOutcomes) whenever result.json comes back null or empty, the
+                    // same recovery path "Invoice Transferred" (TRANSFER: below) already had.
+                    _logger.LogInformation(
+                        "OUTCOME: Ref={Ref} Success={Success} Sage50Number={SageNo} Messages=[{Messages}]",
+                        outcome.ReferenceNumber, outcome.Success, outcome.Sage50InvoiceNumber ?? "(none)",
+                        string.Join(" | ", outcome.Messages));
+
                     // A single, consistently-formatted line per genuinely-transferred invoice
                     // (skips ALREADY_IMPORTED/DRYRUN, which didn't actually post anything this
                     // run) - logged here, inside RunAsync itself, so both the automatic poll
@@ -288,8 +304,24 @@ public class SyncOrchestrator
                     // doc comment. FinishedAtUtc doubles as "as of" for a checkpoint
                     // that never becomes final, so a caller/viewer has a meaningful
                     // timestamp even without IsFinal ever being set.
+                    //
+                    // Never allowed to fail the run - a checkpoint write is telemetry,
+                    // not the actual work. Confirmed live 2026-08-12: an uncaught
+                    // sharing-violation exception here (Diagnostics.WriteResultFile
+                    // colliding with the Admin app's own polling read) aborted an
+                    // otherwise-healthy 700+ invoice run, mid-batch, over nothing more
+                    // than a momentary file lock on a progress file - a genuine Sage 50/
+                    // PortPro failure should be the only thing that can do that.
                     result.FinishedAtUtc = DateTimeOffset.UtcNow;
-                    onProgress?.Invoke(result);
+                    try
+                    {
+                        onProgress?.Invoke(result);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Checkpoint write failed for sync {RequestId} after invoice {Ref} - continuing the run regardless.",
+                            request.RequestId, invoice.ReferenceNumber);
+                    }
 
                     if (request.MaxInvoicesToProcess is not null && result.Outcomes.Count >= request.MaxInvoicesToProcess.Value)
                     {

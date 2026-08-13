@@ -32,7 +32,15 @@ public static class TriggerService
 
         try
         {
-            return JsonSerializer.Deserialize<SyncResult>(File.ReadAllText(path));
+            // FileShare.ReadWrite explicitly, NOT File.ReadAllText's default (FileShare.Read) -
+            // confirmed live 2026-08-12 that default sharing mode let this 2-second poll
+            // collide with the Service process's own checkpoint write (File.WriteAllText,
+            // which needs exclusive access), throwing "being used by another process" on
+            // the WRITER's side and aborting the entire sync run over what should have
+            // been a harmless, ignorable read/write race on a progress file.
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            return JsonSerializer.Deserialize<SyncResult>(reader.ReadToEnd());
         }
         catch
         {

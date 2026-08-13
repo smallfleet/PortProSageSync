@@ -128,7 +128,12 @@ public static class Diagnostics
         SyncRequest? request;
         try
         {
-            request = JsonSerializer.Deserialize<SyncRequest>(File.ReadAllText(requestFilePath));
+            // FileShare.ReadWrite, not File.ReadAllText's default (FileShare.Read) - reads
+            // should never lock out a writer; see TriggerService.TryReadResult (Admin) for
+            // the collision this same pattern caused elsewhere.
+            using var stream = new FileStream(requestFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            request = JsonSerializer.Deserialize<SyncRequest>(reader.ReadToEnd());
         }
         catch (Exception ex)
         {
@@ -148,7 +153,7 @@ public static class Diagnostics
             Path.GetDirectoryName(requestFilePath) ?? ".",
             $"{request.RequestId}.result.json");
         var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
-        void WriteResultFile(SyncResult r) => File.WriteAllText(resultFilePath, JsonSerializer.Serialize(r, jsonOptions));
+        void WriteResultFile(SyncResult r) => WriteResultFileWithRetry(resultFilePath, JsonSerializer.Serialize(r, jsonOptions), logger);
 
         var orchestrator = services.GetRequiredService<SyncOrchestrator>();
         // Checkpointed after every invoice (onProgress), not just once at the very
@@ -167,17 +172,45 @@ public static class Diagnostics
             result.InvoicesFetched, result.InvoicesImported, result.InvoicesSkippedAlreadyImported,
             result.InvoicesSkippedZeroOrNegativeAmount, result.InvoicesFailedValidation, result.InvoicesFailedImport);
 
-        // Per-invoice detail as its own log lines - not just the aggregate counts
-        // above - so the Admin app's Warnings/Validation and Failed Transactions
-        // views (filtered from this same log) have real per-invoice text to filter.
-        foreach (var outcome in result.Outcomes)
-        {
-            logger.LogInformation(
-                "  {Ref}: success={Success} sage50Number={SageNo} messages=[{Messages}]",
-                outcome.ReferenceNumber, outcome.Success, outcome.Sage50InvoiceNumber ?? "(none)", string.Join(" | ", outcome.Messages));
-        }
+        // Per-invoice detail no longer dumped here - SyncOrchestrator.RunAsync now logs
+        // an "OUTCOME: ..." line for every invoice live, as it happens (see its doc
+        // comment), so doing it again here after the fact would just duplicate every
+        // line in the log. The Admin app's Warnings/Validation and Failed Transactions
+        // views still work identically, since they filter the log for "VALIDATION:"/
+        // "success=false" substrings, both still present in the live OUTCOME lines.
 
         return result.InvoicesFailedImport > 0 || result.InvoicesFailedValidation > 0 ? 1 : 0;
+    }
+
+    /// <summary>Writes a checkpoint/result file with FileShare.Read (so a concurrent
+    /// reader - the Admin app polls this same file every 2 seconds - never blocks the
+    /// write) plus a short retry-with-backoff for any remaining transient sharing
+    /// conflict. Confirmed live 2026-08-12: File.WriteAllText's default exclusive
+    /// sharing collided with the Admin app's own polling read on a 700+ invoice,
+    /// 4-hour production run, and that single "being used by another process" error
+    /// - on what is only ever a progress/telemetry write, not the actual sync work -
+    /// aborted the entire run. The final attempt is allowed to throw normally, so a
+    /// genuinely persistent problem (e.g. disk full) still surfaces as a real error.</summary>
+    private static void WriteResultFileWithRetry(string path, string content, ILogger logger)
+    {
+        const int maxAttempts = 5;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+                using var writer = new StreamWriter(stream);
+                writer.Write(content);
+                return;
+            }
+            catch (IOException) when (attempt < maxAttempts)
+            {
+                logger.LogWarning(
+                    "Checkpoint write to {Path} hit a transient file-sharing conflict (attempt {Attempt}/{Max}) - retrying shortly.",
+                    path, attempt, maxAttempts);
+                Thread.Sleep(100 * attempt);
+            }
+        }
     }
 
     /// <summary>
@@ -367,6 +400,71 @@ public static class Diagnostics
 
         logger.LogWarning("Marked {Count} invoice(s) as imported in range {Start}..{End}.", marked, startReferenceNumber, endReferenceNumber);
         return 0;
+    }
+
+    /// <summary>
+    /// Fetches ONE invoice directly via PortPro's single-invoice endpoint
+    /// (GET /invoices/{ref}) - bypassing the list/skip/limit endpoint entirely.
+    /// Read-only; PortPro and Sage 50 are both untouched. Confirmed live
+    /// 2026-08-12 as necessary: a real, existing invoice (RSRE_000284) never
+    /// appeared via the list endpoint under any query (unfiltered, or
+    /// date-bounded to its own invoice date), while a visually identical
+    /// neighbor (RSRE_000283, same date, same status) did. This tells you
+    /// whether the single-invoice endpoint can see it when the list endpoint
+    /// can't - if it can, the problem is specific to how PortPro's list endpoint
+    /// scopes results, not anything this project's pagination/filtering does; if
+    /// it can't either, the invoice is inaccessible via PortPro's API entirely and
+    /// worth raising with PortPro support directly.
+    /// </summary>
+    public static async Task<int> CheckInvoiceAsync(string referenceNumber, IServiceProvider services, ILogger logger, CancellationToken ct)
+    {
+        logger.LogInformation("=== CHECK INVOICE: fetching '{Ref}' directly via PortPro's single-invoice endpoint (list endpoint not touched) ===", referenceNumber);
+        try
+        {
+            var portPro = services.GetRequiredService<PortProClient>();
+            var invoice = await portPro.GetInvoiceAsync(referenceNumber, ct);
+
+            if (invoice is null)
+            {
+                logger.LogWarning(
+                    "NOT FOUND: PortPro's single-invoice endpoint also has no record of '{Ref}' (404). This invoice " +
+                    "is not accessible via the API at all right now, not just missing from list queries - worth " +
+                    "raising with PortPro support directly.",
+                    referenceNumber);
+                return 1;
+            }
+
+            // ReferenceNumber/Status/TotalAmount/BillingDate/Caller are populated directly
+            // from this endpoint's own response - Id/CreatedAt/UpdatedAt are NOT (see
+            // PortProInvoice's doc comments: those only get filled in by GetInvoicesAsync's
+            // envelope-flattening, which this single-invoice call doesn't go through), so
+            // deliberately not logged here to avoid implying they're always blank/missing.
+            if (string.IsNullOrEmpty(invoice.ReferenceNumber))
+            {
+                var (rawStatus, rawBody) = await portPro.GetInvoiceRawAsync(referenceNumber, ct);
+                logger.LogWarning(
+                    "AMBIGUOUS: the single-invoice endpoint returned 200 OK for '{Ref}' but ReferenceNumber came " +
+                    "back empty - this looks like a response-shape mismatch (this endpoint may wrap its response " +
+                    "differently than PortProInvoice's flat shape), not confirmation the invoice is genuinely " +
+                    "inaccessible. Raw response (status {RawStatus}):\n{RawBody}",
+                    referenceNumber, rawStatus, rawBody);
+                return 1;
+            }
+
+            logger.LogInformation(
+                "FOUND: '{Ref}' exists via the single-invoice endpoint - status={Status}, billingDate={BillingDate}, " +
+                "totalAmount={TotalAmount}, customer={Customer}. Since this succeeded where the list endpoint " +
+                "didn't, the gap is specific to how PortPro's list endpoint scopes/returns results, not this " +
+                "project's pagination or filtering.",
+                invoice.ReferenceNumber, invoice.Status, invoice.BillingDate, invoice.TotalAmount,
+                invoice.Caller?.CompanyName ?? invoice.CallerName);
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "FAILED: could not check invoice '{Ref}'.", referenceNumber);
+            return 1;
+        }
     }
 
     /// <summary>

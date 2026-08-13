@@ -182,6 +182,12 @@ public static class RunHistoryService
                         RequestId = finishId,
                         StartedAtUtc = starts.TryGetValue(finishId, out var s) ? s.Timestamp : finishTs,
                         FinishedAtUtc = finishTs,
+                        // A matched "Finished sync" line IS the run's own completion marker -
+                        // this was never set here, so every log-reconstructed entry looked
+                        // permanently "interrupted" to any code checking IsFinal (see
+                        // MainForm.RunTab.cs's RefreshPreviousRunSection) even though it
+                        // genuinely completed.
+                        IsFinal = true,
                         InvoicesFetched = int.Parse(finishMatch.Groups["fetched"].Value),
                         InvoicesImported = int.Parse(finishMatch.Groups["imported"].Value),
                         InvoicesSkippedAlreadyImported = int.Parse(finishMatch.Groups["already"].Value),
@@ -228,7 +234,15 @@ public static class RunHistoryService
     {
         try
         {
-            return JsonSerializer.Deserialize<T>(File.ReadAllText(path));
+            // FileShare.ReadWrite, not File.ReadAllText's default (FileShare.Read) - this
+            // is called from ListRuns, itself called every 2 seconds by ResultPollTimer_Tick
+            // while a Manual Run may be actively checkpointing the SAME result.json this
+            // reads - a second occurrence of the exact collision fixed in TriggerService.
+            // TryReadResult (see its doc comment), missed there since this is a separate
+            // read path scanning the whole history, not just the one pending request.
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            return JsonSerializer.Deserialize<T>(reader.ReadToEnd());
         }
         catch
         {

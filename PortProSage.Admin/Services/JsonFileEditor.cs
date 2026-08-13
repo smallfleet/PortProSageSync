@@ -23,8 +23,18 @@ public class JsonFileEditor
     {
         FilePath = filePath;
         _root = File.Exists(filePath)
-            ? (JsonNode.Parse(File.ReadAllText(filePath)) as JsonObject ?? new JsonObject())
+            ? (JsonNode.Parse(ReadAllTextShared(filePath)) as JsonObject ?? new JsonObject())
             : new JsonObject();
+    }
+
+    // FileShare.ReadWrite, not File.ReadAllText's default (FileShare.Read) - reads
+    // should never lock out a writer, even here where the odds of a real collision
+    // are low (appsettings.json/.Local.json aren't rewritten while running).
+    private static string ReadAllTextShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     public bool FileExists => File.Exists(FilePath);

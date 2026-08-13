@@ -14,7 +14,14 @@ public enum FilterType
 {
     LastChangedDate,
     InvoiceNumberRange,
-    CompletedDateRange
+    CompletedDateRange,
+
+    // Appended at the end, exactly matching PortProSage.Core.Models.SyncModels.cs's
+    // ordering - System.Text.Json's default enum handling serializes by NUMERIC
+    // value, not name, so this ordinal position must match byte-for-byte or the
+    // Service would deserialize a request file written by this app as the wrong
+    // filter type entirely.
+    InvoiceNumberList
 }
 
 public class SyncRequest
@@ -27,6 +34,7 @@ public class SyncRequest
 
     public string? StartInvoiceNumber { get; set; }
     public string? EndInvoiceNumber { get; set; }
+    public string? InvoiceNumberList { get; set; }
 
     public bool UseWatermark { get; set; }
     public int? MaxInvoicesToProcess { get; set; }

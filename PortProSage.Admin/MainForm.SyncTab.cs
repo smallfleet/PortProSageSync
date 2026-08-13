@@ -50,7 +50,7 @@ public partial class MainForm
         RefreshAllTabsFromConfig += RefreshSplitRunByDayControls;
 
         BuildPreviousRunSection(grid, _syncPrevRunMode, _syncPrevRunFrom, _syncPrevRunTo, _syncPrevRunMaxInvoices,
-            _syncPrevRunFirstInvoiceProcessed, _syncPrevRunLastInvoiceProcessed);
+            _syncPrevRunFirstInvoiceProcessed, _syncPrevRunLastInvoiceProcessed, _syncPrevRunResult);
 
         var save = new Button { Text = "Save Automatic Sync settings" };
         save.Click += (_, _) => SaveSyncTab();

@@ -15,6 +15,20 @@ public class TransferredInvoiceRow
     public decimal TaxCharged { get; set; }
 }
 
+/// <summary>One row parsed from an "OUTCOME: ..." log line (see SyncOrchestrator.RunAsync
+/// in Core) - every invoice processed this run, success or failure alike. Used as a
+/// fallback source for the Admin app's Per-invoice Outcomes tab when result.json comes
+/// back null/empty (see MainForm.HistoryTab.cs's ShowSelectedHistoryEntry) - the log line
+/// is written live, per invoice, so it survives even when the checkpoint file itself
+/// doesn't (e.g. a disk-full write corrupting/losing the whole file).</summary>
+public class LoggedOutcomeRow
+{
+    public string ReferenceNumber { get; set; } = string.Empty;
+    public bool Success { get; set; }
+    public string Sage50InvoiceNumber { get; set; } = string.Empty;
+    public string Messages { get; set; } = string.Empty;
+}
+
 /// <summary>
 /// Pulls just the log lines belonging to one execution out of the Service's
 /// rolling daily log file (Serilog: "portpro-sage-sync-yyyyMMdd.log", one line
@@ -34,6 +48,14 @@ public static class LogExtractorService
     // "TRANSFER: Ref=RSRE_000123 Sage50Number=1045 PortProDate=2026-08-01 Sage50Date=2026-08-01 TotalAmount=450.00 TaxCharged=58.50".
     private static readonly Regex TransferLinePattern = new(
         @"TRANSFER: Ref=(?<ref>\S+) Sage50Number=(?<sage>\S+) PortProDate=(?<pdate>\S+) Sage50Date=(?<sdate>\S+) TotalAmount=(?<total>-?[\d.]+) TaxCharged=(?<tax>-?[\d.]+)",
+        RegexOptions.Compiled);
+
+    // Mirrors the exact structured-logging call in SyncOrchestrator.RunAsync -
+    // "OUTCOME: Ref=RSRE_000823 Success=False Sage50Number=(none) Messages=[IMPORT ERROR: ...]".
+    // Messages is captured greedily to the LAST "]" on the line, not the first, since
+    // the message text itself can legitimately contain "]" (e.g. an exception message).
+    private static readonly Regex OutcomeLinePattern = new(
+        @"OUTCOME: Ref=(?<ref>\S+) Success=(?<success>True|False) Sage50Number=(?<sage>\S+) Messages=\[(?<messages>.*)\]\s*$",
         RegexOptions.Compiled);
 
     /// <summary>Parses "Invoice Transferred" rows out of an already-extracted set of log
@@ -56,6 +78,29 @@ public static class LogExtractorService
                 Sage50Date = match.Groups["sdate"].Value,
                 TotalAmount = decimal.TryParse(match.Groups["total"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var total) ? total : 0m,
                 TaxCharged = decimal.TryParse(match.Groups["tax"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var tax) ? tax : 0m
+            });
+        }
+        return rows;
+    }
+
+    /// <summary>Parses "Per-invoice outcomes" rows out of an already-extracted set of log
+    /// lines for one run - the log-based fallback used when result.json's own Outcomes
+    /// list comes back null or empty (see this class's LoggedOutcomeRow doc comment for
+    /// why that can happen even for a run that mostly succeeded).</summary>
+    public static List<LoggedOutcomeRow> ExtractOutcomes(IEnumerable<string> logLines)
+    {
+        var rows = new List<LoggedOutcomeRow>();
+        foreach (var line in logLines)
+        {
+            var match = OutcomeLinePattern.Match(line);
+            if (!match.Success) continue;
+
+            rows.Add(new LoggedOutcomeRow
+            {
+                ReferenceNumber = match.Groups["ref"].Value,
+                Success = string.Equals(match.Groups["success"].Value, "True", StringComparison.OrdinalIgnoreCase),
+                Sage50InvoiceNumber = match.Groups["sage"].Value,
+                Messages = match.Groups["messages"].Value
             });
         }
         return rows;

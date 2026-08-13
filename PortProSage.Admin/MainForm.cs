@@ -26,7 +26,7 @@ public partial class MainForm : Form
     ///                 changes (e.g. what ships in the next production installer).
     ///   ZZ (build)  - any other new exe, including small dev-test iterations.
     /// </summary>
-    public const string AppVersion = "2.01.05";
+    public const string AppVersion = "2.01.12";
 
     private readonly ToolStripStatusLabel _sourceLabel = new() { Text = "Click any field to see where it's stored." };
     private readonly TextBox _serviceFolderBox = new() { Width = 480 };
@@ -245,7 +245,12 @@ public partial class MainForm : Form
         try
         {
             if (!File.Exists(AdminSettingsFilePath)) return new JsonObject();
-            return JsonNode.Parse(File.ReadAllText(AdminSettingsFilePath)) as JsonObject ?? new JsonObject();
+            // FileShare.ReadWrite, not File.ReadAllText's default (FileShare.Read) - reads
+            // should never lock out a writer (same principle applied throughout this fix -
+            // see TriggerService.TryReadResult/RunHistoryService.TryDeserialize).
+            using var stream = new FileStream(AdminSettingsFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            return JsonNode.Parse(reader.ReadToEnd()) as JsonObject ?? new JsonObject();
         }
         catch
         {

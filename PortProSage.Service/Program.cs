@@ -199,5 +199,20 @@ if (createTestItemIndex >= 0 && createTestItemIndex + 2 < args.Length)
     return exitCode;
 }
 
+// --check-invoice <ReferenceNumber> : fetches ONE invoice directly via PortPro's
+// single-invoice endpoint (GET /invoices/{ref}), bypassing the list/skip/limit
+// endpoint entirely - a diagnostic for exactly the case confirmed live 2026-08-12
+// where a real invoice (RSRE_000284) never appeared via the list endpoint under
+// any query (unfiltered, or date-bounded), while a visually identical neighbor
+// did. Read-only - Sage 50 and PortPro are both untouched. See Diagnostics.
+// CheckInvoiceAsync.
+var checkInvoiceIndex = Array.IndexOf(args, "--check-invoice");
+if (checkInvoiceIndex >= 0 && checkInvoiceIndex + 1 < args.Length)
+{
+    using var scope = host.Services.CreateScope();
+    var exitCode = await Diagnostics.CheckInvoiceAsync(args[checkInvoiceIndex + 1], scope.ServiceProvider, startupLogger, CancellationToken.None);
+    return exitCode;
+}
+
 host.Run();
 return 0;

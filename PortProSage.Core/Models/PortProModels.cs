@@ -158,6 +158,27 @@ public class PortProLoadEnvelope
 }
 
 /// <summary>
+/// Wraps PortPro's single-invoice endpoint response (GET /invoices/{referenceNumber}) -
+/// confirmed live 2026-08-12 this is a DIFFERENT shape than the list endpoint's bare
+/// array-of-envelopes: everything sits under "data" (itself shaped just like one
+/// PortProLoadEnvelope), alongside a sibling "error" field. Real example: a single
+/// reference number ("RSRE_000284") can itself contain MULTIPLE "invoice" array
+/// entries - one per charge set, each from a DIFFERENT load (RSRUSH_E100718 and
+/// RSRUSH_E100725 in that example) - which is exactly what PortPro's own UI shows
+/// as "N Charge Sets Invoiced". PortProClient.GetInvoiceAsync consolidates them into
+/// one PortProInvoice (combined pricing lines, summed totals) rather than returning
+/// them as separate invoices under the same reference number.
+/// </summary>
+public class PortProSingleInvoiceResponse
+{
+    [JsonPropertyName("data")]
+    public PortProLoadEnvelope? Data { get; set; }
+
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+}
+
+/// <summary>
 /// Envelope returned by GET /generate-new-token. Confirmed 2026-08-04 live:
 /// <c>{"_object":..., "self":..., "version":..., "data": {"token":..., "refresh_token":..., "tokenType":"public"}, "error": null}</c>
 /// </summary>

@@ -34,7 +34,13 @@ public static class TriggerFileManager
             SyncRequest? request = null;
             try
             {
-                request = JsonSerializer.Deserialize<SyncRequest>(File.ReadAllText(file));
+                // FileShare.ReadWrite, not File.ReadAllText's default (FileShare.Read) -
+                // reads should never lock out a writer. Also matters here specifically:
+                // the Worker's folder scan could otherwise collide with a concurrent
+                // writer still finishing WriteRequest for a just-dropped file.
+                using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(stream);
+                request = JsonSerializer.Deserialize<SyncRequest>(reader.ReadToEnd());
             }
             catch
             {

@@ -1,3 +1,4 @@
+using PortProSage.Admin.Models;
 using PortProSage.Admin.Services;
 
 namespace PortProSage.Admin;
@@ -135,7 +136,8 @@ public partial class MainForm
         _historyGrid.Columns.Add("InvEnd", "Inv End Date");
         _historyGrid.Columns.Add("Fetched", "Fetched");
         _historyGrid.Columns.Add("Imported", "Imported");
-        _historyGrid.Columns.Add("Skipped", "Already imported");
+        _historyGrid.Columns.Add("Skipped", "Skipped");
+        _historyGrid.Columns.Add("ZeroAmt", "Zero/-ve Amt");
         _historyGrid.Columns.Add("SkippedCutoff", "Before cutoff");
         _historyGrid.Columns.Add("FailedVal", "Failed validation");
         _historyGrid.Columns.Add("FailedImp", "Failed write");
@@ -150,7 +152,8 @@ public partial class MainForm
         _historyGrid.Columns["InvEnd"].Width = 100;
         _historyGrid.Columns["Fetched"].Width = 60;
         _historyGrid.Columns["Imported"].Width = 65;
-        _historyGrid.Columns["Skipped"].Width = 100;
+        _historyGrid.Columns["Skipped"].Width = 80;
+        _historyGrid.Columns["ZeroAmt"].Width = 90;
         _historyGrid.Columns["SkippedCutoff"].Width = 90;
         _historyGrid.Columns["FailedVal"].Width = 100;
         _historyGrid.Columns["FailedImp"].Width = 90;
@@ -348,6 +351,7 @@ public partial class MainForm
                 entry.Result?.InvoicesFetched.ToString() ?? "",
                 entry.Result?.InvoicesImported.ToString() ?? "",
                 entry.Result?.InvoicesSkippedAlreadyImported.ToString() ?? "",
+                entry.Result?.InvoicesSkippedZeroOrNegativeAmount.ToString() ?? "",
                 entry.Result?.InvoicesSkippedBeforeCutoff.ToString() ?? "",
                 entry.Result?.InvoicesFailedValidation.ToString() ?? "",
                 entry.Result?.InvoicesFailedImport.ToString() ?? "",
@@ -431,6 +435,7 @@ public partial class MainForm
             _resultPollTimer.Stop();
             RefreshHistoryList();
             ResetRunFormToDefaults();
+            ShowRunCompletionMessage(result);
             return;
         }
 
@@ -451,10 +456,69 @@ public partial class MainForm
             _pendingRequestId = null;
             _resultPollTimer.Stop();
             RefreshHistoryList();
+            ShowRunCompletionMessage(result); // result here is non-null-but-not-final (a checkpoint), or null if the
+                                               // process died before ever writing one - both handled below.
             return;
         }
 
         RefreshHistoryList();
+    }
+
+    /// <summary>Shown once, right when a Manual Run's polling stops (see
+    /// ResultPollTimer_Tick) - a clear pass/fail summary instead of leaving the
+    /// operator to go dig through History & Logs to find out what happened.
+    /// Confirmed live 2026-08-12 this was a real gap on a large (700+ invoice)
+    /// production run - no indication at all of completion, success count, or
+    /// where to look if something went wrong.</summary>
+    private void ShowRunCompletionMessage(SyncResult? result)
+    {
+        if (result is null)
+        {
+            MessageBox.Show(this,
+                "The run stopped without ever recording a result - it may have crashed immediately. Check the " +
+                "Full Log tab (below, in History & Logs) for what happened.",
+                "Run did not complete", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var hasFailures = result.InvoicesFailedValidation > 0 || result.InvoicesFailedImport > 0;
+
+        if (!result.IsFinal)
+        {
+            MessageBox.Show(this,
+                "Run was INTERRUPTED before finishing - the process stopped unexpectedly (crashed, was force-" +
+                "stopped, or hit a fatal Sage 50 write error).\n\n" +
+                $"As of its last checkpoint:\n" +
+                $"Imported: {result.InvoicesImported}\n" +
+                $"Failed validation: {result.InvoicesFailedValidation}\n" +
+                $"Failed write: {result.InvoicesFailedImport}\n\n" +
+                "Check the Failed Transactions tab or Full Log (below, in History & Logs) for exactly what happened - " +
+                "re-running will pick up from where this left off, nothing already imported will be repeated.",
+                "Run interrupted", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        if (hasFailures)
+        {
+            MessageBox.Show(this,
+                "Run finished WITH ERRORS.\n\n" +
+                $"Imported: {result.InvoicesImported}\n" +
+                $"Already imported (skipped): {result.InvoicesSkippedAlreadyImported}\n" +
+                $"Failed validation: {result.InvoicesFailedValidation}\n" +
+                $"Failed write: {result.InvoicesFailedImport}\n\n" +
+                "Check the Failed Transactions tab or Full Log (below, in History & Logs) for exactly what went wrong.",
+                "Run finished with errors", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        else
+        {
+            MessageBox.Show(this,
+                "Run completed successfully.\n\n" +
+                $"Imported {result.InvoicesImported} invoice(s) from PortPro to Sage 50.\n" +
+                $"Already imported (skipped): {result.InvoicesSkippedAlreadyImported}\n" +
+                $"Zero/negative amount (skipped): {result.InvoicesSkippedZeroOrNegativeAmount}\n" +
+                $"Before cutoff date (skipped): {result.InvoicesSkippedBeforeCutoff}",
+                "Run complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
     }
 
     private void ShowSelectedHistoryEntry()
@@ -474,9 +538,22 @@ public partial class MainForm
 
         _historySummaryText.Text = BuildSummaryText(entry);
 
-        if (entry.Result is not null)
+        // Extracted regardless of whether entry.Result exists - a run that started
+        // but never got a result.json (crashed, or was killed before it could write
+        // one) still has real log lines sitting in the Service's log file explaining
+        // what happened, and that's exactly the case where seeing them matters most.
+        // Computed BEFORE the outcomes grid below, since it's now also this tab's
+        // fallback source when result.json's own Outcomes list is missing/empty.
+        var selectedIndex = _historyGrid.SelectedRows[0].Index;
+        var window = GetLogWindow(entry, selectedIndex);
+        if (window is not null && !string.IsNullOrWhiteSpace(_logFolder))
         {
-            foreach (var outcome in entry.Result.Outcomes)
+            _selectedRunLogLines = LogExtractorService.ExtractForWindow(_logFolder, window.Value.Start, window.Value.End);
+        }
+
+        if (entry.Result?.Outcomes is { Count: > 0 } outcomes)
+        {
+            foreach (var outcome in outcomes)
             {
                 _historyOutcomesGrid.Rows.Add(
                     outcome.ReferenceNumber,
@@ -485,16 +562,17 @@ public partial class MainForm
                     string.Join(" | ", outcome.Messages));
             }
         }
-
-        // Extracted regardless of whether entry.Result exists - a run that started
-        // but never got a result.json (crashed, or was killed before it could write
-        // one) still has real log lines sitting in the Service's log file explaining
-        // what happened, and that's exactly the case where seeing them matters most.
-        var selectedIndex = _historyGrid.SelectedRows[0].Index;
-        var window = GetLogWindow(entry, selectedIndex);
-        if (window is not null && !string.IsNullOrWhiteSpace(_logFolder))
+        else
         {
-            _selectedRunLogLines = LogExtractorService.ExtractForWindow(_logFolder, window.Value.Start, window.Value.End);
+            // result.json is missing, or came back with no Outcomes at all - most likely
+            // because the checkpoint file itself was lost/corrupted (e.g. a disk-full
+            // write), not because nothing was actually processed. Fall back to the log's
+            // own "OUTCOME: ..." lines (written live, per invoice - see SyncOrchestrator.
+            // RunAsync), same recovery path "Invoice Transferred" already had.
+            foreach (var row in LogExtractorService.ExtractOutcomes(_selectedRunLogLines))
+            {
+                _historyOutcomesGrid.Rows.Add(row.ReferenceNumber, row.Success ? "Yes" : "No", row.Sage50InvoiceNumber, row.Messages);
+            }
         }
 
         // Warnings/Validation and Failed Transactions are both filtered views of

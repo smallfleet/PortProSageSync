@@ -9,7 +9,19 @@ public enum FilterType
     InvoiceNumberRange,
 
     /// <summary>Pull invoices whose load completed date falls in [From, To].</summary>
-    CompletedDateRange
+    CompletedDateRange,
+
+    /// <summary>Pull a specific, explicit set of invoices by reference number
+    /// (SyncRequest.InvoiceNumberList, comma-separated) - fetched one by one via
+    /// PortPro's single-invoice endpoint (PortProClient.GetInvoiceAsync), NOT the
+    /// paginated list endpoint InvoiceNumberRange uses. Added 2026-08-12 as a
+    /// direct workaround for a confirmed gap: a real invoice (RSRE_000284) was
+    /// invisible via the list endpoint under every query tried, but the single-
+    /// invoice endpoint returned it fine. Use this for a small number of known,
+    /// non-contiguous invoices - InvoiceNumberRange (which needs the list endpoint
+    /// to find everything between two numbers) remains the right choice for a
+    /// genuine range.</summary>
+    InvoiceNumberList
 }
 
 /// <summary>
@@ -27,6 +39,11 @@ public class SyncRequest
 
     public string? StartInvoiceNumber { get; set; }
     public string? EndInvoiceNumber { get; set; }
+
+    /// <summary>Comma-separated reference numbers - only used by FilterType.
+    /// InvoiceNumberList. Raw, unparsed/untrimmed text as entered; PortProClient.
+    /// GetInvoicesAsync splits and trims it.</summary>
+    public string? InvoiceNumberList { get; set; }
 
     /// <summary>
     /// True for the "continue from where we left off" default (no explicit range
