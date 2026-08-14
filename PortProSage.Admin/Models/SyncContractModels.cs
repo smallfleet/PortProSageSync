@@ -21,7 +21,8 @@ public enum FilterType
     // value, not name, so this ordinal position must match byte-for-byte or the
     // Service would deserialize a request file written by this app as the wrong
     // filter type entirely.
-    InvoiceNumberList
+    InvoiceNumberList,
+    InvoiceNumberGapScan
 }
 
 public class SyncRequest
@@ -49,6 +50,14 @@ public class SyncResult
     public DateTimeOffset StartedAtUtc { get; set; }
     public DateTimeOffset FinishedAtUtc { get; set; }
     public int ProcessId { get; set; }
+
+    /// <summary>The actual comma-separated reference-number list this run used -
+    /// mirrors Core's SyncResult.ResolvedInvoiceNumberList. Populated for
+    /// InvoiceNumberList and InvoiceNumberGapScan requests (a gap scan's computed
+    /// candidate list ends up here too, since it rewrites itself into
+    /// InvoiceNumberList internally); null otherwise.</summary>
+    public string? ResolvedInvoiceNumberList { get; set; }
+
     public bool Skipped { get; set; }
     public string? SkipReason { get; set; }
     public int InvoicesFetched { get; set; }

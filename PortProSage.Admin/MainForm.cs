@@ -26,7 +26,7 @@ public partial class MainForm : Form
     ///                 changes (e.g. what ships in the next production installer).
     ///   ZZ (build)  - any other new exe, including small dev-test iterations.
     /// </summary>
-    public const string AppVersion = "2.01.12";
+    public const string AppVersion = "2.01.14";
 
     private readonly ToolStripStatusLabel _sourceLabel = new() { Text = "Click any field to see where it's stored." };
     private readonly TextBox _serviceFolderBox = new() { Width = 480 };
@@ -162,6 +162,7 @@ public partial class MainForm : Form
         var statusLabelCaption = new Label { Text = "Process:", AutoSize = true, Location = new Point(8, 40) };
         _headerStatusLabel.Font = new Font(_headerStatusLabel.Font, FontStyle.Bold);
         _headerStatusLabel.Location = new Point(100, 40);
+        _headerActivityIndicator.Location = new Point(460, 39);
         _headerStopButton.Location = new Point(590, 36);
         _headerStopButton.Click += (_, _) => StopWhicheverIsRunning();
 
@@ -173,6 +174,7 @@ public partial class MainForm : Form
         panel.Controls.Add(readmeHelp);
         panel.Controls.Add(statusLabelCaption);
         panel.Controls.Add(_headerStatusLabel);
+        panel.Controls.Add(_headerActivityIndicator);
         panel.Controls.Add(_headerStopButton);
         panel.Controls.Add(versionLabel);
         return panel;
@@ -452,61 +454,6 @@ public partial class MainForm : Form
         _appSettings.SetBool("PortProSage.Sync.ShowCommandWindow", source.Checked);
         _appSettings.Save();
         RefreshShowCommandWindowControls();
-    }
-
-    // ---------------------------------------------------------------------
-    // Split run by day - one setting (SyncSettings.SplitRunByDay), shown and
-    // editable on BOTH the Automatic Sync tab and the Manual Run tab, same
-    // shared/immediate-save pattern as Cutoff Invoice Date and Show command
-    // window above. Unlike Show command window, this one IS read by
-    // SyncOrchestrator itself (not just an Admin-app launch preference).
-    // ---------------------------------------------------------------------
-
-    private CheckBox _syncSplitRunByDay = new() { Text = "Split run into daily batches", AutoSize = true };
-    private CheckBox _runSplitRunByDay = new() { Text = "Split run into daily batches", AutoSize = true };
-    private bool _suppressSplitRunByDayEvents;
-
-    private const string SplitRunByDayHelpText =
-        "Checked (default): a run whose invoice-date window spans more than one day is processed one day at a " +
-        "time - each day is fetched, imported, and committed (its progress durably saved) before moving to the " +
-        "next. If the process dies partway through a wide window (e.g. a first-ever run covering weeks of " +
-        "backlog), whatever days already completed stay committed instead of the whole window needing to be " +
-        "retried from scratch. Every batch, including a single day, is recorded in the log as \"Batch N of M\".\n\n" +
-        "Unchecked: the entire window is fetched and processed as ONE batch, exactly like before this setting " +
-        "existed - only recommended for a narrow window you already know is small.\n\n" +
-        "Applies to BOTH Manual Run and the Automatic Service - shared between the Automatic Sync tab and the " +
-        "Manual Run tab, saved immediately when changed on either. Has no effect on Invoice number range mode, " +
-        "which has no date window to split.";
-
-    private void WireSplitRunByDayControl(CheckBox box)
-    {
-        box.CheckedChanged += (_, _) => SaveSplitRunByDay(box);
-    }
-
-    private void RefreshSplitRunByDayControls()
-    {
-        if (_appSettings is null) return;
-
-        _suppressSplitRunByDayEvents = true;
-        try
-        {
-            var split = _appSettings.GetBool("PortProSage.Sync.SplitRunByDay", true);
-            _syncSplitRunByDay.Checked = split;
-            _runSplitRunByDay.Checked = split;
-        }
-        finally
-        {
-            _suppressSplitRunByDayEvents = false;
-        }
-    }
-
-    private void SaveSplitRunByDay(CheckBox source)
-    {
-        if (_appSettings is null || _suppressSplitRunByDayEvents) return;
-
-        _appSettings.SetBool("PortProSage.Sync.SplitRunByDay", source.Checked);
-        _appSettings.Save();
-        RefreshSplitRunByDayControls();
     }
 
     // ---------------------------------------------------------------------

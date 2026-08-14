@@ -32,6 +32,21 @@ public partial class MainForm
     private readonly Label _headerStatusLabel = new() { AutoSize = true };
     private readonly Button _headerStopButton = new() { Text = "Stop", Width = 70, Enabled = false };
 
+    // "A process is active" indicator - deliberately NOT tied to any file/data read
+    // (see RefreshServiceStatus, which drives this from the same lightweight process-
+    // state check it already does on a timer), so showing it costs nothing extra.
+    // Confirmed live 2026-08-13 this replaces continuously re-reading/re-rendering
+    // History & Logs every 2 seconds while a run is active - that data is now only
+    // ever refreshed on demand (the Refresh button), not automatically.
+    private readonly ProgressBar _headerActivityIndicator = new()
+    {
+        Style = ProgressBarStyle.Marquee,
+        MarqueeAnimationSpeed = 30,
+        Width = 120,
+        Height = 18,
+        Visible = false
+    };
+
     private const string AutomaticServiceHelpText =
         "Starts/stops the long-running automatic pipeline (PortProSage.Service.exe with no extra arguments) - " +
         "the same thing that happens if you double-click the exe yourself. Once running, it does two things " +
@@ -179,6 +194,7 @@ public partial class MainForm
                 _headerStatusLabel.Text = $"Automatic Service running - PID {process.Id}, since {FormatStartTime(process)}";
                 _headerStatusLabel.ForeColor = Color.DarkGreen;
                 _headerStopButton.Enabled = true;
+                _headerActivityIndicator.Visible = true;
                 break;
             case ServiceRunState.ManualRunning:
                 _serviceStatusLabel.Text = $"MANUAL RUNNING (PID {process!.Id})";
@@ -188,6 +204,7 @@ public partial class MainForm
                 _headerStatusLabel.Text = $"Manual Run running - PID {process.Id}, since {FormatStartTime(process)}";
                 _headerStatusLabel.ForeColor = Color.DarkOrange;
                 _headerStopButton.Enabled = true;
+                _headerActivityIndicator.Visible = true;
                 break;
             default:
                 _serviceStatusLabel.Text = "NOT RUNNING";
@@ -197,6 +214,7 @@ public partial class MainForm
                 _headerStatusLabel.Text = "Not running";
                 _headerStatusLabel.ForeColor = Color.DarkRed;
                 _headerStopButton.Enabled = false;
+                _headerActivityIndicator.Visible = false;
                 break;
         }
 

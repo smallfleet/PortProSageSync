@@ -27,6 +27,11 @@ public partial class MainForm
     private List<RunHistoryEntry> _historyEntries = new();
     private List<string> _selectedRunLogLines = new();
 
+    // Shown next to Refresh so it's obvious how stale the grid currently is - History
+    // & Logs no longer auto-refreshes while a run is active (see ResultPollTimer_Tick),
+    // only when Refresh is clicked or a run genuinely finishes.
+    private readonly Label _historyLastRefreshedLabel = new() { AutoSize = true, ForeColor = SystemColors.GrayText };
+
     private TabPage BuildResultsTab()
     {
         var page = new TabPage("History && Logs");
@@ -37,6 +42,8 @@ public partial class MainForm
         var refreshButton = new Button { Text = "Refresh" };
         refreshButton.Click += (_, _) => RefreshHistoryList();
         var refreshBar = CreateActionButtonBar(refreshButton, DockStyle.Top, barHeight: 40);
+        _historyLastRefreshedLabel.Location = new Point(refreshButton.Right + 16, (refreshBar.Height - _historyLastRefreshedLabel.Height) / 2);
+        refreshBar.Controls.Add(_historyLastRefreshedLabel);
 
         // Fixed height, not a resizable SplitContainer - deterministically
         // shows exactly 15 rows, computed from the fixed row/header heights
@@ -175,6 +182,7 @@ public partial class MainForm
     private void SetupOutcomesGrid()
     {
         _historyOutcomesGrid.Columns.Add("Reference", "Invoice #");
+        _historyOutcomesGrid.Columns.Add("PortProDate", "PortPro Date");
         _historyOutcomesGrid.Columns.Add("Success", "Success");
         _historyOutcomesGrid.Columns.Add("SageNumber", "Sage 50 #");
         _historyOutcomesGrid.Columns.Add("Messages", "Messages");
@@ -182,9 +190,10 @@ public partial class MainForm
         // Proportional widths (FillWeight, not pixels) - AutoSizeColumnsMode.Fill is
         // already set on the grid itself (see field declaration above), so these sum
         // to 100 and read directly as percentages of the available width.
-        _historyOutcomesGrid.Columns["Reference"].FillWeight = 20;
-        _historyOutcomesGrid.Columns["Success"].FillWeight = 20;
-        _historyOutcomesGrid.Columns["SageNumber"].FillWeight = 20;
+        _historyOutcomesGrid.Columns["Reference"].FillWeight = 16;
+        _historyOutcomesGrid.Columns["PortProDate"].FillWeight = 14;
+        _historyOutcomesGrid.Columns["Success"].FillWeight = 15;
+        _historyOutcomesGrid.Columns["SageNumber"].FillWeight = 15;
         _historyOutcomesGrid.Columns["Messages"].FillWeight = 40;
     }
 
@@ -225,6 +234,8 @@ public partial class MainForm
     private void RefreshHistoryList()
     {
         if (string.IsNullOrWhiteSpace(_triggerFolder) || string.IsNullOrWhiteSpace(_processedTriggerFolder)) return;
+
+        _historyLastRefreshedLabel.Text = $"Last refreshed: {DateTime.Now:HH:mm:ss}";
 
         var selectedId = (_historyGrid.SelectedRows.Count > 0) ? _historyGrid.SelectedRows[0].Cells["RequestId"].Value?.ToString() : null;
 
@@ -461,7 +472,14 @@ public partial class MainForm
             return;
         }
 
-        RefreshHistoryList();
+        // Still running - deliberately NOT calling RefreshHistoryList() here anymore.
+        // Confirmed live 2026-08-13: rebuilding the whole grid (a full folder rescan,
+        // re-reading every historical result file, not just this one) every 2 seconds
+        // was wasted work with no real benefit - the header's activity indicator (see
+        // RefreshServiceStatus) already shows something is running, and History & Logs
+        // now only ever refreshes on demand (the Refresh button) or once, for real,
+        // when this run actually finishes below. TryReadResult above still polls
+        // (one cheap file read) purely to detect that finish, not to update the UI.
     }
 
     /// <summary>Shown once, right when a Manual Run's polling stops (see
@@ -536,14 +554,14 @@ public partial class MainForm
             return;
         }
 
-        _historySummaryText.Text = BuildSummaryText(entry);
-
         // Extracted regardless of whether entry.Result exists - a run that started
         // but never got a result.json (crashed, or was killed before it could write
         // one) still has real log lines sitting in the Service's log file explaining
         // what happened, and that's exactly the case where seeing them matters most.
-        // Computed BEFORE the outcomes grid below, since it's now also this tab's
-        // fallback source when result.json's own Outcomes list is missing/empty.
+        // Computed BEFORE the Summary/outcomes grid below, since it's now also their
+        // fallback source when result.json's own Outcomes list is missing/empty -
+        // true for every automatic-poll entry (Outcomes is never populated for those,
+        // only the summary counts) and for any run whose checkpoint file was lost.
         var selectedIndex = _historyGrid.SelectedRows[0].Index;
         var window = GetLogWindow(entry, selectedIndex);
         if (window is not null && !string.IsNullOrWhiteSpace(_logFolder))
@@ -551,12 +569,15 @@ public partial class MainForm
             _selectedRunLogLines = LogExtractorService.ExtractForWindow(_logFolder, window.Value.Start, window.Value.End);
         }
 
+        _historySummaryText.Text = BuildSummaryText(entry, _selectedRunLogLines);
+
         if (entry.Result?.Outcomes is { Count: > 0 } outcomes)
         {
             foreach (var outcome in outcomes)
             {
                 _historyOutcomesGrid.Rows.Add(
                     outcome.ReferenceNumber,
+                    outcome.PortProInvoiceDate?.ToString("yyyy-MM-dd") ?? "",
                     outcome.Success ? "Yes" : "No",
                     outcome.Sage50InvoiceNumber ?? "",
                     string.Join(" | ", outcome.Messages));
@@ -571,7 +592,7 @@ public partial class MainForm
             // RunAsync), same recovery path "Invoice Transferred" already had.
             foreach (var row in LogExtractorService.ExtractOutcomes(_selectedRunLogLines))
             {
-                _historyOutcomesGrid.Rows.Add(row.ReferenceNumber, row.Success ? "Yes" : "No", row.Sage50InvoiceNumber, row.Messages);
+                _historyOutcomesGrid.Rows.Add(row.ReferenceNumber, row.PortProDate, row.Success ? "Yes" : "No", row.Sage50InvoiceNumber, row.Messages);
             }
         }
 
@@ -599,7 +620,7 @@ public partial class MainForm
         ApplyLogSearchFilter();
     }
 
-    private static string BuildSummaryText(RunHistoryEntry entry)
+    private static string BuildSummaryText(RunHistoryEntry entry, List<string> logLines)
     {
         var lines = new List<string>
         {
@@ -651,6 +672,17 @@ public partial class MainForm
             lines.Add($"Process End:   {entry.Result.FinishedAtUtc.ToLocalTime():G}");
             lines.Add($"Inv Start Date: {entry.Result.EffectiveFromUtc?.ToLocalTime().ToString("G") ?? "(n/a - no date filter this run)"}");
             lines.Add($"Inv End Date:   {entry.Result.EffectiveToUtc?.ToLocalTime().ToString("G") ?? "(n/a - no date filter this run)"}");
+
+            // The actual reference-number list this run used - for a manually-typed
+            // Invoice number list this just echoes it back; for a gap scan, this IS
+            // the computed candidate list (gap scan rewrites itself into Invoice
+            // number list internally - see SyncOrchestrator.RunAsync), so it's the
+            // only place the real "what did the scan actually decide to check" list
+            // is visible, not just documented in the log.
+            if (!string.IsNullOrWhiteSpace(entry.Result.ResolvedInvoiceNumberList))
+            {
+                lines.Add($"Invoice number list used: {entry.Result.ResolvedInvoiceNumberList}");
+            }
             if (entry.Result.BatchCount > 1)
             {
                 lines.Add($"Batches: {entry.Result.BatchCount} (split by day)");
@@ -697,8 +729,16 @@ public partial class MainForm
             lines.Add($"Start Watermark (date): {entry.Result.WatermarkBeforeRun?.ToLocalTime().ToString("G") ?? "(none yet)"}");
             lines.Add($"End Watermark (date):   {entry.Result.WatermarkAfterRun?.ToLocalTime().ToString("G") ?? "(none yet)"}");
 
-            var referenceNumbers = entry.Result.Outcomes
-                .Select(o => o.ReferenceNumber)
+            // entry.Result.Outcomes directly when it's actually populated (a Manual
+            // Run's own result.json) - falls back to the log's "OUTCOME: ..." lines
+            // (LogExtractorService.ExtractOutcomes) otherwise, since Outcomes is never
+            // populated for automatic-poll entries at all (only the summary counts
+            // are), and can also be empty for any run whose checkpoint file was lost
+            // (e.g. a disk-full write) - confirmed live 2026-08-13 this left Start/End
+            // Invoice # permanently blank for both of those cases.
+            var referenceNumbers = (entry.Result.Outcomes.Count > 0
+                    ? entry.Result.Outcomes.Select(o => o.ReferenceNumber)
+                    : LogExtractorService.ExtractOutcomes(logLines).Select(o => o.ReferenceNumber))
                 .Where(r => !string.IsNullOrEmpty(r))
                 .OrderBy(r => r, StringComparer.Ordinal)
                 .ToList();

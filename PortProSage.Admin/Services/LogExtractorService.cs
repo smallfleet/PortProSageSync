@@ -24,6 +24,7 @@ public class TransferredInvoiceRow
 public class LoggedOutcomeRow
 {
     public string ReferenceNumber { get; set; } = string.Empty;
+    public string PortProDate { get; set; } = string.Empty;
     public bool Success { get; set; }
     public string Sage50InvoiceNumber { get; set; } = string.Empty;
     public string Messages { get; set; } = string.Empty;
@@ -51,11 +52,11 @@ public static class LogExtractorService
         RegexOptions.Compiled);
 
     // Mirrors the exact structured-logging call in SyncOrchestrator.RunAsync -
-    // "OUTCOME: Ref=RSRE_000823 Success=False Sage50Number=(none) Messages=[IMPORT ERROR: ...]".
+    // "OUTCOME: Ref=RSRE_000823 PortProDate=2026-08-01 Success=False Sage50Number=(none) Messages=[IMPORT ERROR: ...]".
     // Messages is captured greedily to the LAST "]" on the line, not the first, since
     // the message text itself can legitimately contain "]" (e.g. an exception message).
     private static readonly Regex OutcomeLinePattern = new(
-        @"OUTCOME: Ref=(?<ref>\S+) Success=(?<success>True|False) Sage50Number=(?<sage>\S+) Messages=\[(?<messages>.*)\]\s*$",
+        @"OUTCOME: Ref=(?<ref>\S+) PortProDate=(?<pdate>\S+) Success=(?<success>True|False) Sage50Number=(?<sage>\S+) Messages=\[(?<messages>.*)\]\s*$",
         RegexOptions.Compiled);
 
     /// <summary>Parses "Invoice Transferred" rows out of an already-extracted set of log
@@ -98,6 +99,7 @@ public static class LogExtractorService
             rows.Add(new LoggedOutcomeRow
             {
                 ReferenceNumber = match.Groups["ref"].Value,
+                PortProDate = match.Groups["pdate"].Value,
                 Success = string.Equals(match.Groups["success"].Value, "True", StringComparison.OrdinalIgnoreCase),
                 Sage50InvoiceNumber = match.Groups["sage"].Value,
                 Messages = match.Groups["messages"].Value

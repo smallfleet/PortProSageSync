@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PortProSage.Core.Config;
 using PortProSage.Core.Models;
+using PortProSage.Core.PortPro;
 using PortProSage.Core.Sync;
 
 namespace PortProSage.Service;
@@ -114,6 +115,69 @@ public class Worker : BackgroundService
             onProgress: partial => TriggerFileManager.WriteResult(autoPollFolder, request.RequestId, partial));
 
         TriggerFileManager.WriteResult(autoPollFolder, request.RequestId, result);
+
+        await RunAutomaticGapFillAsync(result, autoPollFolder, ct);
+    }
+
+    /// <summary>After a normal automatic cycle completes, sweeps the exact invoice-
+    /// number range it just covered (LastProcessedInvoiceNumberBeforeRun..AfterRun)
+    /// for anything the list-endpoint-driven Continue sync would have silently
+    /// missed - see FilterType.InvoiceNumberGapScan's doc comment for the confirmed
+    /// gap (multi-charge-set invoices invisible to the list endpoint under any
+    /// query) this exists to close. Reuses the exact same gap-scan machinery Manual
+    /// Run's "Find missing invoices in range" mode does.
+    ///
+    /// Deliberately awaited here, inside the same call RunAutomaticLastChangedSyncAsync
+    /// makes, rather than fired off separately - the Worker's own loop is single-
+    /// threaded (ExecuteAsync only checks the poll interval again after this whole
+    /// method returns), so gap-filling taking a while naturally makes the next
+    /// scheduled cycle wait for it, with no separate concurrency guard needed.
+    /// "Filling the gap is a must" for every automatic cycle, not optional - this
+    /// is not behind any setting.</summary>
+    private async Task RunAutomaticGapFillAsync(SyncResult normalResult, string autoPollFolder, CancellationToken ct)
+    {
+        if (normalResult.Skipped || !normalResult.IsFinal)
+        {
+            _logger.LogInformation(
+                "Skipping automatic gap-fill this cycle - the normal cycle didn't complete cleanly (Skipped={Skipped}, IsFinal={IsFinal}); it'll be covered by a future cycle's own gap-fill instead.",
+                normalResult.Skipped, normalResult.IsFinal);
+            return;
+        }
+
+        var before = normalResult.LastProcessedInvoiceNumberBeforeRun;
+        var after = normalResult.LastProcessedInvoiceNumberAfterRun;
+        if (string.IsNullOrWhiteSpace(before) || string.IsNullOrWhiteSpace(after) ||
+            string.Equals(before, after, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogInformation("Skipping automatic gap-fill this cycle - nothing new was processed (or no prior anchor to scan from yet).");
+            return;
+        }
+
+        if (!ReferenceNumberFormat.TryParse(before, out _, out _, out _, out _) ||
+            !ReferenceNumberFormat.TryParse(after, out _, out _, out _, out _))
+        {
+            _logger.LogWarning(
+                "Skipping automatic gap-fill this cycle - could not parse a prefix/number out of '{Before}' / '{After}'.",
+                before, after);
+            return;
+        }
+
+        var gapRequest = new SyncRequest
+        {
+            FilterType = FilterType.InvoiceNumberGapScan,
+            StartInvoiceNumber = before,
+            EndInvoiceNumber = after,
+            RequestedBy = "auto-poll-gapfill"
+        };
+
+        _logger.LogInformation(
+            "Automatic gap-fill: sweeping {Start}..{End} (this cycle's own range) for anything the list-endpoint query above may have missed.",
+            before, after);
+
+        TriggerFileManager.Write(autoPollFolder, gapRequest);
+        var gapResult = await _orchestrator.RunAsync(gapRequest, ct,
+            onProgress: partial => TriggerFileManager.WriteResult(autoPollFolder, gapRequest.RequestId, partial));
+        TriggerFileManager.WriteResult(autoPollFolder, gapRequest.RequestId, gapResult);
     }
 
     /// <summary>Any other live process running the exact same PortProSage.Service.exe

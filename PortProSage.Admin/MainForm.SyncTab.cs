@@ -45,12 +45,9 @@ public partial class MainForm
         AddCheckRow(grid, _syncShowCommandWindow, f, "PortProSage:Sync:ShowCommandWindow", ShowCommandWindowHelpText);
         WireShowCommandWindowControl(_syncShowCommandWindow);
         RefreshAllTabsFromConfig += RefreshShowCommandWindowControls;
-        AddCheckRow(grid, _syncSplitRunByDay, f, "PortProSage:Sync:SplitRunByDay", SplitRunByDayHelpText);
-        WireSplitRunByDayControl(_syncSplitRunByDay);
-        RefreshAllTabsFromConfig += RefreshSplitRunByDayControls;
 
         BuildPreviousRunSection(grid, _syncPrevRunMode, _syncPrevRunFrom, _syncPrevRunTo, _syncPrevRunMaxInvoices,
-            _syncPrevRunFirstInvoiceProcessed, _syncPrevRunLastInvoiceProcessed, _syncPrevRunResult);
+            _syncPrevRunFirstInvoiceProcessed, _syncPrevRunLastInvoiceProcessed, _syncPrevRunResult, _syncPrevRunInvoiceListUsed);
 
         var save = new Button { Text = "Save Automatic Sync settings" };
         save.Click += (_, _) => SaveSyncTab();

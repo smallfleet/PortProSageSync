@@ -451,13 +451,31 @@ public static class Diagnostics
                 return 1;
             }
 
+            // Best-effort extra diagnostic: how many charge sets/loads make up this
+            // invoice ("data.total" in the raw response - see PortProSingleInvoiceResponse's
+            // doc comment). Confirmed live 2026-08-12 this correlates with whether the list
+            // endpoint can find the invoice at all (RSRE_000284, 2 charge sets from 2
+            // different loads, was invisible to the list endpoint; RSRE_000283, 1 charge
+            // set, was not) - checking whether that holds across more invoices.
+            var chargeSetCount = "unknown";
+            try
+            {
+                var (_, rawBody) = await portPro.GetInvoiceRawAsync(referenceNumber, ct);
+                using var doc = JsonDocument.Parse(rawBody);
+                if (doc.RootElement.TryGetProperty("data", out var data) && data.TryGetProperty("total", out var totalEl))
+                {
+                    chargeSetCount = totalEl.GetInt32().ToString();
+                }
+            }
+            catch { /* best effort - diagnostic only, never fails the main result */ }
+
             logger.LogInformation(
                 "FOUND: '{Ref}' exists via the single-invoice endpoint - status={Status}, billingDate={BillingDate}, " +
-                "totalAmount={TotalAmount}, customer={Customer}. Since this succeeded where the list endpoint " +
-                "didn't, the gap is specific to how PortPro's list endpoint scopes/returns results, not this " +
-                "project's pagination or filtering.",
+                "totalAmount={TotalAmount}, customer={Customer}, chargeSets={ChargeSetCount}. Since this succeeded " +
+                "where the list endpoint didn't, the gap is specific to how PortPro's list endpoint scopes/returns " +
+                "results, not this project's pagination or filtering.",
                 invoice.ReferenceNumber, invoice.Status, invoice.BillingDate, invoice.TotalAmount,
-                invoice.Caller?.CompanyName ?? invoice.CallerName);
+                invoice.Caller?.CompanyName ?? invoice.CallerName, chargeSetCount);
             return 0;
         }
         catch (Exception ex)

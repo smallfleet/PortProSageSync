@@ -44,6 +44,7 @@ public partial class MainForm
     private TextBox _prevRunFirstInvoiceProcessed = new() { ReadOnly = true, Enabled = false, Width = 400 };
     private TextBox _prevRunLastInvoiceProcessed = new() { ReadOnly = true, Enabled = false, Width = 400 };
     private TextBox _prevRunResult = new() { ReadOnly = true, Enabled = false, Width = 650 };
+    private TextBox _prevRunInvoiceListUsed = new() { ReadOnly = true, Enabled = false, Width = 650 };
 
     // Same "Previous Run" data, shown a second time on the Automatic Sync tab -
     // it's not just a Manual Run concern, the automatic poll's most recent
@@ -58,6 +59,7 @@ public partial class MainForm
     private TextBox _syncPrevRunFirstInvoiceProcessed = new() { ReadOnly = true, Enabled = false, Width = 400 };
     private TextBox _syncPrevRunLastInvoiceProcessed = new() { ReadOnly = true, Enabled = false, Width = 400 };
     private TextBox _syncPrevRunResult = new() { ReadOnly = true, Enabled = false, Width = 650 };
+    private TextBox _syncPrevRunInvoiceListUsed = new() { ReadOnly = true, Enabled = false, Width = 650 };
 
     private const string ManualRunHelpText =
         "Runs the sync ONE TIME, right now, in its own dedicated process - it does not write a file for something " +
@@ -81,7 +83,8 @@ public partial class MainForm
             "Continue (from where we left off)",
             "Last changed date",
             "Invoice number range",
-            "Invoice number list (comma-separated)"
+            "Invoice number list (comma-separated)",
+            "Find missing invoices in range (gap scan)"
         });
         // Invoice date is the default, not Continue - it filters by the invoice's own
         // actual date (PortPro's billingDate), so a chosen window can never surprise
@@ -119,7 +122,14 @@ public partial class MainForm
             "• Invoice number list - an explicit, comma-separated set of specific invoice numbers (see the field " +
             "below), fetched ONE AT A TIME via PortPro's single-invoice lookup instead of the list endpoint. Slower " +
             "for a large set, but bypasses whatever causes Invoice number range to occasionally miss a real invoice - " +
-            "use this to target a small number of specific, known invoice numbers directly.\n\n" +
+            "use this to target a small number of specific, known invoice numbers directly.\n" +
+            "• Find missing invoices in range (gap scan) - uses Start/End invoice number below as a range to " +
+            "audit, not a range to blindly process: it works out every number in that range NOT already recorded " +
+            "as imported, then checks each one individually via the single-invoice lookup (same as Invoice number " +
+            "list above) - anything found and eligible gets imported for real (subject to Dry run below). Use this " +
+            "to sweep a range you suspect has gaps (e.g. from the list-endpoint issue) instead of checking " +
+            "suspected numbers one at a time by hand. The actual candidate list it computes is recorded in the " +
+            "Summary tab and Previous Run section after it runs.\n\n" +
             "Every mode except Continue is a one-time override - it never reads or changes the saved Continue " +
             "position, so the next Continue run behaves exactly as if the override run never happened.",
             stretchInput: false);
@@ -158,8 +168,6 @@ public partial class MainForm
             "even if 50 have changed since the last run.");
         AddCheckRow(grid, _runShowCommandWindow, "(request - not a settings file)", "PortProSage:Sync:ShowCommandWindow", ShowCommandWindowHelpText);
         WireShowCommandWindowControl(_runShowCommandWindow);
-        AddCheckRow(grid, _runSplitRunByDay, "(request - not a settings file)", "PortProSage:Sync:SplitRunByDay", SplitRunByDayHelpText);
-        WireSplitRunByDayControl(_runSplitRunByDay);
 
         _runDryRunStatus.Text = "Dry run status unknown - load config first.";
         var dryRunRow = grid.RowCount++;
@@ -168,7 +176,7 @@ public partial class MainForm
         grid.Controls.Add(_runDryRunStatus, 1, dryRunRow);
 
         BuildPreviousRunSection(grid, _prevRunMode, _prevRunFrom, _prevRunTo, _prevRunMaxInvoices,
-            _prevRunFirstInvoiceProcessed, _prevRunLastInvoiceProcessed, _prevRunResult);
+            _prevRunFirstInvoiceProcessed, _prevRunLastInvoiceProcessed, _prevRunResult, _prevRunInvoiceListUsed);
 
         _manualRunButton.Click += (_, _) => StartManualRun();
         _manualRunStopButton.Click += (_, _) => StopManualRun();
@@ -287,8 +295,8 @@ public partial class MainForm
         var mode = _runMode.SelectedIndex;
         _runFrom.Enabled = mode == 0 || mode == 2; // Invoice date, Last changed date
         _runTo.Enabled = mode == 0 || mode == 2;
-        _runStartInvoice.Enabled = mode == 3; // Invoice number range
-        _runEndInvoice.Enabled = mode == 3;
+        _runStartInvoice.Enabled = mode == 3 || mode == 5; // Invoice number range, gap scan
+        _runEndInvoice.Enabled = mode == 3 || mode == 5;
         _runInvoiceNumberList.Enabled = mode == 4; // Invoice number list
     }
 
@@ -300,7 +308,7 @@ public partial class MainForm
     /// so this sidesteps WinForms' well-known "last-docked-control-ends-up-on-top"
     /// ordering gotcha entirely.</summary>
     private void BuildPreviousRunSection(TableLayoutPanel grid, TextBox modeBox, TextBox fromBox, TextBox toBox,
-        TextBox maxInvoicesBox, TextBox firstInvoiceBox, TextBox lastInvoiceBox, TextBox resultBox)
+        TextBox maxInvoicesBox, TextBox firstInvoiceBox, TextBox lastInvoiceBox, TextBox resultBox, TextBox invoiceListUsedBox)
     {
         var headingRow = grid.RowCount++;
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -356,6 +364,11 @@ public partial class MainForm
             "invoice failed validation or failed to write - check the Failed Transactions tab or Full Log. " +
             "INTERRUPTED means the process stopped before finishing (crashed, was force-stopped, or hit a fatal " +
             "Sage 50 write error) - the counts shown are as of its last checkpoint, not final.");
+        AddRow(grid, "Previous Run: Invoice List Used", invoiceListUsedBox, "(history)", "RunHistoryEntry.Result.ResolvedInvoiceNumberList",
+            "The actual comma-separated reference-number list this run used - only populated for Invoice number " +
+            "list mode or Find missing invoices in range (gap scan). For a gap scan, this is the REAL computed " +
+            "candidate list (everything in the scanned range not already recorded as imported) - the only place " +
+            "that list is visible, not just documented in the log. Blank for every other mode.");
     }
 
     /// <summary>Called every time RefreshHistoryList() runs (MainForm.HistoryTab.cs) -
@@ -368,11 +381,11 @@ public partial class MainForm
     {
         var entry = _historyEntries.FirstOrDefault(e => !e.IsPending && e.Result is not null);
 
-        string modeText, fromText, toText, maxInvoicesText, firstInvoiceText, lastInvoiceText, resultText;
+        string modeText, fromText, toText, maxInvoicesText, firstInvoiceText, lastInvoiceText, resultText, invoiceListUsedText;
         if (entry?.Result is null)
         {
             modeText = "(no completed run yet)";
-            fromText = toText = maxInvoicesText = firstInvoiceText = lastInvoiceText = resultText = "";
+            fromText = toText = maxInvoicesText = firstInvoiceText = lastInvoiceText = resultText = invoiceListUsedText = "";
         }
         else
         {
@@ -419,12 +432,14 @@ public partial class MainForm
                     ? $"FINISHED WITH ERRORS - imported={r.InvoicesImported}, alreadyImported={r.InvoicesSkippedAlreadyImported}, " +
                       $"failedValidation={r.InvoicesFailedValidation}, failedImport={r.InvoicesFailedImport}. See Failed Transactions / Full Log."
                     : $"SUCCESS - imported={r.InvoicesImported}, alreadyImported={r.InvoicesSkippedAlreadyImported}.";
+
+            invoiceListUsedText = r.ResolvedInvoiceNumberList ?? "";
         }
 
-        foreach (var (modeBox, fromBox, toBox, maxBox, firstBox, lastBox, resultBox) in new[]
+        foreach (var (modeBox, fromBox, toBox, maxBox, firstBox, lastBox, resultBox, invoiceListBox) in new[]
         {
-            (_prevRunMode, _prevRunFrom, _prevRunTo, _prevRunMaxInvoices, _prevRunFirstInvoiceProcessed, _prevRunLastInvoiceProcessed, _prevRunResult),
-            (_syncPrevRunMode, _syncPrevRunFrom, _syncPrevRunTo, _syncPrevRunMaxInvoices, _syncPrevRunFirstInvoiceProcessed, _syncPrevRunLastInvoiceProcessed, _syncPrevRunResult)
+            (_prevRunMode, _prevRunFrom, _prevRunTo, _prevRunMaxInvoices, _prevRunFirstInvoiceProcessed, _prevRunLastInvoiceProcessed, _prevRunResult, _prevRunInvoiceListUsed),
+            (_syncPrevRunMode, _syncPrevRunFrom, _syncPrevRunTo, _syncPrevRunMaxInvoices, _syncPrevRunFirstInvoiceProcessed, _syncPrevRunLastInvoiceProcessed, _syncPrevRunResult, _syncPrevRunInvoiceListUsed)
         })
         {
             modeBox.Text = modeText;
@@ -434,6 +449,7 @@ public partial class MainForm
             firstBox.Text = firstInvoiceText;
             lastBox.Text = lastInvoiceText;
             resultBox.Text = resultText;
+            invoiceListBox.Text = invoiceListUsedText;
         }
     }
 
@@ -512,6 +528,11 @@ public partial class MainForm
                 request.FilterType = FilterType.InvoiceNumberList;
                 request.InvoiceNumberList = _runInvoiceNumberList.Text;
                 break;
+            case 5:
+                request.FilterType = FilterType.InvoiceNumberGapScan;
+                request.StartInvoiceNumber = string.IsNullOrWhiteSpace(_runStartInvoice.Text) ? null : _runStartInvoice.Text.Trim();
+                request.EndInvoiceNumber = string.IsNullOrWhiteSpace(_runEndInvoice.Text) ? null : _runEndInvoice.Text.Trim();
+                break;
         }
 
         if (_runMaxInvoices.Value > 0)
@@ -553,6 +574,12 @@ public partial class MainForm
         {
             lines.Add($"Start invoice: {request.StartInvoiceNumber ?? "(none)"}   End invoice: {request.EndInvoiceNumber ?? "(none)"}");
         }
+        if (request.FilterType == FilterType.InvoiceNumberGapScan)
+        {
+            lines.Add("This audits every number in that range - anything already recorded as imported is skipped " +
+                      "without even a PortPro call. Only genuinely missing, eligible invoices get checked and " +
+                      "imported. The actual candidate list it computes will be recorded in Summary/Previous Run once it runs.");
+        }
         if (!string.IsNullOrWhiteSpace(request.InvoiceNumberList))
         {
             lines.Add($"Invoice numbers: {request.InvoiceNumberList}");
@@ -591,6 +618,13 @@ public partial class MainForm
         if (request.FilterType == FilterType.InvoiceNumberList && string.IsNullOrWhiteSpace(request.InvoiceNumberList))
         {
             error = "Invoice number list mode needs at least one invoice number - enter one or more, separated by commas.";
+            return false;
+        }
+
+        if (request.FilterType == FilterType.InvoiceNumberGapScan &&
+            (string.IsNullOrWhiteSpace(request.StartInvoiceNumber) || string.IsNullOrWhiteSpace(request.EndInvoiceNumber)))
+        {
+            error = "Gap scan mode needs both Start and End invoice number - it audits everything in that range, so both bounds are required.";
             return false;
         }
 

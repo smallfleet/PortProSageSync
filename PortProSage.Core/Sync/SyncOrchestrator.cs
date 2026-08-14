@@ -89,6 +89,66 @@ public class SyncOrchestrator
             "Starting sync {RequestId} ({FilterType}, UseWatermark={UseWatermark}, From={From}, To={To}, StartNo={StartNo}, EndNo={EndNo})",
             request.RequestId, request.FilterType, request.UseWatermark, request.From, request.To, request.StartInvoiceNumber, request.EndInvoiceNumber);
 
+        // Gap scan: rewrites itself into an InvoiceNumberList request before anything
+        // else runs, so everything downstream (fetch-one-at-a-time via the single-
+        // invoice endpoint, validation, import, checkpointing) is the exact same,
+        // already-proven code path InvoiceNumberList mode uses - this step's only job
+        // is producing that candidate list. See ReferenceNumberFormat's doc comment
+        // for the prefix/number/suffix split (generic, not hardcoded to any one
+        // client's format).
+        if (request.FilterType == FilterType.InvoiceNumberGapScan)
+        {
+            if (!ReferenceNumberFormat.TryParse(request.StartInvoiceNumber, out var startPrefix, out var startNumber, out var width, out var startSuffix) ||
+                !ReferenceNumberFormat.TryParse(request.EndInvoiceNumber, out var endPrefix, out var endNumber, out _, out var endSuffix))
+            {
+                throw new InvalidOperationException(
+                    $"Gap scan needs a valid Start/End invoice number (prefix + number, e.g. RSRE_000100) - got " +
+                    $"Start='{request.StartInvoiceNumber}', End='{request.EndInvoiceNumber}'.");
+            }
+            if (!string.Equals(startPrefix, endPrefix, StringComparison.Ordinal) ||
+                !string.Equals(startSuffix, endSuffix, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Gap scan's Start ('{request.StartInvoiceNumber}') and End ('{request.EndInvoiceNumber}') must " +
+                    "share the same prefix/suffix pattern, just different numbers.");
+            }
+            if (endNumber < startNumber)
+            {
+                throw new InvalidOperationException($"Gap scan's End number ({endNumber}) is before Start ({startNumber}).");
+            }
+
+            var alreadyImported = new HashSet<string>(_state.GetAllImportedReferenceNumbers(), StringComparer.OrdinalIgnoreCase);
+            var candidates = new List<string>();
+            for (var n = startNumber; n <= endNumber; n++)
+            {
+                var candidate = ReferenceNumberFormat.Format(startPrefix, n, width, startSuffix);
+                if (!alreadyImported.Contains(candidate))
+                {
+                    candidates.Add(candidate);
+                }
+            }
+
+            var totalInRange = endNumber - startNumber + 1;
+            _logger.LogInformation(
+                "Gap scan {RequestId}: range {Start}..{End} ({Total} number(s)), {AlreadyImported} already imported " +
+                "(skipped without a PortPro call), {ToCheck} candidate(s) to check individually via PortPro's " +
+                "single-invoice endpoint.",
+                request.RequestId, request.StartInvoiceNumber, request.EndInvoiceNumber, totalInRange,
+                totalInRange - candidates.Count, candidates.Count);
+
+            request.FilterType = FilterType.InvoiceNumberList;
+            request.InvoiceNumberList = string.Join(",", candidates);
+        }
+
+        // Recorded on the result (not just the request) so it survives into
+        // History & Logs regardless of run type - both a manually-typed list and a
+        // gap scan's computed candidate list end up here, since gap scan rewrites
+        // itself into this same filter type just above.
+        if (request.FilterType == FilterType.InvoiceNumberList)
+        {
+            result.ResolvedInvoiceNumberList = request.InvoiceNumberList;
+        }
+
         // Nothing eligible yet (see the clamp above) - skip the Sage50 connect and
         // PortPro fetch entirely rather than asking for a zero-width window every
         // cycle, and say so plainly instead of leaving a bare "fetched=0" with no
@@ -116,7 +176,7 @@ public class SyncOrchestrator
             result.EffectiveFromUtc = request.From;
             result.EffectiveToUtc = request.To;
 
-            var batches = ComputeBatches(request.From, request.To, _syncSettings.SplitRunByDay);
+            var batches = ComputeBatches(request.From, request.To);
             result.BatchCount = batches.Count;
             var hitMaxCap = false;
 
@@ -221,9 +281,9 @@ public class SyncOrchestrator
                     // ExtractOutcomes) whenever result.json comes back null or empty, the
                     // same recovery path "Invoice Transferred" (TRANSFER: below) already had.
                     _logger.LogInformation(
-                        "OUTCOME: Ref={Ref} Success={Success} Sage50Number={SageNo} Messages=[{Messages}]",
-                        outcome.ReferenceNumber, outcome.Success, outcome.Sage50InvoiceNumber ?? "(none)",
-                        string.Join(" | ", outcome.Messages));
+                        "OUTCOME: Ref={Ref} PortProDate={PortProDate} Success={Success} Sage50Number={SageNo} Messages=[{Messages}]",
+                        outcome.ReferenceNumber, outcome.PortProInvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
+                        outcome.Success, outcome.Sage50InvoiceNumber ?? "(none)", string.Join(" | ", outcome.Messages));
 
                     // A single, consistently-formatted line per genuinely-transferred invoice
                     // (skips ALREADY_IMPORTED/DRYRUN, which didn't actually post anything this
@@ -441,33 +501,13 @@ public class SyncOrchestrator
         return result;
     }
 
-    /// <summary>Splits [from, to] into contiguous, non-overlapping day-length
-    /// windows (the last one truncated to end exactly at "to") - see
-    /// SyncSettings.SplitRunByDay's doc comment. Falls back to a single batch
-    /// covering the whole window (unchanged) when either bound is null (Invoice
-    /// number range mode - no dates to split) or splitByDay is false. A
-    /// zero-width window (from == to, e.g. the very edge of a clamped range)
-    /// still produces exactly one batch, never zero - see SyncResult.BatchCount's
-    /// doc comment for why every run, however small, is still "1 batch".</summary>
-    private static List<(DateTimeOffset? From, DateTimeOffset? To)> ComputeBatches(
-        DateTimeOffset? from, DateTimeOffset? to, bool splitByDay)
-    {
-        if (from is null || to is null || !splitByDay || from.Value >= to.Value)
-        {
-            return new List<(DateTimeOffset?, DateTimeOffset?)> { (from, to) };
-        }
-
-        var batches = new List<(DateTimeOffset?, DateTimeOffset?)>();
-        var cursor = from.Value;
-        while (cursor < to.Value)
-        {
-            var end = cursor.AddDays(1);
-            if (end > to.Value) end = to.Value;
-            batches.Add((cursor, end));
-            cursor = end;
-        }
-        return batches;
-    }
+    /// <summary>Always a single batch covering the whole window - splitting by day
+    /// was removed 2026-08-14 (added complexity - per-batch watermark commits,
+    /// "Batch N of M" logging - without pulling its weight). SyncResult.BatchCount
+    /// is always 1 now, kept as a field rather than removed outright since History
+    /// & Logs still reads it.</summary>
+    private static List<(DateTimeOffset? From, DateTimeOffset? To)> ComputeBatches(DateTimeOffset? from, DateTimeOffset? to)
+        => new() { (from, to) };
 
     private async Task<InvoiceProcessingOutcome> ProcessOneInvoiceAsync(PortProInvoice invoice, CancellationToken ct)
     {

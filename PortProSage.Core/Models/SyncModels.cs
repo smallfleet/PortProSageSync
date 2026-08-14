@@ -21,7 +21,18 @@ public enum FilterType
     /// non-contiguous invoices - InvoiceNumberRange (which needs the list endpoint
     /// to find everything between two numbers) remains the right choice for a
     /// genuine range.</summary>
-    InvoiceNumberList
+    InvoiceNumberList,
+
+    /// <summary>Computes its own InvoiceNumberList candidate set from a Start/End
+    /// range (same fields InvoiceNumberRange uses) minus whatever's already been
+    /// successfully imported (SyncStateRepository.GetAllImportedReferenceNumbers),
+    /// then rewrites itself into FilterType.InvoiceNumberList and proceeds through
+    /// that exact same code path - see SyncOrchestrator.RunAsync's handling of this
+    /// value and ReferenceNumberFormat for the prefix/number/suffix split. Added
+    /// 2026-08-14 to systematically find every invoice affected by the multi-
+    /// charge-set list-endpoint gap (see InvoiceNumberList's doc comment) across a
+    /// whole range, instead of checking suspected gaps one at a time by hand.</summary>
+    InvoiceNumberGapScan
 }
 
 /// <summary>
@@ -99,6 +110,16 @@ public class SyncResult
     /// free.</summary>
     public int ProcessId { get; set; }
 
+    /// <summary>The actual comma-separated reference-number list this run used, for
+    /// FilterType.InvoiceNumberList or InvoiceNumberGapScan requests - a manually-
+    /// typed list is echoed back as-is; a gap scan's computed candidate list is
+    /// recorded here too (SyncOrchestrator.RunAsync rewrites gap scan into
+    /// InvoiceNumberList internally, so both end up populating this the same way).
+    /// Null for every other filter type. Shown in History & Logs' Summary and the
+    /// Previous Run section so a gap scan's actual candidate list is never just a
+    /// black box.</summary>
+    public string? ResolvedInvoiceNumberList { get; set; }
+
     /// <summary>True when this cycle was never actually attempted - the Automatic
     /// Service's pre-flight check (Worker.RunAutomaticLastChangedSyncAsync) found
     /// another PortProSage.Service.exe process already running and skipped this
@@ -137,11 +158,9 @@ public class SyncResult
     public DateTimeOffset? EffectiveFromUtc { get; set; }
     public DateTimeOffset? EffectiveToUtc { get; set; }
 
-    /// <summary>How many day-sized batches this run split into - see
-    /// SyncSettings.SplitRunByDay's doc comment. Always at least 1 (a run that
-    /// isn't split, or has no date range at all, is still "1 batch" - recorded
-    /// here and logged the same way as a genuinely multi-batch run, not treated
-    /// as a special case). 0 only for a run that never even started (e.g. the
+    /// <summary>Always 1 - batching by day was removed 2026-08-14. Kept as a
+    /// field (rather than removed) since History & Logs still reads it. 0 only
+    /// for a run that never even started (e.g. the
     /// pre-flight Skipped case, or the "nothing to process yet" early exit).</summary>
     public int BatchCount { get; set; }
 
