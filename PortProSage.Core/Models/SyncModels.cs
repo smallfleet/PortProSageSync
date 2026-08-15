@@ -135,6 +135,13 @@ public class SyncResult
     public int InvoicesSkippedAlreadyImported { get; set; }
     public int InvoicesSkippedZeroOrNegativeAmount { get; set; }
 
+    /// <summary>Candidates PortPro's single-invoice endpoint came back 404 for -
+    /// only ever non-zero for InvoiceNumberList/InvoiceNumberGapScan requests,
+    /// which are the only modes that check an explicit list of reference numbers
+    /// one at a time and so are the only ones that can know a specific candidate
+    /// simply doesn't exist. See PortProFetchResult.NotFoundCount.</summary>
+    public int InvoicesNotFound { get; set; }
+
     /// <summary>Invoices whose own date (BillingDate, falling back to
     /// CompletedDate) fell before SyncSettings.CutoffInvoiceDate - see that
     /// property's doc comment for why this exists.</summary>

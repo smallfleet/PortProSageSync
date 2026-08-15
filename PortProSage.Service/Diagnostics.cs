@@ -52,7 +52,7 @@ public static class Diagnostics
                 RequestedBy = "diagnostic"
             };
 
-            var invoices = await client.GetInvoicesAsync(request, ct);
+            var invoices = (await client.GetInvoicesAsync(request, ct)).Invoices;
             logger.LogInformation(
                 "SUCCESS: authenticated with PortPro and fetched {Count} invoice(s) changed in the last 24 hours.",
                 invoices.Count);
@@ -169,9 +169,9 @@ public static class Diagnostics
 
         logger.LogWarning(
             "MANUAL RUN complete: fetched={Fetched} imported={Imported} alreadyImported={AlreadyImported} " +
-            "zeroAmount={ZeroAmount} failedValidation={FailedVal} failedImport={FailedImp}",
+            "notFound={NotFound} zeroAmount={ZeroAmount} failedValidation={FailedVal} failedImport={FailedImp}",
             result.InvoicesFetched, result.InvoicesImported, result.InvoicesSkippedAlreadyImported,
-            result.InvoicesSkippedZeroOrNegativeAmount, result.InvoicesFailedValidation, result.InvoicesFailedImport);
+            result.InvoicesNotFound, result.InvoicesSkippedZeroOrNegativeAmount, result.InvoicesFailedValidation, result.InvoicesFailedImport);
 
         // Every Manual Run gets its own automatic gap-fill follow-up too, not just
         // the Automatic Service's poll cycles - see GapFillRunner's doc comment.
@@ -242,7 +242,7 @@ public static class Diagnostics
                 RequestedBy = "set-anchor"
             };
 
-            var matches = await client.GetInvoicesAsync(lookup, ct);
+            var matches = (await client.GetInvoicesAsync(lookup, ct)).Invoices;
             var invoice = matches.FirstOrDefault();
 
             if (invoice is null)
@@ -395,7 +395,7 @@ public static class Diagnostics
             RequestedBy = "mark-imported-range"
         };
 
-        var invoices = await portPro.GetInvoicesAsync(lookup, ct);
+        var invoices = (await portPro.GetInvoicesAsync(lookup, ct)).Invoices;
         var marked = 0;
         foreach (var invoice in invoices)
         {

@@ -144,6 +144,7 @@ public partial class MainForm
         _historyGrid.Columns.Add("Fetched", "Fetched");
         _historyGrid.Columns.Add("Imported", "Imported");
         _historyGrid.Columns.Add("Skipped", "Skipped");
+        _historyGrid.Columns.Add("NotFound", "Not found");
         _historyGrid.Columns.Add("ZeroAmt", "Zero/-ve Amt");
         _historyGrid.Columns.Add("SkippedCutoff", "Before cutoff");
         _historyGrid.Columns.Add("FailedVal", "Failed validation");
@@ -160,6 +161,7 @@ public partial class MainForm
         _historyGrid.Columns["Fetched"].Width = 60;
         _historyGrid.Columns["Imported"].Width = 65;
         _historyGrid.Columns["Skipped"].Width = 80;
+        _historyGrid.Columns["NotFound"].Width = 80;
         _historyGrid.Columns["ZeroAmt"].Width = 90;
         _historyGrid.Columns["SkippedCutoff"].Width = 90;
         _historyGrid.Columns["FailedVal"].Width = 100;
@@ -370,6 +372,7 @@ public partial class MainForm
                 entry.Result?.InvoicesFetched.ToString() ?? "",
                 entry.Result?.InvoicesImported.ToString() ?? "",
                 entry.Result?.InvoicesSkippedAlreadyImported.ToString() ?? "",
+                entry.Result?.InvoicesNotFound.ToString() ?? "",
                 entry.Result?.InvoicesSkippedZeroOrNegativeAmount.ToString() ?? "",
                 entry.Result?.InvoicesSkippedBeforeCutoff.ToString() ?? "",
                 entry.Result?.InvoicesFailedValidation.ToString() ?? "",
@@ -530,6 +533,7 @@ public partial class MainForm
                 "Run finished WITH ERRORS.\n\n" +
                 $"Imported: {result.InvoicesImported}\n" +
                 $"Already imported (skipped): {result.InvoicesSkippedAlreadyImported}\n" +
+                $"Not found: {result.InvoicesNotFound}\n" +
                 $"Failed validation: {result.InvoicesFailedValidation}\n" +
                 $"Failed write: {result.InvoicesFailedImport}\n\n" +
                 "Check the Failed Transactions tab or Full Log (below, in History & Logs) for exactly what went wrong.",
@@ -541,6 +545,7 @@ public partial class MainForm
                 "Run completed successfully.\n\n" +
                 $"Imported {result.InvoicesImported} invoice(s) from PortPro to Sage 50.\n" +
                 $"Already imported (skipped): {result.InvoicesSkippedAlreadyImported}\n" +
+                $"Not found: {result.InvoicesNotFound}\n" +
                 $"Zero/negative amount (skipped): {result.InvoicesSkippedZeroOrNegativeAmount}\n" +
                 $"Before cutoff date (skipped): {result.InvoicesSkippedBeforeCutoff}",
                 "Run complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -719,6 +724,7 @@ public partial class MainForm
             lines.Add($"Fetched: {entry.Result.InvoicesFetched}");
             lines.Add($"Imported (real writes this run): {entry.Result.InvoicesImported}");
             lines.Add($"Already imported (skipped): {entry.Result.InvoicesSkippedAlreadyImported}");
+            lines.Add($"Not found: {entry.Result.InvoicesNotFound}");
             lines.Add($"Zero/negative amount (skipped): {entry.Result.InvoicesSkippedZeroOrNegativeAmount}");
             lines.Add($"Before cutoff invoice date (skipped): {entry.Result.InvoicesSkippedBeforeCutoff}");
             lines.Add($"Failed validation: {entry.Result.InvoicesFailedValidation}");

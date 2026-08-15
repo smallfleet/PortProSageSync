@@ -63,6 +63,7 @@ public class SyncResult
     public int InvoicesFetched { get; set; }
     public int InvoicesImported { get; set; }
     public int InvoicesSkippedAlreadyImported { get; set; }
+    public int InvoicesNotFound { get; set; }
     public int InvoicesSkippedZeroOrNegativeAmount { get; set; }
     public int InvoicesSkippedBeforeCutoff { get; set; }
     public int InvoicesFailedValidation { get; set; }

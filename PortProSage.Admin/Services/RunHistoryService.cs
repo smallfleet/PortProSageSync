@@ -56,7 +56,7 @@ public static class RunHistoryService
         RegexOptions.Compiled);
 
     private static readonly Regex FinishLineRegex = new(
-        @"^(?<ts>\S+ \S+ \S+) \[INF\] Finished sync (?<id>\S+): fetched=(?<fetched>\d+) imported=(?<imported>\d+) alreadyImported=(?<already>\d+) zeroAmount=(?<zero>\d+) failedValidation=(?<failedval>\d+) failedImport=(?<failedimp>\d+)",
+        @"^(?<ts>\S+ \S+ \S+) \[INF\] Finished sync (?<id>\S+): fetched=(?<fetched>\d+) imported=(?<imported>\d+) alreadyImported=(?<already>\d+) notFound=(?<notfound>\d+) zeroAmount=(?<zero>\d+) failedValidation=(?<failedval>\d+) failedImport=(?<failedimp>\d+)",
         RegexOptions.Compiled);
 
     private const string TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff zzz";
@@ -191,6 +191,7 @@ public static class RunHistoryService
                         InvoicesFetched = int.Parse(finishMatch.Groups["fetched"].Value),
                         InvoicesImported = int.Parse(finishMatch.Groups["imported"].Value),
                         InvoicesSkippedAlreadyImported = int.Parse(finishMatch.Groups["already"].Value),
+                        InvoicesNotFound = int.Parse(finishMatch.Groups["notfound"].Value),
                         InvoicesSkippedZeroOrNegativeAmount = int.Parse(finishMatch.Groups["zero"].Value),
                         InvoicesFailedValidation = int.Parse(finishMatch.Groups["failedval"].Value),
                         InvoicesFailedImport = int.Parse(finishMatch.Groups["failedimp"].Value)

@@ -37,7 +37,7 @@ public class PortProClient
     /// PortPro's API silently omit real invoices that a date-bounded query
     /// correctly returns.
     /// </summary>
-    public async Task<List<PortProInvoice>> GetInvoicesAsync(SyncRequest request, CancellationToken ct)
+    public async Task<PortProFetchResult> GetInvoicesAsync(SyncRequest request, CancellationToken ct)
     {
         if (request.FilterType == FilterType.InvoiceNumberList)
         {
@@ -87,7 +87,7 @@ public class PortProClient
         }
 
         _logger.LogInformation("Fetched {Count} invoice(s) from PortPro for request {RequestId}", all.Count, request.RequestId);
-        return all;
+        return new PortProFetchResult { Invoices = all, NotFoundCount = 0 };
     }
 
     /// <summary>Fetches an explicit, comma-separated set of invoices one at a time
@@ -96,7 +96,7 @@ public class PortProClient
     /// (a confirmed gap where the list endpoint silently omitted a real invoice that
     /// this endpoint returns fine). A reference number not found is logged and
     /// skipped, not treated as fatal - the rest of the list still gets processed.</summary>
-    private async Task<List<PortProInvoice>> GetInvoiceListByReferenceNumbersAsync(string? commaSeparated, CancellationToken ct)
+    private async Task<PortProFetchResult> GetInvoiceListByReferenceNumbersAsync(string? commaSeparated, CancellationToken ct)
     {
         // net48 lacks both StringSplitOptions.TrimEntries and the Split(char, options)
         // overload (both added in later .NET versions) - the classic char[] overload,
@@ -109,6 +109,7 @@ public class PortProClient
             .ToList();
 
         var found = new List<PortProInvoice>();
+        var notFoundCount = 0;
         var isFirst = true;
         foreach (var referenceNumber in referenceNumbers)
         {
@@ -127,13 +128,16 @@ public class PortProClient
             if (invoice is null)
             {
                 _logger.LogWarning("Invoice '{Ref}' was not found by PortPro's single-invoice endpoint - skipped.", referenceNumber);
+                notFoundCount++;
                 continue;
             }
             found.Add(invoice);
         }
 
-        _logger.LogInformation("Fetched {Count} of {Requested} requested invoice(s) from PortPro (InvoiceNumberList)", found.Count, referenceNumbers.Count);
-        return found;
+        _logger.LogInformation(
+            "Fetched {Count} of {Requested} requested invoice(s) from PortPro (InvoiceNumberList) - {NotFound} not found",
+            found.Count, referenceNumbers.Count, notFoundCount);
+        return new PortProFetchResult { Invoices = found, NotFoundCount = notFoundCount };
     }
 
     private static bool IsInInvoiceNumberRange(string referenceNumber, string? start, string? end)

@@ -423,7 +423,7 @@ public partial class MainForm
                 : hasFailures
                     ? $"FINISHED WITH ERRORS - imported={r.InvoicesImported}, alreadyImported={r.InvoicesSkippedAlreadyImported}, " +
                       $"failedValidation={r.InvoicesFailedValidation}, failedImport={r.InvoicesFailedImport}. See Failed Transactions / Full Log."
-                    : $"SUCCESS - imported={r.InvoicesImported}, alreadyImported={r.InvoicesSkippedAlreadyImported}.";
+                    : $"SUCCESS - imported={r.InvoicesImported}, alreadyImported={r.InvoicesSkippedAlreadyImported}, notFound={r.InvoicesNotFound}.";
 
             invoiceListUsedText = r.ResolvedInvoiceNumberList ?? "";
         }

@@ -214,7 +214,9 @@ public class SyncOrchestrator
                     batchFrom?.ToString("yyyy-MM-dd HH:mm") ?? "(no date filter)",
                     batchTo?.ToString("yyyy-MM-dd HH:mm") ?? "(no date filter)");
 
-                var invoices = await _portPro.GetInvoicesAsync(request, ct);
+                var fetchResult = await _portPro.GetInvoicesAsync(request, ct);
+                var invoices = fetchResult.Invoices;
+                result.InvoicesNotFound += fetchResult.NotFoundCount;
                 var batchFetched = invoices.Count;
                 result.InvoicesFetched += batchFetched;
 
@@ -468,9 +470,9 @@ public class SyncOrchestrator
 
         result.FinishedAtUtc = DateTimeOffset.UtcNow;
         _logger.LogInformation(
-            "Finished sync {RequestId}: fetched={Fetched} imported={Imported} alreadyImported={Skipped} zeroAmount={ZeroAmount} failedValidation={FailedVal} failedImport={FailedImp}",
+            "Finished sync {RequestId}: fetched={Fetched} imported={Imported} alreadyImported={Skipped} notFound={NotFound} zeroAmount={ZeroAmount} failedValidation={FailedVal} failedImport={FailedImp}",
             request.RequestId, result.InvoicesFetched, result.InvoicesImported, result.InvoicesSkippedAlreadyImported,
-            result.InvoicesSkippedZeroOrNegativeAmount, result.InvoicesFailedValidation, result.InvoicesFailedImport);
+            result.InvoicesNotFound, result.InvoicesSkippedZeroOrNegativeAmount, result.InvoicesFailedValidation, result.InvoicesFailedImport);
 
         // Every run with at least one failure (automatic or manual - not just manual
         // triggers, which are the only path that already writes a result.json) gets

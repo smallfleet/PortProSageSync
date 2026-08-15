@@ -2,6 +2,19 @@ using System.Text.Json.Serialization;
 
 namespace PortProSage.Core.Models;
 
+/// <summary>Result of PortProClient.GetInvoicesAsync - the invoices actually found,
+/// plus how many requested candidates came back "not found" (404). NotFoundCount is
+/// only ever non-zero for FilterType.InvoiceNumberList/InvoiceNumberGapScan, which
+/// are the only modes that check an EXPLICIT list of candidates one at a time and so
+/// are the only ones that can know a specific reference number didn't exist - a list-
+/// endpoint-driven mode (date range, invoice number range) has no such concept, since
+/// it only ever sees what PortPro chose to return.</summary>
+public class PortProFetchResult
+{
+    public List<PortProInvoice> Invoices { get; set; } = new();
+    public int NotFoundCount { get; set; }
+}
+
 /// <summary>
 /// Mirrors the invoice object returned by PortPro's GET /invoices endpoints.
 /// Field names follow the demo payload published in PortPro's API reference;
