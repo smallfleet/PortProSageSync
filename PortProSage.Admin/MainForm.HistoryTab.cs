@@ -233,13 +233,43 @@ public partial class MainForm
         }
     }
 
+    /// <summary>Derives (found, checked) for an InvoiceNumberList/gap-fill run.
+    /// "checked" comes from ResolvedInvoiceNumberList's own candidate count, NOT
+    /// from InvoicesFetched + InvoicesNotFound - that field didn't exist at all
+    /// before 2026-08-15, so any run from before then has it stuck at 0 no matter
+    /// how many candidates were actually missing. ResolvedInvoiceNumberList was
+    /// already being recorded before that, so deriving "checked" from its count
+    /// (and "not found" as checked-found) works uniformly for old and new runs,
+    /// rather than only fixing the display going forward.</summary>
+    private static (int Found, int Checked) GetGapFillCounts(SyncResult? result)
+    {
+        if (result is null || string.IsNullOrWhiteSpace(result.ResolvedInvoiceNumberList)) return (result?.InvoicesFetched ?? 0, 0);
+        var checkedCount = result.ResolvedInvoiceNumberList
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
+        return (result.InvoicesFetched, checkedCount);
+    }
+
     /// <summary>Display-only label for the Mode column - InvoiceNumberGapScan is
     /// never picked by hand (see GapFillRunner, Core-side), so its enum name reads
     /// as an internal implementation detail here rather than "what actually
     /// happened this row". Every other FilterType's enum name is already a
-    /// reasonable label as-is.</summary>
-    private static string FormatModeText(FilterType filterType) =>
-        filterType == FilterType.InvoiceNumberGapScan ? "Finding the Gap" : filterType.ToString();
+    /// reasonable label as-is.
+    ///
+    /// For a finished gap-fill run, appends "(found/checked)" - e.g. "(19/98)" -
+    /// so the single most useful number (how many of the candidates it went and
+    /// checked turned out to be real) is visible directly in the grid, not just
+    /// buried in Summary. See GetGapFillCounts for why "checked" isn't just
+    /// InvoicesFetched + InvoicesNotFound.</summary>
+    private static string FormatModeText(FilterType filterType, SyncResult? result)
+    {
+        if (filterType != FilterType.InvoiceNumberGapScan) return filterType.ToString();
+        if (result is null || !result.IsFinal) return "Finding the Gap";
+
+        var (found, checkedCount) = GetGapFillCounts(result);
+        return checkedCount > 0
+            ? $"Finding the Gap ({found}/{checkedCount})"
+            : "Finding the Gap";
+    }
 
     private void RefreshHistoryList()
     {
@@ -318,7 +348,7 @@ public partial class MainForm
             var mode = entry.Result?.Skipped == true
                 ? "Skipped - Process Running"
                 : entry.Request is not null
-                    ? (entry.Request.UseWatermark ? "Continue" : FormatModeText(entry.Request.FilterType))
+                    ? (entry.Request.UseWatermark ? "Continue" : FormatModeText(entry.Request.FilterType, entry.Result))
                     : "(auto-poll)";
             var source = entry.IsAutomaticPoll || entry.ReconstructedFromLog ? "Automatic Service"
                 : entry.IsManual ? "Manual Run"
@@ -360,6 +390,24 @@ public partial class MainForm
                 finishedText = "";
             }
 
+            // Same found/checked framing as the Mode column's "(19/98)" and the
+            // Summary panel's "Fetched: 0/79" - a bare "0" for a gap-fill run
+            // reads as if nothing was even checked, when 79 candidates were. See
+            // GetGapFillCounts for why this is derived from ResolvedInvoiceNumberList
+            // rather than trusted from InvoicesNotFound directly - that field is 0
+            // (not just unpopulated) on every run from before 2026-08-15.
+            var (gapFound, gapChecked) = GetGapFillCounts(entry.Result);
+            var fetchedText = entry.Result is null
+                ? ""
+                : gapChecked > 0
+                    ? $"{gapFound}/{gapChecked}"
+                    : entry.Result.InvoicesFetched.ToString();
+            var notFoundText = entry.Result is null
+                ? ""
+                : gapChecked > 0
+                    ? Math.Max(0, gapChecked - gapFound).ToString()
+                    : entry.Result.InvoicesNotFound.ToString();
+
             var rowIndex = _historyGrid.Rows.Add(
                 seqByRequestId.GetValueOrDefault(entry.RequestId, 0),
                 entry.RequestId,
@@ -369,10 +417,10 @@ public partial class MainForm
                 finishedText,
                 entry.Result?.EffectiveFromUtc?.ToLocalTime().ToString("g") ?? "",
                 entry.Result?.EffectiveToUtc?.ToLocalTime().ToString("g") ?? "",
-                entry.Result?.InvoicesFetched.ToString() ?? "",
+                fetchedText,
                 entry.Result?.InvoicesImported.ToString() ?? "",
                 entry.Result?.InvoicesSkippedAlreadyImported.ToString() ?? "",
-                entry.Result?.InvoicesNotFound.ToString() ?? "",
+                notFoundText,
                 entry.Result?.InvoicesSkippedZeroOrNegativeAmount.ToString() ?? "",
                 entry.Result?.InvoicesSkippedBeforeCutoff.ToString() ?? "",
                 entry.Result?.InvoicesFailedValidation.ToString() ?? "",
@@ -720,11 +768,24 @@ public partial class MainForm
                            "as of its last checkpoint (saved after every invoice), not blanks.");
             }
 
+            // For an InvoiceNumberList/gap-fill run, "Fetched: 0" alone reads as if
+            // nothing was even checked - show it as "found/checked" (e.g. "0/79")
+            // instead, same found/checked framing as the Mode column's "(19/98)",
+            // so it's clear 79 candidates WERE checked and simply weren't found. See
+            // GetGapFillCounts for why this is derived from ResolvedInvoiceNumberList
+            // rather than trusted from InvoicesNotFound directly - that field reads
+            // 0 (not just unpopulated) on every run from before 2026-08-15.
+            var (summaryFound, summaryChecked) = GetGapFillCounts(entry.Result);
+            var fetchedText = summaryChecked > 0
+                ? $"{summaryFound}/{summaryChecked}"
+                : entry.Result.InvoicesFetched.ToString();
+            var notFoundCount = summaryChecked > 0 ? Math.Max(0, summaryChecked - summaryFound) : entry.Result.InvoicesNotFound;
+
             lines.Add("");
-            lines.Add($"Fetched: {entry.Result.InvoicesFetched}");
+            lines.Add($"Fetched: {fetchedText}");
             lines.Add($"Imported (real writes this run): {entry.Result.InvoicesImported}");
             lines.Add($"Already imported (skipped): {entry.Result.InvoicesSkippedAlreadyImported}");
-            lines.Add($"Not found: {entry.Result.InvoicesNotFound}");
+            lines.Add($"Not found: {notFoundCount}");
             lines.Add($"Zero/negative amount (skipped): {entry.Result.InvoicesSkippedZeroOrNegativeAmount}");
             lines.Add($"Before cutoff invoice date (skipped): {entry.Result.InvoicesSkippedBeforeCutoff}");
             lines.Add($"Failed validation: {entry.Result.InvoicesFailedValidation}");

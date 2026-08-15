@@ -109,10 +109,10 @@ if (-not (Test-Path (Join-Path $serviceOut "Sage_SA.SDK.dll"))) {
 }
 
 # Copy the docs alongside the published Service - `dotnet publish` doesn't include
-# them on its own, and the Admin app's "Readme" button (top bar) looks for
-# README.md next to the configured Service folder, so this is what makes that
+# them on its own, and the Admin app's "Help" button (top bar) looks for
+# USER_GUIDE.md next to the configured Service folder, so this is what makes that
 # button work on a production install too.
-foreach ($doc in @("README.md", "DEPLOYMENT.md")) {
+foreach ($doc in @("README.md", "USER_GUIDE.md", "DEPLOYMENT.md")) {
     $docSource = Join-Path $repoRoot $doc
     if (Test-Path $docSource) {
         Copy-Item $docSource (Join-Path $serviceOut $doc) -Force

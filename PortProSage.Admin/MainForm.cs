@@ -26,7 +26,7 @@ public partial class MainForm : Form
     ///                 changes (e.g. what ships in the next production installer).
     ///   ZZ (build)  - any other new exe, including small dev-test iterations.
     /// </summary>
-    public const string AppVersion = "2.01.17";
+    public const string AppVersion = "2.02.22";
 
     private readonly ToolStripStatusLabel _sourceLabel = new() { Text = "Click any field to see where it's stored." };
     private readonly TextBox _serviceFolderBox = new() { Width = 480 };
@@ -121,15 +121,17 @@ public partial class MainForm : Form
         // rather than leaving a growing gap.
         const int readmeWidth = 70;
         const string readmeHelpText =
-            "Opens README.md - the technical overview of how this whole system works (automatic sync, manual " +
-            "triggers, validation/auto-matching rules, log/troubleshooting locations) - in whatever application " +
-            "is associated with .md files on this computer (Notepad, VS Code, a browser, etc).\n\n" +
+            "Opens USER_GUIDE.md - the full walkthrough of every tab and field in this app, with worked examples " +
+            "and step-by-step recipes for common tasks - in whatever application is associated with .md files on " +
+            "this computer (Notepad, VS Code, a browser, etc).\n\n" +
             "Looked for next to this app, next to the configured Service folder, and at the repo root on this " +
             "development machine - if none of those have it, you'll see a message saying so instead of it just " +
-            "silently doing nothing.";
-        var readme = new Button { Text = "Readme", Width = readmeWidth, Anchor = AnchorStyles.Top | AnchorStyles.Right };
-        readme.Click += (_, _) => OpenReadme();
-        var readmeHelp = CreateHelpIcon("Readme", readmeHelpText);
+            "silently doing nothing.\n\n" +
+            "Looking for the technical/developer documentation instead? That's README.md, in the same folder - " +
+            "the User Guide itself links to it.";
+        var readme = new Button { Text = "Help", Width = readmeWidth, Anchor = AnchorStyles.Top | AnchorStyles.Right };
+        readme.Click += (_, _) => OpenUserGuide();
+        var readmeHelp = CreateHelpIcon("Help", readmeHelpText);
         readmeHelp.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 
         // Directly visible in the always-on-screen top bar, not just the window
@@ -180,32 +182,34 @@ public partial class MainForm : Form
         return panel;
     }
 
-    /// <summary>Finds README.md next to this app, next to the configured Service
+    /// <summary>Finds USER_GUIDE.md next to this app, next to the configured Service
     /// folder (both the folder itself and walking up to a typical dev repo root),
     /// or at the hardcoded dev-machine repo path - covers both a normal dev
     /// checkout and a production install, as long as Install-Production.ps1 copied
-    /// the docs alongside the published Service (see DEPLOYMENT.md).</summary>
-    private void OpenReadme()
+    /// the docs alongside the published Service (see DEPLOYMENT.md). Same search
+    /// pattern as the old README-opening logic this replaced - see git history if
+    /// the technical README.md needs to be opened this same way again.</summary>
+    private void OpenUserGuide()
     {
-        var candidates = new List<string> { Path.Combine(AppContext.BaseDirectory, "README.md") };
+        var candidates = new List<string> { Path.Combine(AppContext.BaseDirectory, "USER_GUIDE.md") };
 
         var serviceFolder = _serviceFolderBox.Text;
         if (!string.IsNullOrWhiteSpace(serviceFolder))
         {
-            candidates.Add(Path.Combine(serviceFolder, "README.md"));
-            candidates.Add(Path.Combine(serviceFolder, "..", "README.md"));
-            candidates.Add(Path.Combine(serviceFolder, "..", "..", "..", "..", "README.md")); // typical dev ...\PortProSage.Service\bin\Debug\net48 depth -> repo root
+            candidates.Add(Path.Combine(serviceFolder, "USER_GUIDE.md"));
+            candidates.Add(Path.Combine(serviceFolder, "..", "USER_GUIDE.md"));
+            candidates.Add(Path.Combine(serviceFolder, "..", "..", "..", "..", "USER_GUIDE.md")); // typical dev ...\PortProSage.Service\bin\Debug\net48 depth -> repo root
         }
 
-        candidates.Add(@"C:\PortProSageSync\README.md");
+        candidates.Add(@"C:\PortProSageSync\USER_GUIDE.md");
 
         var found = candidates.Select(Path.GetFullPath).FirstOrDefault(File.Exists);
         if (found is null)
         {
             MessageBox.Show(this,
-                "Could not find README.md in any of the usual locations (next to this app, next to the Service " +
-                "folder, or the repo root).",
-                "Readme not found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                "Could not find USER_GUIDE.md in any of the usual locations (next to this app, next to the " +
+                "Service folder, or the repo root).",
+                "User Guide not found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
