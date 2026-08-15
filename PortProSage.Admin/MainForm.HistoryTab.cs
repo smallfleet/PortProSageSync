@@ -231,6 +231,14 @@ public partial class MainForm
         }
     }
 
+    /// <summary>Display-only label for the Mode column - InvoiceNumberGapScan is
+    /// never picked by hand (see GapFillRunner, Core-side), so its enum name reads
+    /// as an internal implementation detail here rather than "what actually
+    /// happened this row". Every other FilterType's enum name is already a
+    /// reasonable label as-is.</summary>
+    private static string FormatModeText(FilterType filterType) =>
+        filterType == FilterType.InvoiceNumberGapScan ? "Finding the Gap" : filterType.ToString();
+
     private void RefreshHistoryList()
     {
         if (string.IsNullOrWhiteSpace(_triggerFolder) || string.IsNullOrWhiteSpace(_processedTriggerFolder)) return;
@@ -308,7 +316,7 @@ public partial class MainForm
             var mode = entry.Result?.Skipped == true
                 ? "Skipped - Process Running"
                 : entry.Request is not null
-                    ? (entry.Request.UseWatermark ? "Continue" : entry.Request.FilterType.ToString())
+                    ? (entry.Request.UseWatermark ? "Continue" : FormatModeText(entry.Request.FilterType))
                     : "(auto-poll)";
             var source = entry.IsAutomaticPoll || entry.ReconstructedFromLog ? "Automatic Service"
                 : entry.IsManual ? "Manual Run"
@@ -681,7 +689,9 @@ public partial class MainForm
             // is visible, not just documented in the log.
             if (!string.IsNullOrWhiteSpace(entry.Result.ResolvedInvoiceNumberList))
             {
-                lines.Add($"Invoice number list used: {entry.Result.ResolvedInvoiceNumberList}");
+                var candidateCount = entry.Result.ResolvedInvoiceNumberList
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
+                lines.Add($"Invoice number list used ({candidateCount} candidate(s)): {entry.Result.ResolvedInvoiceNumberList}");
             }
             if (entry.Result.BatchCount > 1)
             {

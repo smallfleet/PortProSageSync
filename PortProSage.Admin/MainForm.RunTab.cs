@@ -83,8 +83,7 @@ public partial class MainForm
             "Continue (from where we left off)",
             "Last changed date",
             "Invoice number range",
-            "Invoice number list (comma-separated)",
-            "Find missing invoices in range (gap scan)"
+            "Invoice number list (comma-separated)"
         });
         // Invoice date is the default, not Continue - it filters by the invoice's own
         // actual date (PortPro's billingDate), so a chosen window can never surprise
@@ -116,20 +115,13 @@ public partial class MainForm
             "Invoice date above unless you specifically need \"what changed recently.\"\n" +
             "• Invoice number range - invoices whose reference number falls between Start/End invoice number below, " +
             "with BOTH endpoints included (e.g. Start=90, End=95 processes 90, 91, 92, 93, 94, 95 - 6 invoices, not 5). " +
-            "Uses PortPro's paginated list endpoint, scanning the whole account - confirmed live 2026-08-12 this can " +
-            "silently miss real invoices the list endpoint excludes for reasons outside our control. If a specific " +
-            "invoice you know exists isn't showing up, try Invoice number list below instead.\n" +
+            "Uses PortPro's paginated list endpoint, scanning the whole account.\n" +
             "• Invoice number list - an explicit, comma-separated set of specific invoice numbers (see the field " +
-            "below), fetched ONE AT A TIME via PortPro's single-invoice lookup instead of the list endpoint. Slower " +
-            "for a large set, but bypasses whatever causes Invoice number range to occasionally miss a real invoice - " +
-            "use this to target a small number of specific, known invoice numbers directly.\n" +
-            "• Find missing invoices in range (gap scan) - uses Start/End invoice number below as a range to " +
-            "audit, not a range to blindly process: it works out every number in that range NOT already recorded " +
-            "as imported, then checks each one individually via the single-invoice lookup (same as Invoice number " +
-            "list above) - anything found and eligible gets imported for real (subject to Dry run below). Use this " +
-            "to sweep a range you suspect has gaps (e.g. from the list-endpoint issue) instead of checking " +
-            "suspected numbers one at a time by hand. The actual candidate list it computes is recorded in the " +
-            "Summary tab and Previous Run section after it runs.\n\n" +
+            "below), fetched ONE AT A TIME via PortPro's single-invoice lookup instead of the list endpoint.\n\n" +
+            "Every run, regardless of mode, is automatically followed by a gap-fill sweep of the exact invoice-" +
+            "number range it actually touched - confirmed live 2026-08-12 the list endpoint can silently miss real " +
+            "invoices; this catches them without needing a separate mode. It shows up as its own row in History & " +
+            "Logs, and never needs choosing by hand.\n\n" +
             "Every mode except Continue is a one-time override - it never reads or changes the saved Continue " +
             "position, so the next Continue run behaves exactly as if the override run never happened.",
             stretchInput: false);
@@ -295,8 +287,8 @@ public partial class MainForm
         var mode = _runMode.SelectedIndex;
         _runFrom.Enabled = mode == 0 || mode == 2; // Invoice date, Last changed date
         _runTo.Enabled = mode == 0 || mode == 2;
-        _runStartInvoice.Enabled = mode == 3 || mode == 5; // Invoice number range, gap scan
-        _runEndInvoice.Enabled = mode == 3 || mode == 5;
+        _runStartInvoice.Enabled = mode == 3; // Invoice number range
+        _runEndInvoice.Enabled = mode == 3;
         _runInvoiceNumberList.Enabled = mode == 4; // Invoice number list
     }
 
@@ -528,11 +520,6 @@ public partial class MainForm
                 request.FilterType = FilterType.InvoiceNumberList;
                 request.InvoiceNumberList = _runInvoiceNumberList.Text;
                 break;
-            case 5:
-                request.FilterType = FilterType.InvoiceNumberGapScan;
-                request.StartInvoiceNumber = string.IsNullOrWhiteSpace(_runStartInvoice.Text) ? null : _runStartInvoice.Text.Trim();
-                request.EndInvoiceNumber = string.IsNullOrWhiteSpace(_runEndInvoice.Text) ? null : _runEndInvoice.Text.Trim();
-                break;
         }
 
         if (_runMaxInvoices.Value > 0)
@@ -574,12 +561,6 @@ public partial class MainForm
         {
             lines.Add($"Start invoice: {request.StartInvoiceNumber ?? "(none)"}   End invoice: {request.EndInvoiceNumber ?? "(none)"}");
         }
-        if (request.FilterType == FilterType.InvoiceNumberGapScan)
-        {
-            lines.Add("This audits every number in that range - anything already recorded as imported is skipped " +
-                      "without even a PortPro call. Only genuinely missing, eligible invoices get checked and " +
-                      "imported. The actual candidate list it computes will be recorded in Summary/Previous Run once it runs.");
-        }
         if (!string.IsNullOrWhiteSpace(request.InvoiceNumberList))
         {
             lines.Add($"Invoice numbers: {request.InvoiceNumberList}");
@@ -618,13 +599,6 @@ public partial class MainForm
         if (request.FilterType == FilterType.InvoiceNumberList && string.IsNullOrWhiteSpace(request.InvoiceNumberList))
         {
             error = "Invoice number list mode needs at least one invoice number - enter one or more, separated by commas.";
-            return false;
-        }
-
-        if (request.FilterType == FilterType.InvoiceNumberGapScan &&
-            (string.IsNullOrWhiteSpace(request.StartInvoiceNumber) || string.IsNullOrWhiteSpace(request.EndInvoiceNumber)))
-        {
-            error = "Gap scan mode needs both Start and End invoice number - it audits everything in that range, so both bounds are required.";
             return false;
         }
 

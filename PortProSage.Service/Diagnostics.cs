@@ -149,11 +149,12 @@ public static class Diagnostics
 
         logger.LogWarning("=== MANUAL RUN: executing one-time sync request {RequestId} ===", request.RequestId);
 
-        var resultFilePath = Path.Combine(
-            Path.GetDirectoryName(requestFilePath) ?? ".",
-            $"{request.RequestId}.result.json");
+        var requestFolder = Path.GetDirectoryName(requestFilePath) ?? ".";
+        var resultFilePath = Path.Combine(requestFolder, $"{request.RequestId}.result.json");
         var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
         void WriteResultFile(SyncResult r) => WriteResultFileWithRetry(resultFilePath, JsonSerializer.Serialize(r, jsonOptions), logger);
+        void WriteRequestFileFor(SyncRequest r) => File.WriteAllText(Path.Combine(requestFolder, $"{r.RequestId}.request.json"), JsonSerializer.Serialize(r, jsonOptions));
+        void WriteResultFileFor(string id, SyncResult r) => WriteResultFileWithRetry(Path.Combine(requestFolder, $"{id}.result.json"), JsonSerializer.Serialize(r, jsonOptions), logger);
 
         var orchestrator = services.GetRequiredService<SyncOrchestrator>();
         // Checkpointed after every invoice (onProgress), not just once at the very
@@ -171,6 +172,10 @@ public static class Diagnostics
             "zeroAmount={ZeroAmount} failedValidation={FailedVal} failedImport={FailedImp}",
             result.InvoicesFetched, result.InvoicesImported, result.InvoicesSkippedAlreadyImported,
             result.InvoicesSkippedZeroOrNegativeAmount, result.InvoicesFailedValidation, result.InvoicesFailedImport);
+
+        // Every Manual Run gets its own automatic gap-fill follow-up too, not just
+        // the Automatic Service's poll cycles - see GapFillRunner's doc comment.
+        await GapFillRunner.RunIfApplicableAsync(request, result, orchestrator, WriteRequestFileFor, WriteResultFileFor, logger, ct);
 
         // Per-invoice detail no longer dumped here - SyncOrchestrator.RunAsync now logs
         // an "OUTCOME: ..." line for every invoice live, as it happens (see its doc

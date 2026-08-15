@@ -109,8 +109,19 @@ public class PortProClient
             .ToList();
 
         var found = new List<PortProInvoice>();
+        var isFirst = true;
         foreach (var referenceNumber in referenceNumbers)
         {
+            // A small, deliberate pause between individual lookups - not needed for a
+            // handful of candidates, but a large gap-fill/list can mean hundreds of
+            // rapid-fire single-invoice calls in a row, which has been confirmed live
+            // 2026-08-15 to trigger PortPro's own rate limiting (429). SendWithAuthAsync
+            // still retries a 429 with backoff if this doesn't fully avoid one, but
+            // spacing calls out to begin with means fewer retries and less risk of
+            // exhausting them for a big list.
+            if (!isFirst) await Task.Delay(150, ct);
+            isFirst = false;
+
             _logger.LogInformation("Requesting PortPro invoice '{Ref}' directly (InvoiceNumberList)", referenceNumber);
             var invoice = await GetInvoiceAsync(referenceNumber, ct);
             if (invoice is null)
@@ -204,6 +215,13 @@ public class PortProClient
     /// rejects it with a 401 - refreshes the token once and retries a single time
     /// before giving up. Handles both "our cached expiry estimate was wrong" and
     /// "the token was revoked/rotated externally" cases.
+    ///
+    /// Also retries a 429 (Too Many Requests) with backoff, honoring the Retry-After
+    /// header when PortPro sends one. Confirmed live 2026-08-15: a large InvoiceNumberList
+    /// run's rapid sequential single-invoice lookups (many calls in a few seconds)
+    /// triggered a 429 that, unhandled, threw all the way up through GetInvoicesAsync
+    /// and SyncOrchestrator.RunAsync's own try/catch, failing the ENTIRE run
+    /// (fetched=0/imported=0) instead of just that one lookup.
     /// </summary>
     private async Task<HttpResponseMessage> SendWithAuthAsync(HttpMethod method, string url, CancellationToken ct)
     {
@@ -214,6 +232,21 @@ public class PortProClient
         {
             response.Dispose();
             token = await _auth.NotifyTokenRejectedAsync(ct);
+            response = await SendOnceAsync(method, url, token, ct);
+        }
+
+        const int maxRateLimitRetries = 5;
+        var attempt = 0;
+        while ((int)response.StatusCode == 429 && attempt < maxRateLimitRetries)
+        {
+            attempt++;
+            var delay = response.Headers.RetryAfter?.Delta
+                ?? TimeSpan.FromSeconds(Math.Min(30, Math.Pow(2, attempt)));
+            _logger.LogWarning(
+                "PortPro rate-limited this request (429) - waiting {Delay} before retry {Attempt}/{Max}.",
+                delay, attempt, maxRateLimitRetries);
+            response.Dispose();
+            await Task.Delay(delay, ct);
             response = await SendOnceAsync(method, url, token, ct);
         }
 

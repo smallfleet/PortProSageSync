@@ -98,19 +98,28 @@ public class SyncOrchestrator
         // client's format).
         if (request.FilterType == FilterType.InvoiceNumberGapScan)
         {
-            if (!ReferenceNumberFormat.TryParse(request.StartInvoiceNumber, out var startPrefix, out var startNumber, out var width, out var startSuffix) ||
-                !ReferenceNumberFormat.TryParse(request.EndInvoiceNumber, out var endPrefix, out var endNumber, out _, out var endSuffix))
+            // Suffix (e.g. "-1") is deliberately IGNORED here, both for validation and
+            // for reconstructing candidates - confirmed live 2026-08-15 that a suffix
+            // is a property of an INDIVIDUAL invoice (a sub-bill/revision marker), not
+            // a pattern that applies across a whole range. A prior version required
+            // Start/End to share the same suffix and then applied it to every number
+            // in between - when the boundary invoices happened to both carry "-1" (by
+            // coincidence, not because the whole range does), it generated ~3,600
+            // mostly-nonexistent "-1"-suffixed candidates instead of the real, mostly-
+            // already-imported plain-numbered ones. Only prefix/number are used now;
+            // every candidate is reconstructed bare (no suffix).
+            if (!ReferenceNumberFormat.TryParse(request.StartInvoiceNumber, out var startPrefix, out var startNumber, out var width, out _) ||
+                !ReferenceNumberFormat.TryParse(request.EndInvoiceNumber, out var endPrefix, out var endNumber, out _, out _))
             {
                 throw new InvalidOperationException(
                     $"Gap scan needs a valid Start/End invoice number (prefix + number, e.g. RSRE_000100) - got " +
                     $"Start='{request.StartInvoiceNumber}', End='{request.EndInvoiceNumber}'.");
             }
-            if (!string.Equals(startPrefix, endPrefix, StringComparison.Ordinal) ||
-                !string.Equals(startSuffix, endSuffix, StringComparison.Ordinal))
+            if (!string.Equals(startPrefix, endPrefix, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
                     $"Gap scan's Start ('{request.StartInvoiceNumber}') and End ('{request.EndInvoiceNumber}') must " +
-                    "share the same prefix/suffix pattern, just different numbers.");
+                    "share the same prefix, just different numbers.");
             }
             if (endNumber < startNumber)
             {
@@ -121,7 +130,7 @@ public class SyncOrchestrator
             var candidates = new List<string>();
             for (var n = startNumber; n <= endNumber; n++)
             {
-                var candidate = ReferenceNumberFormat.Format(startPrefix, n, width, startSuffix);
+                var candidate = ReferenceNumberFormat.Format(startPrefix, n, width, suffix: "");
                 if (!alreadyImported.Contains(candidate))
                 {
                     candidates.Add(candidate);
