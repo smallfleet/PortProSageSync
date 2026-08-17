@@ -46,6 +46,14 @@ public class RunHistoryEntry
     /// Null until computed; also null if the log has nothing for this window.</summary>
     public DateTimeOffset? LastLogActivityUtc { get; set; }
 
+    /// <summary>On-disk paths for this entry's request/result files, if any - null
+    /// for a ReconstructedFromLog entry (no files exist at all) or if this entry's
+    /// result hasn't been written yet. Populated by RunHistoryService.ListRuns so
+    /// MainForm's Delete feature knows exactly what to remove without having to
+    /// re-derive folder/id logic itself.</summary>
+    public string? RequestFilePath { get; set; }
+    public string? ResultFilePath { get; set; }
+
     public DateTimeOffset SortKey => Result?.FinishedAtUtc ?? Request?.RequestedAtUtc ?? DateTimeOffset.MinValue;
 }
 
@@ -73,7 +81,11 @@ public static class RunHistoryService
                 var result = TryDeserialize<SyncResult>(resultFile);
                 var requestFile = Path.Combine(processedFolder, $"{id}.request.json");
                 var request = File.Exists(requestFile) ? TryDeserialize<SyncRequest>(requestFile) : null;
-                byId[id] = new RunHistoryEntry { RequestId = id, Request = request, Result = result, IsPending = false };
+                byId[id] = new RunHistoryEntry
+                {
+                    RequestId = id, Request = request, Result = result, IsPending = false,
+                    RequestFilePath = requestFile, ResultFilePath = resultFile
+                };
             }
         }
 
@@ -84,7 +96,7 @@ public static class RunHistoryService
                 var id = Path.GetFileName(requestFile).Replace(".request.json", "");
                 if (byId.ContainsKey(id)) continue; // already processed and archived
                 var request = TryDeserialize<SyncRequest>(requestFile);
-                byId[id] = new RunHistoryEntry { RequestId = id, Request = request, Result = null, IsPending = true };
+                byId[id] = new RunHistoryEntry { RequestId = id, Request = request, Result = null, IsPending = true, RequestFilePath = requestFile };
             }
         }
 
@@ -100,7 +112,11 @@ public static class RunHistoryService
                 var request = TryDeserialize<SyncRequest>(requestFile);
                 var resultFile = Path.Combine(manualRunFolder, $"{id}.result.json");
                 var result = File.Exists(resultFile) ? TryDeserialize<SyncResult>(resultFile) : null;
-                byId[id] = new RunHistoryEntry { RequestId = id, Request = request, Result = result, IsPending = result is null || !result.IsFinal, IsManual = true };
+                byId[id] = new RunHistoryEntry
+                {
+                    RequestId = id, Request = request, Result = result, IsPending = result is null || !result.IsFinal, IsManual = true,
+                    RequestFilePath = requestFile, ResultFilePath = File.Exists(resultFile) ? resultFile : null
+                };
             }
         }
 
@@ -116,7 +132,11 @@ public static class RunHistoryService
                 var request = TryDeserialize<SyncRequest>(requestFile);
                 var resultFile = Path.Combine(autoPollFolder, $"{id}.result.json");
                 var result = File.Exists(resultFile) ? TryDeserialize<SyncResult>(resultFile) : null;
-                byId[id] = new RunHistoryEntry { RequestId = id, Request = request, Result = result, IsPending = result is null || !result.IsFinal, IsAutomaticPoll = true };
+                byId[id] = new RunHistoryEntry
+                {
+                    RequestId = id, Request = request, Result = result, IsPending = result is null || !result.IsFinal, IsAutomaticPoll = true,
+                    RequestFilePath = requestFile, ResultFilePath = File.Exists(resultFile) ? resultFile : null
+                };
             }
         }
 
@@ -129,7 +149,13 @@ public static class RunHistoryService
             byId[entry.RequestId] = entry;
         }
 
-        return byId.Values.OrderByDescending(e => e.SortKey).ToList();
+        // Deleted via History & Logs' Delete feature (RunDeletionService) - excluded
+        // here rather than just not re-adding them, since a ReconstructedFromLog
+        // entry (or any entry whose log lines still fall within the 2-day
+        // reconstruction window above) would otherwise silently reappear even after
+        // its files/DB rows were genuinely removed.
+        var deletedIds = RunDeletionService.LoadDeletedIds(triggerFolder);
+        return byId.Values.Where(e => !deletedIds.Contains(e.RequestId)).OrderByDescending(e => e.SortKey).ToList();
     }
 
     private static IEnumerable<RunHistoryEntry> ReconstructFromLogs(string logFolder, ICollection<string> knownIds)

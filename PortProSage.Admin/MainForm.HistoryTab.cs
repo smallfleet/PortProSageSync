@@ -32,6 +32,10 @@ public partial class MainForm
     // only when Refresh is clicked or a run genuinely finishes.
     private readonly Label _historyLastRefreshedLabel = new() { AutoSize = true, ForeColor = SystemColors.GrayText };
 
+    // One-way toggle (see BuildResultsTab) - reset to unchecked on every refresh
+    // by RefreshHistoryList, since a rebuilt grid's rows always start unchecked too.
+    private readonly CheckBox _historySelectAllCheckbox = new() { Text = "Select all", AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
+
     private TabPage BuildResultsTab()
     {
         var page = new TabPage("History && Logs");
@@ -44,6 +48,62 @@ public partial class MainForm
         var refreshBar = CreateActionButtonBar(refreshButton, DockStyle.Top, barHeight: 40);
         _historyLastRefreshedLabel.Location = new Point(refreshButton.Right + 16, (refreshBar.Height - _historyLastRefreshedLabel.Height) / 2);
         refreshBar.Controls.Add(_historyLastRefreshedLabel);
+
+        // Top-right of the grid's own bar (Anchor, not a fixed coordinate, so it
+        // stays pinned to the right edge as the window is resized - same pattern
+        // as the top bar's Help button in MainForm.cs).
+        var deleteSelectedButton = new Button
+        {
+            Text = "Delete Selected",
+            Width = 130,
+            Height = 30,
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand,
+            BackColor = Color.FromArgb(196, 43, 43),
+            ForeColor = Color.White,
+            Anchor = AnchorStyles.Top | AnchorStyles.Right
+        };
+        deleteSelectedButton.FlatAppearance.BorderSize = 0;
+        deleteSelectedButton.Click += (_, _) => DeleteSelectedHistoryRows();
+
+        // Sits immediately left of Delete Selected - a one-way toggle (checks/
+        // unchecks every row's Select cell), not a tri-state box that reflects
+        // "are all rows currently checked" - simplest thing that actually answers
+        // "select every row so I can delete them all at once."
+        _historySelectAllCheckbox.CheckedChanged += (_, _) =>
+        {
+            foreach (DataGridViewRow row in _historyGrid.Rows)
+            {
+                row.Cells["Select"].Value = _historySelectAllCheckbox.Checked;
+            }
+            _historyGrid.EndEdit(); // commits the value if a Select cell is mid-edit when this fires
+        };
+
+        void RepositionHistoryActionControls()
+        {
+            deleteSelectedButton.Location = new Point(refreshBar.Width - deleteSelectedButton.Width - 12, (refreshBar.Height - deleteSelectedButton.Height) / 2);
+            _historySelectAllCheckbox.Location = new Point(deleteSelectedButton.Left - _historySelectAllCheckbox.Width - 16, (refreshBar.Height - _historySelectAllCheckbox.Height) / 2);
+        }
+        refreshBar.SizeChanged += (_, _) => RepositionHistoryActionControls();
+        RepositionHistoryActionControls();
+        refreshBar.Controls.Add(deleteSelectedButton);
+        refreshBar.Controls.Add(_historySelectAllCheckbox);
+
+        // Single click toggles the checkbox immediately, instead of needing a
+        // second click/focus change to commit the edit - standard DataGridView
+        // checkbox-column gotcha.
+        _historyGrid.CurrentCellDirtyStateChanged += (_, _) =>
+        {
+            if (_historyGrid.IsCurrentCellDirty && _historyGrid.CurrentCell is DataGridViewCheckBoxCell)
+            {
+                _historyGrid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+            }
+        };
+        _historyGrid.CellContentClick += (_, e) =>
+        {
+            if (e.RowIndex < 0) return;
+            if (_historyGrid.Columns[e.ColumnIndex].Name == "Delete") DeleteSingleHistoryRow(e.RowIndex);
+        };
 
         // Fixed height, not a resizable SplitContainer - deterministically
         // shows exactly 15 rows, computed from the fixed row/header heights
@@ -61,7 +121,7 @@ public partial class MainForm
         var summaryPage = new TabPage("Summary");
         summaryPage.Controls.Add(_historySummaryText);
 
-        var outcomesPage = new TabPage("Per-invoice outcomes");
+        var outcomesPage = new TabPage("Validate Invoice Extracted");
         outcomesPage.Controls.Add(_historyOutcomesGrid);
 
         var warningsPage = new TabPage("Warnings / Validation");
@@ -133,6 +193,11 @@ public partial class MainForm
         // sized to fit a small number, not stretched for no reason.
         _historyGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
 
+        // Select (multi-row delete) and Delete (single-row delete) - the only two
+        // interactive columns, so the grid itself is left NOT read-only (see below)
+        // and every other column gets ReadOnly set individually instead.
+        _historyGrid.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Select", HeaderText = "", Width = 30 });
+
         _historyGrid.Columns.Add("Seq", "#");
         _historyGrid.Columns.Add("RequestId", "Request ID");
         _historyGrid.Columns.Add("Source", "Source");
@@ -179,6 +244,23 @@ public partial class MainForm
         // Status is the last column, so it stretching doesn't disrupt the visual
         // flow of the numeric/date columns in the middle of the table.
         _historyGrid.Columns["Status"].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+
+        // Last column, after Status - one click removes just this row (see
+        // HistoryGrid_CellContentClick). UseColumnTextForButtonValue means every
+        // cell shows "Delete" without needing a per-row value in Rows.Add.
+        _historyGrid.Columns.Add(new DataGridViewButtonColumn
+        {
+            Name = "Delete", HeaderText = "", Text = "Delete", UseColumnTextForButtonValue = true, Width = 60
+        });
+
+        // The grid itself is NOT read-only (needed for Select/Delete to respond to
+        // clicks at all) - every other column is individually read-only instead, so
+        // nothing but those two columns is actually editable/clickable.
+        _historyGrid.ReadOnly = false;
+        foreach (DataGridViewColumn column in _historyGrid.Columns)
+        {
+            if (column.Name is not ("Select" or "Delete")) column.ReadOnly = true;
+        }
     }
 
     private void SetupOutcomesGrid()
@@ -281,6 +363,7 @@ public partial class MainForm
 
         _historyEntries = RunHistoryService.ListRuns(_triggerFolder, _processedTriggerFolder, _logFolder, _manualRunFolder, _autoPollFolder);
         _historyGrid.Rows.Clear();
+        _historySelectAllCheckbox.Checked = false; // a rebuilt grid's rows always start unchecked too
         RefreshPreviousRunSection();
 
         // A short, stable reference number for each run, cheaper to say/type than
@@ -413,6 +496,7 @@ public partial class MainForm
                     : entry.Result.InvoicesNotFound.ToString();
 
             var rowIndex = _historyGrid.Rows.Add(
+                false, // Select checkbox - always starts unchecked on refresh
                 seqByRequestId.GetValueOrDefault(entry.RequestId, 0),
                 entry.RequestId,
                 source,
@@ -429,7 +513,8 @@ public partial class MainForm
                 entry.Result?.InvoicesSkippedBeforeCutoff.ToString() ?? "",
                 entry.Result?.InvoicesFailedValidation.ToString() ?? "",
                 entry.Result?.InvoicesFailedImport.ToString() ?? "",
-                status);
+                status,
+                (object?)null); // Delete button - UseColumnTextForButtonValue supplies the "Delete" text
             _historyGrid.Rows[rowIndex].Tag = entry;
         }
 
@@ -439,7 +524,7 @@ public partial class MainForm
             {
                 if (row.Cells["RequestId"].Value?.ToString() == selectedId)
                 {
-                    _historyGrid.CurrentCell = row.Cells[0];
+                    _historyGrid.CurrentCell = row.Cells["Seq"];
                     row.Selected = true;
                     break;
                 }
@@ -456,6 +541,103 @@ public partial class MainForm
         ShowSelectedHistoryEntry();
     }
 
+    /// <summary>A run still actively in progress can't be deleted - its files are
+    /// being actively written to by the process handling it, and hiding it from
+    /// History &amp; Logs while it's still running (or just after) would be actively
+    /// misleading, not a cleanup. Everything else (completed, interrupted, orphaned
+    /// pending) is fair game.</summary>
+    private static bool IsDeletable(RunHistoryEntry entry, out string blockedReason)
+    {
+        if (entry.IsPending && entry.IsLiveProcess)
+        {
+            blockedReason = "it's still running - stop it first.";
+            return false;
+        }
+        blockedReason = "";
+        return true;
+    }
+
+    private void DeleteSingleHistoryRow(int rowIndex)
+    {
+        if (_historyGrid.Rows[rowIndex].Tag is not RunHistoryEntry entry) return;
+
+        if (!IsDeletable(entry, out var blockedReason))
+        {
+            MessageBox.Show(this, $"Can't delete Request ID {entry.RequestId} - {blockedReason}", "Still running",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var confirm = MessageBox.Show(this,
+            $"Delete this run from History & Logs?\n\n" +
+            $"Request ID: {entry.RequestId}\n" +
+            $"Mode: {_historyGrid.Rows[rowIndex].Cells["Mode"].Value}\n" +
+            $"Started: {_historyGrid.Rows[rowIndex].Cells["Started"].Value}\n\n" +
+            "This permanently removes its request/result files, any failed-transaction report it generated, " +
+            "and its imported-invoice tracking rows in the local database (so those invoices are treated as " +
+            "brand new again on the next real run).\n\n" +
+            "This cannot be undone. Continue?",
+            "Confirm delete", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (confirm != DialogResult.Yes) return;
+
+        var result = RunDeletionService.DeleteEntries(_triggerFolder, _syncFailedTransactionsFolder.Text, _syncStateDatabasePath.Text, _logFolder, new[] { entry });
+        RefreshHistoryList();
+        ShowDeleteResultMessage(1, result);
+    }
+
+    private void DeleteSelectedHistoryRows()
+    {
+        var checkedRows = _historyGrid.Rows.Cast<DataGridViewRow>()
+            .Where(r => r.Cells["Select"].Value is true)
+            .ToList();
+
+        if (checkedRows.Count == 0)
+        {
+            MessageBox.Show(this, "No rows are checked - tick the checkbox on each row you want to delete first.",
+                "Nothing selected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var entries = checkedRows.Select(r => r.Tag as RunHistoryEntry).Where(e => e is not null).Cast<RunHistoryEntry>().ToList();
+
+        var blocked = entries.Where(e => !IsDeletable(e, out _)).ToList();
+        var deletable = entries.Except(blocked).ToList();
+
+        if (deletable.Count == 0)
+        {
+            MessageBox.Show(this, "None of the checked rows can be deleted - they're all still running. Stop them first.",
+                "Still running", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var skippedNote = blocked.Count > 0
+            ? $"\n\n{blocked.Count} of the checked row(s) are still running and will be skipped."
+            : "";
+
+        var confirm = MessageBox.Show(this,
+            $"Delete {deletable.Count} run(s) from History & Logs?{skippedNote}\n\n" +
+            "This permanently removes each one's request/result files, any failed-transaction report it " +
+            "generated, and its imported-invoice tracking rows in the local database (so those invoices are " +
+            "treated as brand new again on the next real run).\n\n" +
+            "This cannot be undone. Continue?",
+            "Confirm delete", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (confirm != DialogResult.Yes) return;
+
+        var result = RunDeletionService.DeleteEntries(_triggerFolder, _syncFailedTransactionsFolder.Text, _syncStateDatabasePath.Text, _logFolder, deletable);
+        RefreshHistoryList();
+        ShowDeleteResultMessage(deletable.Count, result);
+    }
+
+    private void ShowDeleteResultMessage(int runCount, RunDeletionService.DeleteResult result)
+    {
+        MessageBox.Show(this,
+            $"Deleted {runCount} run(s):\n\n" +
+            $"Files removed: {result.FilesDeleted}\n" +
+            $"Failed-transaction reports removed: {result.FailedTransactionReportsDeleted}\n" +
+            $"Imported-invoice tracking rows removed: {result.ImportedInvoiceRowsDeleted}",
+            "Deleted", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
     /// <summary>Selects the most recent (topmost) row - the grid is always ordered
     /// newest-first (see RunHistoryService.ListRuns' OrderByDescending). Used
     /// whenever the view should default to the latest activity instead of
@@ -467,7 +649,7 @@ public partial class MainForm
     {
         if (_historyGrid.Rows.Count == 0) return;
         _historyGrid.ClearSelection();
-        _historyGrid.CurrentCell = _historyGrid.Rows[0].Cells[0];
+        _historyGrid.CurrentCell = _historyGrid.Rows[0].Cells["Seq"];
         _historyGrid.Rows[0].Selected = true;
         ShowSelectedHistoryEntry();
     }
