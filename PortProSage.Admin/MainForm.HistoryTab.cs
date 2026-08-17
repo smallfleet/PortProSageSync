@@ -345,11 +345,15 @@ public partial class MainForm
             // that plainly in Mode/Status instead of the usual FilterType-derived
             // text, which would otherwise misleadingly read as a real Continue/
             // LastChangedDate run that just happened to fetch 0 invoices.
-            var mode = entry.Result?.Skipped == true
+            // Appended whenever this run had "Override Already Imported" checked, so a
+            // re-processed run is never mistaken for an ordinary one just by glancing
+            // at the Mode column.
+            var overrideSuffix = entry.Request?.OverrideAlreadyImportedCheck == true ? " (Override)" : "";
+            var mode = (entry.Result?.Skipped == true
                 ? "Skipped - Process Running"
                 : entry.Request is not null
                     ? (entry.Request.UseWatermark ? "Continue" : FormatModeText(entry.Request.FilterType, entry.Result))
-                    : "(auto-poll)";
+                    : "(auto-poll)") + overrideSuffix;
             var source = entry.IsAutomaticPoll || entry.ReconstructedFromLog ? "Automatic Service"
                 : entry.IsManual ? "Manual Run"
                 : "Trigger file";
@@ -697,7 +701,8 @@ public partial class MainForm
         if (entry.Request is not null)
         {
             lines.Add($"Requested by: {entry.Request.RequestedBy}");
-            lines.Add($"Filter type: {entry.Request.FilterType}, UseWatermark: {entry.Request.UseWatermark}");
+            var overrideNote = entry.Request.OverrideAlreadyImportedCheck ? " *** OVERRIDE ALREADY IMPORTED CHECK WAS ON ***" : "";
+            lines.Add($"Filter type: {entry.Request.FilterType}, UseWatermark: {entry.Request.UseWatermark}{overrideNote}");
             if (entry.Request.From is not null || entry.Request.To is not null)
                 lines.Add($"From: {entry.Request.From:g}   To: {entry.Request.To:g}");
             if (entry.Request.StartInvoiceNumber is not null || entry.Request.EndInvoiceNumber is not null)

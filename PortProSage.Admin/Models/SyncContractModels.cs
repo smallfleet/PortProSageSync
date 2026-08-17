@@ -40,6 +40,11 @@ public class SyncRequest
     public bool UseWatermark { get; set; }
     public int? MaxInvoicesToProcess { get; set; }
 
+    /// <summary>Mirrors Core's SyncRequest.OverrideAlreadyImportedCheck - see that
+    /// doc comment. Set from Manual Run's checkbox (MainForm.RunTab.cs), which is
+    /// never persisted and always resets to unchecked.</summary>
+    public bool OverrideAlreadyImportedCheck { get; set; }
+
     public DateTimeOffset RequestedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public string RequestedBy { get; set; } = "PortProSage.Admin";
 }

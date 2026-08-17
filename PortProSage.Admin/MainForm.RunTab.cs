@@ -14,17 +14,19 @@ public partial class MainForm
     private string _autoPollFolder = "";
     private Process? _manualRunProcess;
 
-    // Fractions of the primary screen's width, not fixed pixel guesses - falls back
+    // Fraction of the primary screen's width, not a fixed pixel guess - falls back
     // to 1920px if Screen.PrimaryScreen is ever unavailable (e.g. headless test run).
+    // The Invoice number list field is NOT sized this way (see UpdateInvoiceNumberListWidth) -
+    // it tracks the actual window's width live, not a one-time screen-based guess.
     private static readonly int RunModeWidth = (int)((Screen.PrimaryScreen?.Bounds.Width ?? 1920) * 0.25);
-    private static readonly int RunInvoiceNumberListWidth = (int)((Screen.PrimaryScreen?.Bounds.Width ?? 1920) * 0.75);
 
     private ComboBox _runMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = RunModeWidth };
     private DateTimePicker _runFrom = new() { Width = 220 };
     private DateTimePicker _runTo = new() { Width = 220 };
     private TextBox _runStartInvoice = new() { Width = 160 };
     private TextBox _runEndInvoice = new() { Width = 160 };
-    private TextBox _runInvoiceNumberList = new() { Width = RunInvoiceNumberListWidth };
+    private TextBox _runInvoiceNumberList = new() { Width = 400 }; // real width set live by UpdateInvoiceNumberListWidth
+    private CheckBox _runOverrideAlreadyImported = new() { Text = "Override \"Already Imported\" check for this run", AutoSize = true };
     private NumericUpDown _runMaxInvoices = new() { Minimum = 0, Maximum = 100000, Width = 120 };
     private Label _runDryRunStatus = new() { AutoSize = true };
     private Button _manualRunButton = new() { Text = "Manual Run", Width = 140, Height = 36 };
@@ -71,6 +73,20 @@ public partial class MainForm
         "Use \"Stop Manual Run\" to interrupt it if it's taking too long or picked up more than intended - it sends " +
         "a graceful shutdown signal first (same as Ctrl+C, so already-imported invoices and the last-processed " +
         "anchor stay correctly recorded up to that point), falling back to a hard stop only if it doesn't respond.";
+
+    private const string OverrideAlreadyImportedHelpText =
+        "Normally, an invoice this app already recorded as imported is silently skipped on every later run - that's " +
+        "what stops the same invoice from being posted to Sage 50 twice. Checking this box turns that skip off for " +
+        "THIS RUN ONLY: a previously-imported invoice is re-validated and re-posted instead.\n\n" +
+        "Only available for Invoice date, Invoice number range, and Invoice number list modes - Continue and Last " +
+        "changed date drive the watermark and are meant to process only genuinely new/changed invoices, so this is " +
+        "disabled (and unchecked) for those.\n\n" +
+        "This is NEVER saved anywhere - it always starts unchecked when the app opens, and resets back to unchecked " +
+        "itself as soon as this run finishes or is stopped, so it can't silently carry forward into an unrelated " +
+        "later run.\n\n" +
+        "⚠ If the invoice is genuinely still in Sage 50, re-posting it creates a real duplicate - this does not " +
+        "remove or replace the original. Only use this after confirming (in Sage 50 itself) that the invoice(s) " +
+        "covered by the selected mode actually need to go in again.";
 
     private TabPage BuildRunTab()
     {
@@ -152,6 +168,8 @@ public partial class MainForm
             "the list endpoint doesn't return it.\n\n" +
             "Example: RSRE_000284, RSRE_000301, RSRE_000455",
             stretchInput: false);
+        AddCheckRow(grid, _runOverrideAlreadyImported, "(not saved anywhere - always resets to unchecked)",
+            "SyncRequest.OverrideAlreadyImportedCheck (one-time, this run only)", OverrideAlreadyImportedHelpText);
         AddRow(grid, "Max invoices to process (0 = no limit)", _runMaxInvoices, "(request)", "SyncRequest.MaxInvoicesToProcess",
             "Caps how many eligible (amount > 0) invoices this run actually processes, on top of whatever Mode " +
             "selects - once this many have been handled, the run stops even if more would otherwise qualify. " +
@@ -214,6 +232,13 @@ public partial class MainForm
         page.Controls.Add(fieldsScroll);
         page.Controls.Add(note);
         page.Controls.Add(buttonPanel);
+
+        // Tracks 75% of the actual window width live, not a one-time screen-based
+        // guess (RunModeWidth's approach) - Resize fires on every window resize
+        // (maximizing, dragging an edge, DPI change), and the up-front call sizes it
+        // correctly the first time too, before the window is ever resized.
+        Resize += (_, _) => UpdateInvoiceNumberListWidth();
+        UpdateInvoiceNumberListWidth();
 
         UpdateRunModeFieldStates();
         LoadManualRunFields(); // restores whatever was last Saved (or last run) - not tied to RefreshAllTabsFromConfig,
@@ -282,6 +307,15 @@ public partial class MainForm
         }
     }
 
+    /// <summary>Keeps the Invoice number list field at 75% of the actual window's
+    /// current width, live - not the fixed, screen-size-based guess RunModeWidth
+    /// uses for the Mode dropdown, which never changes after the window opens.
+    /// Called once up front (BuildRunTab) and again on every Resize.</summary>
+    private void UpdateInvoiceNumberListWidth()
+    {
+        _runInvoiceNumberList.Width = Math.Max(200, (int)(ClientSize.Width * 0.75));
+    }
+
     private void UpdateRunModeFieldStates()
     {
         var mode = _runMode.SelectedIndex;
@@ -290,6 +324,13 @@ public partial class MainForm
         _runStartInvoice.Enabled = mode == 3; // Invoice number range
         _runEndInvoice.Enabled = mode == 3;
         _runInvoiceNumberList.Enabled = mode == 4; // Invoice number list
+
+        // Invoice date, Invoice number range, Invoice number list only - NOT Continue
+        // or Last changed date, which drive the watermark and are meant to process
+        // only genuinely new/changed invoices (see OverrideAlreadyImportedHelpText).
+        var overrideApplicable = mode == 0 || mode == 3 || mode == 4;
+        _runOverrideAlreadyImported.Enabled = overrideApplicable;
+        if (!overrideApplicable) _runOverrideAlreadyImported.Checked = false;
     }
 
     /// <summary>Adds the read-only "Previous Run" rows to the given grid - called
@@ -382,9 +423,10 @@ public partial class MainForm
         else
         {
             var request = entry.Request;
-            modeText = request is null
+            modeText = (request is null
                 ? "(automatic poll - continue from where we left off)"
-                : request.UseWatermark ? "Continue (from where we left off)" : request.FilterType.ToString();
+                : request.UseWatermark ? "Continue (from where we left off)" : request.FilterType.ToString())
+                + (request?.OverrideAlreadyImportedCheck == true ? " (Override)" : "");
             // The actual resolved invoice-date window (see SyncResult.EffectiveFromUtc's
             // doc comment), not the persisted watermark - the watermark only moves for a
             // Continue run and is otherwise stale/unrelated to what an explicit-range run
@@ -476,6 +518,10 @@ public partial class MainForm
     private void ResetRunFormToDefaults()
     {
         _runMaxInvoices.Value = 0;
+        // One-time override, never persisted (see OverrideAlreadyImportedHelpText) -
+        // reset the instant the run it applied to is done, same reasoning as Max
+        // invoices above, so it can't silently carry forward into the next run.
+        _runOverrideAlreadyImported.Checked = false;
     }
 
     private SyncRequest BuildRequestFromForm()
@@ -527,6 +573,11 @@ public partial class MainForm
             request.MaxInvoicesToProcess = (int)_runMaxInvoices.Value;
         }
 
+        // Only ever true for the 3 modes UpdateRunModeFieldStates() allows it for -
+        // the checkbox is disabled and force-unchecked for Continue/Last changed date,
+        // so reading .Checked here is already accurate without re-checking mode.
+        request.OverrideAlreadyImportedCheck = _runOverrideAlreadyImported.Checked;
+
         return request;
     }
 
@@ -548,6 +599,12 @@ public partial class MainForm
             $"MODE: {_runMode.SelectedItem?.ToString()?.ToUpperInvariant()}",
             ""
         };
+
+        if (request.OverrideAlreadyImportedCheck)
+        {
+            lines.Add("*** OVERRIDE \"ALREADY IMPORTED\" CHECK IS ON - previously-imported invoice(s) will be re-processed. ***");
+            lines.Add("");
+        }
 
         if (request.UseWatermark)
         {
@@ -639,6 +696,20 @@ public partial class MainForm
         {
             MessageBox.Show(this, rangeError, "Invalid range", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
+        }
+
+        // A separate, dedicated alert - not just a line in the main confirmation
+        // dialog below - because re-processing an invoice that's genuinely still in
+        // Sage 50 creates a real duplicate transaction, not just a harmless re-check.
+        if (request.OverrideAlreadyImportedCheck)
+        {
+            var overrideConfirm = MessageBox.Show(this,
+                "The invoice number(s) from the selected Mode should already be removed from Sage 50 before " +
+                "running with \"Override Already Imported\" checked - otherwise this WILL create duplicate " +
+                "invoices in Sage 50.\n\nAre you sure you want to proceed?",
+                "Confirm override of Already Imported check", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+            if (overrideConfirm != DialogResult.Yes) return;
         }
 
         var requestPathPreview = Path.Combine(_manualRunFolder, $"{request.RequestId}.request.json");

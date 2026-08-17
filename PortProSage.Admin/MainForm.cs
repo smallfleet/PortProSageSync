@@ -26,7 +26,7 @@ public partial class MainForm : Form
     ///                 changes (e.g. what ships in the next production installer).
     ///   ZZ (build)  - any other new exe, including small dev-test iterations.
     /// </summary>
-    public const string AppVersion = "2.02.22";
+    public const string AppVersion = "2.05.22";
 
     private readonly ToolStripStatusLabel _sourceLabel = new() { Text = "Click any field to see where it's stored." };
     private readonly TextBox _serviceFolderBox = new() { Width = 480 };
@@ -63,7 +63,8 @@ public partial class MainForm : Form
         _tabs.TabPages.Add(BuildPortProTab());
         _tabs.TabPages.Add(BuildSage50Tab());
         _tabs.TabPages.Add(BuildSettingsTab()); // "Settings" - Email + Folder Locations
-        _tabs.TabPages.Add(BuildAboutTab()); // Last tab - company/contact info
+        _tabs.TabPages.Add(BuildAboutTab()); // company/contact info
+        _tabs.TabPages.Add(BuildLicensingAboutTab()); // Last tab - new "Licensing & About" design preview, kept separate from About (see MainForm.LicensingAboutTab.cs) until the real licensing backend exists
 
         Controls.Add(_tabs);
         Controls.Add(topBar);
