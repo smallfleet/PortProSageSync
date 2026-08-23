@@ -125,6 +125,20 @@ public partial class MainForm
             if (_historyGrid.Columns[e.ColumnIndex].Name == "Delete") DeleteSingleHistoryRow(e.RowIndex);
         };
 
+        // Spacebar toggles the focused row's Select checkbox regardless of which
+        // (read-only) column actually has focus - not just when the narrow Select
+        // column itself is the current cell, which is DataGridView's own default.
+        _historyGrid.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Space) return;
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            var cell = _historyGrid.CurrentRow?.Cells["Select"];
+            if (cell is not { ReadOnly: false }) return;
+            cell.Value = cell.Value is not true;
+            if (_historyGrid.IsCurrentCellInEditMode) _historyGrid.EndEdit();
+        };
+
         // Fixed height, not a resizable SplitContainer - deterministically
         // shows exactly 15 rows, computed from the fixed row/header heights
         // pinned in SetupHistoryGrid. A Panel's Height is a plain absolute

@@ -231,6 +231,20 @@ public partial class MainForm
             }
         };
 
+        // Spacebar toggles the focused row's Select checkbox regardless of which
+        // (read-only) column actually has focus - not just when the narrow Select
+        // column itself is the current cell, which is DataGridView's own default.
+        _customerRefreshGrid.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Space) return;
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            var cell = _customerRefreshGrid.CurrentRow?.Cells["Select"];
+            if (cell is not { ReadOnly: false }) return;
+            cell.Value = cell.Value is not true;
+            if (_customerRefreshGrid.IsCurrentCellInEditMode) _customerRefreshGrid.EndEdit();
+        };
+
         var gridPanel = new Panel { Dock = DockStyle.Fill };
         gridPanel.Controls.Add(_customerRefreshGrid);
         gridPanel.Controls.Add(_customerRefreshEmptyLabel); // added after the grid -> renders on top of it
