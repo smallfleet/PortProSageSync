@@ -68,6 +68,8 @@ public class PortProClient
                 inv.Id = load.Id;
                 inv.CreatedAt = load.CreatedAt;
                 inv.UpdatedAt = load.UpdatedAt;
+                inv.PaymentTermsNetDays = load.PaymentTerms;
+                inv.PaymentTermsMethod = load.PaymentTermsMethod;
                 return inv;
             }));
 
@@ -148,6 +150,68 @@ public class PortProClient
         return true;
     }
 
+    /// <summary>Fetches one customer's full profile by PortPro's customer id (the
+    /// same id available as invoice.Caller.Id) - confirmed live 2026-08-21 via
+    /// GET {CustomerEndpoint}/{id}. Used when auto-creating a Sage 50 customer, so
+    /// the new record gets the real address/email/contact/terms PortPro has,
+    /// rather than just the bare name the invoice's own "caller" object carries.</summary>
+    public async Task<PortProCustomer?> GetCustomerAsync(string customerId, CancellationToken ct)
+    {
+        var url = $"{_settings.BaseUrl}{_settings.CustomerEndpoint}/{Uri.EscapeDataString(customerId)}";
+        using var response = await SendWithAuthAsync(HttpMethod.Get, url, ct);
+        if ((int)response.StatusCode == 404) return null;
+        response.EnsureSuccessStatusCode();
+
+        var wrapper = await response.Content.ReadFromJsonAsync<PortProCustomerSingleResponse>(cancellationToken: ct);
+        return wrapper?.Data;
+    }
+
+    /// <summary>Fetches every customer PortPro has - 223 total on this account as
+    /// of 2026-08-24, and the list endpoint returns the exact same full-profile
+    /// shape as the single-customer fetch (94 fields either way), so this alone is
+    /// enough to drive change detection (CustomerSyncService compares each
+    /// customer's updatedAt against SyncStateRepository's last-synced record)
+    /// without a separate per-customer detail call.
+    ///
+    /// CONFIRMED LIVE 2026-08-24 (root-causing "why are we only fetching 50
+    /// customers?"): unlike GET /invoices, which honors whatever "limit" is
+    /// requested (confirmed returns exactly 100 for limit=100), GET /customer
+    /// silently CAPS its response at 50 regardless of the requested limit - a
+    /// request for limit=100 returns 50, and skip=50/skip=100 with limit=100 each
+    /// also return their own 50, not the requested 100. The previous version of
+    /// this loop advanced skip by _settings.PageSize (the REQUESTED size) and
+    /// stopped as soon as a page returned fewer than that - which is EVERY page
+    /// against this endpoint, so it silently stopped after the very first 50 and
+    /// never even attempted a second page. This had been true since customer sync
+    /// was first added, so every sweep (incremental and Customer Refresh) had only
+    /// ever considered the first ~50 of this account's 223 customers, alphabetically
+    /// or whatever order the API returns - the other ~173 were never even looked
+    /// at. Fixed by advancing skip by the ACTUAL count returned and stopping only
+    /// on a genuinely empty page, which works correctly regardless of what page
+    /// size the server actually honors for a given endpoint.</summary>
+    public async Task<List<PortProCustomer>> GetAllCustomersAsync(CancellationToken ct)
+    {
+        var all = new List<PortProCustomer>();
+        var skip = 0;
+
+        while (true)
+        {
+            var url = $"{_settings.BaseUrl}{_settings.CustomerEndpoint}?skip={skip}&limit={_settings.PageSize}";
+            using var response = await SendWithAuthAsync(HttpMethod.Get, url, ct);
+            response.EnsureSuccessStatusCode();
+
+            var body = await response.Content.ReadFromJsonAsync<PortProCustomerListResponse>(cancellationToken: ct)
+                ?? new PortProCustomerListResponse();
+            if (body.Data.Count == 0) break; // genuinely empty page - done
+
+            all.AddRange(body.Data);
+            skip += body.Data.Count; // advance by what was ACTUALLY returned, not the requested page size
+        }
+
+        _logger.LogInformation("Fetched {Count} customer(s) from PortPro", all.Count);
+        return all;
+    }
+
     /// <summary>
     /// Fetches a single invoice by its PortPro reference number - useful for
     /// re-checking an invoice's current state right before import, in case it
@@ -195,7 +259,9 @@ public class PortProClient
             Caller = first.Caller,
             CallerName = first.CallerName,
             Pricing = chargeSets.SelectMany(c => c.Pricing).ToList(),
-            ReferenceFields = first.ReferenceFields
+            ReferenceFields = first.ReferenceFields,
+            PaymentTermsNetDays = envelope.PaymentTerms,
+            PaymentTermsMethod = envelope.PaymentTermsMethod
         };
     }
 
@@ -276,7 +342,13 @@ public class PortProClient
         var parts = new List<string>
         {
             $"skip={skip}",
-            $"limit={_settings.PageSize}"
+            $"limit={_settings.PageSize}",
+            // Requested 2026-08-22 for every "retrieve all invoices" list call
+            // (this method, not the single-invoice GetInvoiceAsync/GetCustomerAsync
+            // paths) - PortPro's documented meaning wasn't independently verified
+            // here, only that it should be sent on every page of every list-based
+            // filter type.
+            "allInvoices=true"
         };
 
         switch (request.FilterType)

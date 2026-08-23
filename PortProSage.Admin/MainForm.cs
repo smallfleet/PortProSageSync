@@ -26,7 +26,7 @@ public partial class MainForm : Form
     ///                 changes (e.g. what ships in the next production installer).
     ///   ZZ (build)  - any other new exe, including small dev-test iterations.
     /// </summary>
-    public const string AppVersion = "2.07.22";
+    public const string AppVersion = "2.13.4";
 
     private readonly ToolStripStatusLabel _sourceLabel = new() { Text = "Click any field to see where it's stored." };
     private readonly TextBox _serviceFolderBox = new() { Width = 480 };
@@ -43,6 +43,16 @@ public partial class MainForm : Form
     private string? _pendingProcessedFolder;
     private readonly System.Windows.Forms.Timer _resultPollTimer = new() { Interval = 2000 };
 
+    /// <summary>What kind of run _pendingRequestId is currently tracking - all
+    /// three share the exact same spawn-process/poll-result.json mechanism
+    /// (StartManualRun, StartCustomerRefreshScan, StartCustomerRefreshExecute),
+    /// so ResultPollTimer_Tick (MainForm.HistoryTab.cs) reads this once the
+    /// result is final to decide what to do with it: show the ordinary
+    /// invoice-worded completion pop-up, populate the Customer Refresh grid from
+    /// the scan's candidates, or show the customer-worded completion pop-up.</summary>
+    private enum PendingRunKind { None, ManualRun, CustomerRefreshScan, CustomerRefreshExecute }
+    private PendingRunKind _pendingRunKind = PendingRunKind.None;
+
     public MainForm()
     {
         Text = $"PortProSage Admin - v{AppVersion}";
@@ -58,13 +68,13 @@ public partial class MainForm : Form
         _tabs = new TabControl { Dock = DockStyle.Fill };
         _tabs.TabPages.Add(BuildRunTab()); // "Manual Run"
         _tabs.TabPages.Add(BuildSyncTab()); // "Automatic Sync" - includes the Start/Stop Automatic Service controls
+        _tabs.TabPages.Add(BuildCustomerRefreshTab()); // "Customer Refresh" - scan/select/run, on-demand customer create+update
         _tabs.TabPages.Add(BuildWatermarkTab());
         _tabs.TabPages.Add(BuildResultsTab());
         _tabs.TabPages.Add(BuildPortProTab());
         _tabs.TabPages.Add(BuildSage50Tab());
         _tabs.TabPages.Add(BuildSettingsTab()); // "Settings" - Email + Folder Locations
-        _tabs.TabPages.Add(BuildAboutTab()); // company/contact info
-        _tabs.TabPages.Add(BuildLicensingAboutTab()); // Last tab - new "Licensing & About" design preview, kept separate from About (see MainForm.LicensingAboutTab.cs) until the real licensing backend exists
+        _tabs.TabPages.Add(BuildLicensingAboutTab()); // Last tab - company/contact/license info; replaces the old plain About tab
 
         Controls.Add(_tabs);
         Controls.Add(topBar);
@@ -122,9 +132,8 @@ public partial class MainForm : Form
         // rather than leaving a growing gap.
         const int readmeWidth = 70;
         const string readmeHelpText =
-            "Opens USER_GUIDE.md - the full walkthrough of every tab and field in this app, with worked examples " +
-            "and step-by-step recipes for common tasks - in whatever application is associated with .md files on " +
-            "this computer (Notepad, VS Code, a browser, etc).\n\n" +
+            "Opens USER_GUIDE.html - the full walkthrough of every tab and field in this app, with worked examples " +
+            "and step-by-step recipes for common tasks - in your default web browser.\n\n" +
             "Looked for next to this app, next to the configured Service folder, and at the repo root on this " +
             "development machine - if none of those have it, you'll see a message saying so instead of it just " +
             "silently doing nothing.\n\n" +
@@ -183,32 +192,34 @@ public partial class MainForm : Form
         return panel;
     }
 
-    /// <summary>Finds USER_GUIDE.md next to this app, next to the configured Service
-    /// folder (both the folder itself and walking up to a typical dev repo root),
-    /// or at the hardcoded dev-machine repo path - covers both a normal dev
+    /// <summary>Finds USER_GUIDE.html next to this app, next to the configured
+    /// Service folder (both the folder itself and walking up to a typical dev repo
+    /// root), or at the hardcoded dev-machine repo path - covers both a normal dev
     /// checkout and a production install, as long as Install-Production.ps1 copied
-    /// the docs alongside the published Service (see DEPLOYMENT.md). Same search
-    /// pattern as the old README-opening logic this replaced - see git history if
-    /// the technical README.md needs to be opened this same way again.</summary>
+    /// the docs alongside the published Service (see DEPLOYMENT.md). The .html
+    /// version (not .md) is what the Help button opens - it's a self-contained,
+    /// branded page meant to open directly in a browser, not whatever arbitrary
+    /// app Windows happens to associate with .md files. USER_GUIDE.md still exists
+    /// alongside it as the plain-text source/reference.</summary>
     private void OpenUserGuide()
     {
-        var candidates = new List<string> { Path.Combine(AppContext.BaseDirectory, "USER_GUIDE.md") };
+        var candidates = new List<string> { Path.Combine(AppContext.BaseDirectory, "USER_GUIDE.html") };
 
         var serviceFolder = _serviceFolderBox.Text;
         if (!string.IsNullOrWhiteSpace(serviceFolder))
         {
-            candidates.Add(Path.Combine(serviceFolder, "USER_GUIDE.md"));
-            candidates.Add(Path.Combine(serviceFolder, "..", "USER_GUIDE.md"));
-            candidates.Add(Path.Combine(serviceFolder, "..", "..", "..", "..", "USER_GUIDE.md")); // typical dev ...\PortProSage.Service\bin\Debug\net48 depth -> repo root
+            candidates.Add(Path.Combine(serviceFolder, "USER_GUIDE.html"));
+            candidates.Add(Path.Combine(serviceFolder, "..", "USER_GUIDE.html"));
+            candidates.Add(Path.Combine(serviceFolder, "..", "..", "..", "..", "USER_GUIDE.html")); // typical dev ...\PortProSage.Service\bin\Debug\net48 depth -> repo root
         }
 
-        candidates.Add(@"C:\PortProSageSync\USER_GUIDE.md");
+        candidates.Add(@"C:\PortProSageSync\USER_GUIDE.html");
 
         var found = candidates.Select(Path.GetFullPath).FirstOrDefault(File.Exists);
         if (found is null)
         {
             MessageBox.Show(this,
-                "Could not find USER_GUIDE.md in any of the usual locations (next to this app, next to the " +
+                "Could not find USER_GUIDE.html in any of the usual locations (next to this app, next to the " +
                 "Service folder, or the repo root).",
                 "User Guide not found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
@@ -460,6 +471,72 @@ public partial class MainForm : Form
         _appSettings.Save();
         RefreshShowCommandWindowControls();
     }
+
+    // ---------------------------------------------------------------------
+    // Dry run - one setting (PortProSage:Sage50:DryRun), shown and editable on
+    // BOTH the Manual Run tab and the Sage 50 tab, same shared/immediate-save
+    // pattern as Show command window above. Confirmed live 2026-08-22: this used
+    // to be a read-only status label on Manual Run (mirroring whatever the Sage 50
+    // tab's checkbox said), which meant testing/toggling Dry Run for one run
+    // required navigating to the Sage 50 tab and clicking its own Save button -
+    // now it's the same live setting, editable from either place, in effect
+    // immediately either way (same as Cutoff Invoice Date/Show command window).
+    // ---------------------------------------------------------------------
+
+    private const string RunDryRunHelpText =
+        "When checked, this run only SIMULATES writes - nothing is actually created in Sage 50, the log just " +
+        "says what it would have done instead. This is the exact same setting as \"Dry run\" on the Sage 50 tab " +
+        "- checking or unchecking it here changes it there too (and vice versa), saved immediately either way, " +
+        "no separate Save button needed for this one field.\n\n" +
+        "Always test something unfamiliar (a new date range, an account mapping change) with this checked first, " +
+        "confirm the log/History & Logs looks right, then uncheck it for the real run.\n\n" +
+        "A Dry Run invoice is never marked as imported, so the exact same range run again for real afterward " +
+        "will genuinely process it, not skip it as already done.\n\n" +
+        "Checking this also sets \"Max invoices to process\" to 10 automatically - a full-range Dry Run isn't " +
+        "usually necessary just to sanity-check behavior, so this keeps a test run quick by default. Unchecking " +
+        "Dry Run resets Max invoices back to 0 (no limit), so a leftover test cap can't silently limit a real " +
+        "run. Change Max invoices by hand afterward if you need a different number for this particular test.";
+
+    private void WireDryRunControl(CheckBox box)
+    {
+        box.CheckedChanged += (_, _) => SaveDryRun(box);
+    }
+
+    private void RefreshDryRunControls()
+    {
+        if (_appSettings is null) return;
+
+        _suppressDryRunEvents = true;
+        try
+        {
+            var dryRun = _appSettings.GetBool("PortProSage.Sage50.DryRun");
+            _runDryRun.Checked = dryRun;
+            _sage50DryRun.Checked = dryRun;
+        }
+        finally
+        {
+            _suppressDryRunEvents = false;
+        }
+    }
+
+    private void SaveDryRun(CheckBox source)
+    {
+        if (_appSettings is null || _suppressDryRunEvents) return;
+
+        _appSettings.SetBool("PortProSage.Sage50.DryRun", source.Checked);
+        _appSettings.Save();
+        RefreshDryRunControls();
+
+        // Confirmed live 2026-08-22: requested so a Dry Run defaults to a quick,
+        // bounded test (10 invoices) rather than silently simulating an entire
+        // range, and so turning Dry Run back off can't leave a forgotten test cap
+        // limiting a real run. Applies regardless of which of the two checkboxes
+        // (this one, or the Sage 50 tab's) was actually toggled - Max invoices is
+        // a Manual Run-only field, but the safety default matters either way.
+        _runMaxInvoices.Value = source.Checked ? Math.Min(10, _runMaxInvoices.Maximum) : 0;
+    }
+
+    private bool _suppressDryRunEvents;
 
     // ---------------------------------------------------------------------
     // Shared field helpers - every editable control shows its file+JSON path

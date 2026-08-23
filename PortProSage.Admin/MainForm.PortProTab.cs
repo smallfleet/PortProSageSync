@@ -4,6 +4,7 @@ public partial class MainForm
 {
     private TextBox _portProBaseUrl = new() { Width = FieldHalfWidth };
     private TextBox _portProInvoiceEndpoint = new() { Width = FieldHalfWidth };
+    private TextBox _portProCustomerEndpoint = new() { Width = FieldHalfWidth };
     private TextBox _portProAccessTokenEndpoint = new() { Width = FieldHalfWidth };
     private TextBox _portProNewTokenEndpoint = new() { Width = FieldHalfWidth };
     private TextBox _portProAccessToken = new() { UseSystemPasswordChar = true, Width = FieldHalfWidth };
@@ -27,6 +28,12 @@ public partial class MainForm
             "Example: /invoices\n" +
             "Combined with Base URL this becomes: https://api1.app.portpro.io/v1/invoices\n\n" +
             "This is where every sync run actually pulls invoice data from.",
+            stretchInput: false);
+        AddRow(grid, "Customer endpoint", _portProCustomerEndpoint, f, "PortProSage:PortPro:CustomerEndpoint",
+            "The path used to fetch PortPro's FULL customer profile (address, billing email, contact, payment " +
+            "terms) - a separate, richer object than the lightweight \"caller\" info embedded on each invoice. " +
+            "Used when auto-creating a new Sage 50 customer, and by the periodic customer-update sync (see the " +
+            "Sage 50 tab's \"Update Customer with latest changes in PortPro\").\n\nExample: /customer",
             stretchInput: false);
         AddRow(grid, "Access token endpoint", _portProAccessTokenEndpoint, f, "PortProSage:PortPro:AccessTokenEndpoint",
             "The path used for the standard OAuth-style access token exchange. Reference/legacy field - " +
@@ -76,6 +83,7 @@ public partial class MainForm
         if (_appSettings is null) return;
         _portProBaseUrl.Text = _appSettings.GetString("PortProSage.PortPro.BaseUrl");
         _portProInvoiceEndpoint.Text = _appSettings.GetString("PortProSage.PortPro.InvoiceEndpoint");
+        _portProCustomerEndpoint.Text = _appSettings.GetString("PortProSage.PortPro.CustomerEndpoint");
         _portProAccessTokenEndpoint.Text = _appSettings.GetString("PortProSage.PortPro.AccessTokenEndpoint");
         _portProNewTokenEndpoint.Text = _appSettings.GetString("PortProSage.PortPro.NewTokenEndpoint");
         _portProPageSize.Value = Math.Clamp(_appSettings.GetInt("PortProSage.PortPro.PageSize", 100), _portProPageSize.Minimum, _portProPageSize.Maximum);
@@ -89,6 +97,7 @@ public partial class MainForm
         if (_appSettings is null || _localSettings is null) return;
         _appSettings.SetString("PortProSage.PortPro.BaseUrl", _portProBaseUrl.Text);
         _appSettings.SetString("PortProSage.PortPro.InvoiceEndpoint", _portProInvoiceEndpoint.Text);
+        _appSettings.SetString("PortProSage.PortPro.CustomerEndpoint", _portProCustomerEndpoint.Text);
         _appSettings.SetString("PortProSage.PortPro.AccessTokenEndpoint", _portProAccessTokenEndpoint.Text);
         _appSettings.SetString("PortProSage.PortPro.NewTokenEndpoint", _portProNewTokenEndpoint.Text);
         _appSettings.SetInt("PortProSage.PortPro.PageSize", (int)_portProPageSize.Value);

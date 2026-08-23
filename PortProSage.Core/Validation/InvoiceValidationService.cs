@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging;
 using PortProSage.Core.Config;
+using PortProSage.Core.Data;
 using PortProSage.Core.Models;
+using PortProSage.Core.PortPro;
 using PortProSage.Core.Sage50;
 
 namespace PortProSage.Core.Validation;
@@ -13,14 +15,53 @@ namespace PortProSage.Core.Validation;
 public class InvoiceValidationService
 {
     private readonly ISage50Client _sage50;
+    private readonly PortProClient _portPro;
+    private readonly SyncStateRepository _state;
     private readonly Sage50Settings _settings;
     private readonly ILogger<InvoiceValidationService> _logger;
 
-    public InvoiceValidationService(ISage50Client sage50, Sage50Settings settings, ILogger<InvoiceValidationService> logger)
+    public InvoiceValidationService(ISage50Client sage50, PortProClient portPro, SyncStateRepository state,
+        Sage50Settings settings, ILogger<InvoiceValidationService> logger)
     {
         _sage50 = sage50;
+        _portPro = portPro;
+        _state = state;
         _settings = settings;
         _logger = logger;
+    }
+
+    /// <summary>Once a customer is found-or-created for this run, every later
+    /// invoice for the same company name reuses that answer instead of repeating
+    /// the Sage 50 CustomerLedger.LoadByName lookup (and, for auto-create, the
+    /// PortPro profile fetch) all over again - a batch of many invoices for the
+    /// same customer used to re-check the same answer once per invoice for no
+    /// reason. Safe even if the customer is deleted from Sage 50 mid-run: this
+    /// only skips the redundant PRE-check - Sage50Client.CreateInvoiceAsync's own
+    /// SelectAPARLedger call independently re-validates the customer right before
+    /// posting and throws a clean, per-invoice failure if it no longer resolves,
+    /// so a stale cache entry can never cause a silent wrong write, just a normal
+    /// "IMPORT ERROR" on that one invoice.
+    ///
+    /// This class is a DI singleton (reused for every poll cycle of a long-running
+    /// Automatic Service, not recreated per run), so the cache MUST be cleared at
+    /// the start of every run - see ResetPerRunCache, called once at the top of
+    /// SyncOrchestrator.RunAsync - or a customer renamed/deleted between two
+    /// separate runs would keep resolving to a run-old answer indefinitely.</summary>
+    private readonly Dictionary<string, string> _resolvedCustomerCodeByNameThisRun = new(StringComparer.OrdinalIgnoreCase);
+
+    public void ResetPerRunCache() => _resolvedCustomerCodeByNameThisRun.Clear();
+
+    /// <summary>Evicts one customer from the per-run cache - called by
+    /// SyncOrchestrator when Sage50Client.CreateInvoiceAsync throws
+    /// CustomerNotFoundException, so a cached-but-now-stale "this customer
+    /// exists" answer doesn't keep being trusted for the rest of THIS run too.
+    /// The very next invoice for the same customer (in this same run, if there
+    /// is one) gets a fresh Sage 50 lookup - and, since the customer is now
+    /// genuinely missing, a real chance to auto-recreate it and succeed
+    /// immediately, not just via a later gap-fill/Continue run.</summary>
+    public void InvalidateCustomer(string name)
+    {
+        if (!string.IsNullOrWhiteSpace(name)) _resolvedCustomerCodeByNameThisRun.Remove(name);
     }
 
     public async Task<ValidationResult> ValidateAsync(PortProInvoice invoice, CancellationToken ct)
@@ -52,10 +93,17 @@ public class InvoiceValidationService
             return;
         }
 
+        if (_resolvedCustomerCodeByNameThisRun.TryGetValue(customerName, out var cachedCode))
+        {
+            result.ResolvedSage50CustomerCode = cachedCode;
+            return;
+        }
+
         var existing = await _sage50.FindCustomerByNameAsync(customerName, ct);
         if (existing is not null)
         {
             result.ResolvedSage50CustomerCode = existing.Code;
+            _resolvedCustomerCodeByNameThisRun[customerName] = existing.Code;
             return;
         }
 
@@ -67,15 +115,92 @@ public class InvoiceValidationService
 
         try
         {
-            var created = await _sage50.CreateCustomerAsync(customerName, _settings.DefaultReceivableAccount, ct);
+            // Pull PortPro's full customer profile (address/email/contact/currency -
+            // see PortProCustomer's doc comment) before creating, rather than just
+            // the bare name the invoice's own lightweight "caller" object carries -
+            // confirmed live 2026-08-21 this is a genuinely separate, richer PortPro
+            // object at GET /customer/{id}. Falls back to name + invoice-level
+            // currency only if the caller has no id, or the fetch itself fails -
+            // never lets a profile-fetch problem block the customer/invoice from
+            // being created at all.
+            PortProCustomer? fullProfile = null;
+            if (!string.IsNullOrWhiteSpace(invoice.Caller?.Id))
+            {
+                try
+                {
+                    fullProfile = await _portPro.GetCustomerAsync(invoice.Caller.Id, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not fetch PortPro's full customer profile for '{Customer}' (id {Id}) - creating with name/currency only.",
+                        customerName, invoice.Caller.Id);
+                }
+            }
+
+            var profile = BuildSage50Profile(customerName, invoice.Caller?.Currency, fullProfile);
+            var created = await _sage50.CreateCustomerAsync(profile, _settings.DefaultReceivableAccount, ct);
             result.ResolvedSage50CustomerCode = created.Code;
+            _resolvedCustomerCodeByNameThisRun[customerName] = created.Code;
             result.Warnings.Add($"Customer '{customerName}' did not exist in Sage 50 and was auto-created (code {created.Code}).");
+
+            if (fullProfile is not null)
+            {
+                _state.MarkCustomerSynced(fullProfile.Id, customerName, fullProfile.UpdatedAt ?? DateTimeOffset.UtcNow);
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to auto-create Sage 50 customer '{Customer}'", customerName);
             result.Errors.Add($"Failed to auto-create customer '{customerName}': {ex.Message}");
         }
+    }
+
+    /// <summary>Maps PortPro's full customer profile onto Sage50CustomerProfile -
+    /// shared logic, also used by CustomerSyncService for the update path, so a
+    /// customer's mapped fields are identical whether it just got auto-created or
+    /// is being refreshed later. fullProfile null means only name/currency are
+    /// available (see ValidateCustomerAsync's fallback above).</summary>
+    public static Sage50CustomerProfile BuildSage50Profile(string name, string? fallbackCurrency, PortProCustomer? fullProfile)
+    {
+        if (fullProfile is null)
+        {
+            return new Sage50CustomerProfile { Name = name, CurrencyCode = fallbackCurrency };
+        }
+
+        return new Sage50CustomerProfile
+        {
+            Name = name,
+            CurrencyCode = string.IsNullOrWhiteSpace(fullProfile.Currency) ? fallbackCurrency : fullProfile.Currency,
+            Contact = fullProfile.MainContactName,
+            Street1 = fullProfile.Address1,
+            City = fullProfile.City,
+            Province = fullProfile.State,
+            Country = fullProfile.Country,
+            PostalCode = fullProfile.ZipCode,
+            Phone1 = fullProfile.Mobile,
+            // BillingEmail (real, human-entered) - never the bare "email" field,
+            // which is a PortPro-generated proxy address. See PortProCustomer's
+            // doc comment.
+            Email = FirstEmail(fullProfile.BillingEmail)
+        };
+    }
+
+    /// <summary>PortPro's billingEmail is sometimes a comma-joined list of multiple
+    /// addresses (confirmed live 2026-08-23 for 'MANITOULIN GLOBAL FORWARDING
+    /// TORONTO': "MGFPayables@MGFGroup.com,oceanimptor@mgfgroup.com,MGFCENTRAL@
+    /// mgfgroup.com," - 74 characters) - Sage 50's Email field can only hold one
+    /// address and has its own hard 50-character limit (confirmed via a real
+    /// SimplySDK.InvalidEntryException that crashed two Full Customer Refresh runs
+    /// before Sage50Client.CustomerProfileRejectedException existed to catch it
+    /// gracefully instead). Takes just the first address, which is virtually
+    /// always well under that limit on its own - a single email losing its
+    /// secondary CC addresses in Sage 50 is a far smaller loss than the whole
+    /// customer failing to sync at all.</summary>
+    private static string? FirstEmail(string? billingEmail)
+    {
+        if (string.IsNullOrWhiteSpace(billingEmail)) return billingEmail;
+        var first = billingEmail.Split(',')[0].Trim();
+        return first.Length == 0 ? null : first;
     }
 
     private async Task ValidateChargeLinesAsync(PortProInvoice invoice, ValidationResult result, CancellationToken ct)

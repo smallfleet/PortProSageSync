@@ -17,6 +17,7 @@ public class SyncOrchestrator
     private readonly SyncStateRepository _state;
     private readonly EmailService _email;
     private readonly SyncSettings _syncSettings;
+    private readonly Sage50Settings _sage50Settings;
     private readonly ILogger<SyncOrchestrator> _logger;
 
     public SyncOrchestrator(
@@ -26,6 +27,7 @@ public class SyncOrchestrator
         SyncStateRepository state,
         EmailService email,
         SyncSettings syncSettings,
+        Sage50Settings sage50Settings,
         ILogger<SyncOrchestrator> logger)
     {
         _portPro = portPro;
@@ -34,6 +36,7 @@ public class SyncOrchestrator
         _state = state;
         _email = email;
         _syncSettings = syncSettings;
+        _sage50Settings = sage50Settings;
         _logger = logger;
     }
 
@@ -46,11 +49,19 @@ public class SyncOrchestrator
     /// see SyncResult.IsFinal's doc comment for why that gap mattered.</param>
     public async Task<SyncResult> RunAsync(SyncRequest request, CancellationToken ct, Action<SyncResult>? onProgress = null)
     {
+        // _validator is a DI singleton, reused across every poll cycle of a long-
+        // running Automatic Service - its per-run customer-resolution cache (see
+        // InvoiceValidationService.ResetPerRunCache) MUST be cleared at the start
+        // of every run, or a customer renamed/deleted between two separate runs
+        // would keep resolving to a run-old answer indefinitely.
+        _validator.ResetPerRunCache();
+
         var result = new SyncResult
         {
             RequestId = request.RequestId,
             StartedAtUtc = DateTimeOffset.UtcNow,
-            ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id
+            ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id,
+            WasDryRun = _sage50Settings.DryRun
         };
 
         // Pre-image of the persisted "continue from" state - captured before
@@ -309,10 +320,11 @@ public class SyncOrchestrator
                         !outcome.Sage50InvoiceNumber.StartsWith("DRYRUN-", StringComparison.Ordinal))
                     {
                         _logger.LogInformation(
-                            "TRANSFER: Ref={Ref} Sage50Number={SageNo} PortProDate={PortProDate} Sage50Date={Sage50Date} TotalAmount={TotalAmount} TaxCharged={TaxCharged}",
+                            "TRANSFER: Ref={Ref} Sage50Number={SageNo} PortProDate={PortProDate} Sage50Date={Sage50Date} DueDate={DueDate} TotalAmount={TotalAmount} TaxCharged={TaxCharged}",
                             outcome.ReferenceNumber, outcome.Sage50InvoiceNumber,
                             outcome.PortProInvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
                             outcome.Sage50InvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
+                            outcome.Sage50DueDate?.ToString("yyyy-MM-dd") ?? "(none)",
                             outcome.TotalAmount, outcome.TaxCharged);
                     }
 
@@ -394,10 +406,19 @@ public class SyncOrchestrator
                             request.RequestId, invoice.ReferenceNumber);
                     }
 
-                    if (request.MaxInvoicesToProcess is not null && result.Outcomes.Count >= request.MaxInvoicesToProcess.Value)
+                    // Counts genuinely-processed invoices only - imported (or simulated as
+                    // imported, under Dry Run - see SyncResult.WasDryRun) plus failed
+                    // attempts, NOT already-imported skips. Confirmed live 2026-08-22 this
+                    // used to count result.Outcomes.Count (every outcome, including
+                    // ALREADY_IMPORTED), so a range whose first N invoices were already
+                    // imported could exhaust the whole cap without ever reaching a
+                    // genuinely new invoice - "Max invoices to process" should mean N
+                    // invoices actually processed, not N outcomes glanced at.
+                    var processedSoFar = result.InvoicesImported + result.InvoicesFailedValidation + result.InvoicesFailedImport;
+                    if (request.MaxInvoicesToProcess is not null && processedSoFar >= request.MaxInvoicesToProcess.Value)
                     {
                         _logger.LogInformation(
-                            "Reached MaxInvoicesToProcess={Max} - stopping this run early; {Remaining} more eligible invoice(s) were fetched but not processed.",
+                            "Reached MaxInvoicesToProcess={Max} genuinely-processed invoice(s) - stopping this run early; {Remaining} more eligible invoice(s) were fetched but not processed.",
                             request.MaxInvoicesToProcess.Value, orderedInvoices.Count - result.Outcomes.Count);
                         hitMaxCap = true;
                         break;
@@ -557,6 +578,7 @@ public class SyncOrchestrator
         {
             var sageInvoice = MapToSage50Invoice(invoice, validation);
             outcome.Sage50InvoiceDate = sageInvoice.InvoiceDate;
+            outcome.Sage50DueDate = sageInvoice.InvoiceDate.AddDays(sageInvoice.NetTermDays);
             var sageInvoiceNumber = await _sage50.CreateInvoiceAsync(sageInvoice, ct);
 
             // A dry-run invoice number (see Sage50Client) must NOT be recorded as
@@ -587,6 +609,24 @@ public class SyncOrchestrator
             outcome.Sage50InvoiceNumber = invoice.ReferenceNumber;
             outcome.Messages.Add($"SKIPPED - already existed in Sage 50 under this invoice number: {ex.Message}");
         }
+        catch (CustomerNotFoundException ex)
+        {
+            // The customer was found/created earlier THIS run (and cached - see
+            // InvoiceValidationService) but no longer resolves in Sage 50 - deleted
+            // or renamed mid-run. Recoverable, not fatal: evict the stale cache
+            // entry so any later invoice for the same customer in this same run
+            // gets a fresh look (and a real shot at auto-recreating the customer
+            // and succeeding immediately), and leave THIS invoice genuinely
+            // unmarked - the automatic gap-fill sweep after this run (or the next
+            // Continue run) will pick it up and process it fresh.
+            _logger.LogWarning(
+                "Invoice {Ref} (PortPro id {Id}): customer '{Customer}' no longer resolves in Sage 50 (deleted/renamed " +
+                "mid-run?) - not posted. Will be picked up by this run's automatic gap-fill sweep or the next run.",
+                invoice.ReferenceNumber, invoice.Id, ex.CustomerCode);
+            _validator.InvalidateCustomer(invoice.Caller?.CompanyName ?? invoice.CallerName ?? ex.CustomerCode);
+            outcome.Success = false;
+            outcome.Messages.Add($"IMPORT ERROR (recoverable - will retry via gap-fill/next run): {ex.Message}");
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to import PortPro invoice {Id} ({Ref}) into Sage 50", invoice.Id, invoice.ReferenceNumber);
@@ -597,13 +637,14 @@ public class SyncOrchestrator
         return outcome;
     }
 
-    private static Sage50Invoice MapToSage50Invoice(PortProInvoice invoice, ValidationResult validation)
+    private Sage50Invoice MapToSage50Invoice(PortProInvoice invoice, ValidationResult validation)
     {
         var sageInvoice = new Sage50Invoice
         {
             ExternalReference = invoice.ReferenceNumber,
             CustomerCode = validation.ResolvedSage50CustomerCode!,
-            InvoiceDate = (invoice.BillingDate ?? invoice.CompletedDate ?? DateTimeOffset.UtcNow).UtcDateTime.Date
+            InvoiceDate = (invoice.BillingDate ?? invoice.CompletedDate ?? DateTimeOffset.UtcNow).UtcDateTime.Date,
+            NetTermDays = ResolveNetTermDays(invoice)
         };
 
         foreach (var line in invoice.Pricing)
@@ -641,5 +682,31 @@ public class SyncOrchestrator
         }
 
         return sageInvoice;
+    }
+
+    /// <summary>Confirmed live 2026-08-21 (real PortPro invoices, both the list and
+    /// single-invoice endpoints): PortPro sends real per-invoice payment terms
+    /// ("payment_terms"/"payment_terms_method") on every invoice sampled (100/100),
+    /// and it's genuinely per-invoice, not a constant (both 26 and 30 were seen in
+    /// the same sample) - this is what fixed the "Sage 50 Due Date = Invoice Date"
+    /// bug (Sage50Client.CreateInvoiceAsync never called SetTermDiscNetDay at all
+    /// before this). Falls back to Sage50Settings.DefaultNetTermDays, with a
+    /// warning, only if PortPro's value is ever missing or in a unit other than
+    /// "day" - the only unit confirmed so far, but nothing in the payload
+    /// guarantees it's the only one PortPro ever sends.</summary>
+    private int ResolveNetTermDays(PortProInvoice invoice)
+    {
+        if (invoice.PaymentTermsNetDays is { } days &&
+            string.Equals(invoice.PaymentTermsMethod, "day", StringComparison.OrdinalIgnoreCase))
+        {
+            return days;
+        }
+
+        _logger.LogWarning(
+            "Invoice {Ref}: PortPro's payment terms weren't usable (value={Value}, method={Method}) - " +
+            "falling back to the configured default of {Default} day(s).",
+            invoice.ReferenceNumber, invoice.PaymentTermsNetDays, invoice.PaymentTermsMethod ?? "(none)",
+            _sage50Settings.DefaultNetTermDays);
+        return _sage50Settings.DefaultNetTermDays;
     }
 }

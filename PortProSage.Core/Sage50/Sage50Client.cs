@@ -215,39 +215,153 @@ public class Sage50Client : ISage50Client
         });
     }
 
-    public Task<Sage50Customer> CreateCustomerAsync(string name, string receivableAccount, CancellationToken ct)
+    public Task<Sage50CustomerProfile?> GetCustomerProfileByNameAsync(string name, CancellationToken ct)
+    {
+        EnsureConnected();
+
+        var ledger = GetCustomerLedger();
+        if (!ledger.LoadByName(name))
+        {
+            return Task.FromResult<Sage50CustomerProfile?>(null);
+        }
+
+        return Task.FromResult<Sage50CustomerProfile?>(new Sage50CustomerProfile
+        {
+            Name = ledger.Name,
+            CurrencyCode = ledger.CurrencyCode,
+            Contact = ledger.Contact,
+            Street1 = ledger.Street1,
+            City = ledger.City,
+            Province = ledger.Province,
+            Country = ledger.Country,
+            PostalCode = ledger.PostalCode,
+            Phone1 = ledger.Phone1,
+            Email = ledger.Email
+        });
+    }
+
+    // receivableAccount is accepted and echoed back on the returned Sage50Customer
+    // for logging/tracking only - see FindCustomerByNameAsync's comment on why
+    // there's nowhere on CustomerLedger to actually write it (Simply Accounting/
+    // Sage 50 posts every customer to one global AR control account, configured
+    // once in Sage 50 itself - it's not a per-customer SDK property at all).
+    public Task<Sage50Customer> CreateCustomerAsync(Sage50CustomerProfile profile, string receivableAccount, CancellationToken ct)
     {
         EnsureConnected();
 
         if (!_settings.AutoCreateCustomers)
         {
             throw new InvalidOperationException(
-                $"Customer '{name}' does not exist in Sage 50 and AutoCreateCustomers is disabled.");
+                $"Customer '{profile.Name}' does not exist in Sage 50 and AutoCreateCustomers is disabled.");
         }
 
-        _logger.LogInformation("Creating Sage 50 customer '{Name}'", name);
+        _logger.LogInformation("Creating Sage 50 customer '{Name}' with full PortPro profile", profile.Name);
 
         if (_settings.DryRun)
         {
-            _logger.LogInformation("DRY RUN: would create customer '{Name}'", name);
-            return Task.FromResult(new Sage50Customer { Code = name, Name = name, ReceivableAccount = receivableAccount });
+            _logger.LogInformation("DRY RUN: would create customer '{Name}' - {Profile}", profile.Name, DescribeProfile(profile));
+            return Task.FromResult(new Sage50Customer { Code = profile.Name, Name = profile.Name, ReceivableAccount = receivableAccount, CurrencyCode = profile.CurrencyCode });
         }
 
         var ledger = GetCustomerLedger();
         try
         {
             ledger.InitializeNew();
-            ledger.Name = name;
+            ledger.Name = profile.Name;
+            ApplyProfile(ledger, profile);
             ledger.Save();
 
-            return Task.FromResult(new Sage50Customer { Code = name, Name = name, ReceivableAccount = receivableAccount });
+            return Task.FromResult(new Sage50Customer { Code = profile.Name, Name = profile.Name, ReceivableAccount = receivableAccount, CurrencyCode = profile.CurrencyCode });
         }
         catch (Exception ex)
         {
-            TerminateOnFatalWriteError($"creating customer '{name}'", ex);
+            // Recoverable - see CustomerProfileRejectedException's doc comment.
+            // Nothing was written (the rejecting setter throws before Save()), so
+            // there's no reason to suspect a compromised session.
+            if (ex is InvalidEntryException)
+            {
+                throw new CustomerProfileRejectedException(
+                    $"Sage 50 rejected a field value while creating customer '{profile.Name}': {ex.Message}", ex);
+            }
+
+            TerminateOnFatalWriteError($"creating customer '{profile.Name}'", ex);
             throw; // unreachable - TerminateOnFatalWriteError never returns
         }
     }
+
+    /// <summary>Pushes a changed PortPro profile onto an already-existing Sage 50
+    /// customer - see CustomerSyncService, the periodic sweep that detects a
+    /// changed customer.updatedAt and calls this. PortPro always wins here: any
+    /// manual correction made directly in Sage 50 for one of these fields will be
+    /// overwritten the next time this customer's PortPro record changes.</summary>
+    public Task UpdateCustomerAsync(Sage50CustomerProfile profile, CancellationToken ct)
+    {
+        EnsureConnected();
+
+        _logger.LogInformation("Updating Sage 50 customer '{Name}' from a changed PortPro profile", profile.Name);
+
+        if (_settings.DryRun)
+        {
+            _logger.LogInformation("DRY RUN: would update customer '{Name}' - {Profile}", profile.Name, DescribeProfile(profile));
+            return Task.CompletedTask;
+        }
+
+        var ledger = GetCustomerLedger();
+        try
+        {
+            if (!ledger.LoadByName(profile.Name))
+            {
+                throw new InvalidOperationException(
+                    $"Cannot update Sage 50 customer '{profile.Name}' - LoadByName found no match. It may have been renamed or removed in Sage 50 since this app last saw it.");
+            }
+
+            ApplyProfile(ledger, profile);
+            ledger.Save();
+            return Task.CompletedTask;
+        }
+        catch (Exception ex)
+        {
+            // Recoverable - see CustomerProfileRejectedException's doc comment.
+            // Confirmed live 2026-08-23: this specific case (a too-long Email from
+            // a multi-address PortPro billingEmail) crashed two entire Full
+            // Customer Refresh runs before this existed, over a single customer.
+            if (ex is InvalidEntryException)
+            {
+                throw new CustomerProfileRejectedException(
+                    $"Sage 50 rejected a field value while updating customer '{profile.Name}': {ex.Message}", ex);
+            }
+
+            TerminateOnFatalWriteError($"updating customer '{profile.Name}'", ex);
+            throw; // unreachable - TerminateOnFatalWriteError never returns
+        }
+    }
+
+    /// <summary>Writes every mappable Sage50CustomerProfile field onto the given
+    /// (already InitializeNew()'d or LoadByName()'d) ledger - shared by
+    /// CreateCustomerAsync and UpdateCustomerAsync so the two never drift out of
+    /// sync on which fields actually get applied. Each property here is a real,
+    /// confirmed-settable APARLedgerBase property (reflected directly off the
+    /// actual Sage 50 SDK assembly, not guessed). Blank/null profile values are
+    /// left unset rather than overwriting existing Sage 50 data with an empty
+    /// string - PortPro not having a value isn't the same as PortPro saying
+    /// "clear this field."</summary>
+    private static void ApplyProfile(SimplySDK.ReceivableModule.CustomerLedger ledger, Sage50CustomerProfile profile)
+    {
+        if (!string.IsNullOrWhiteSpace(profile.CurrencyCode)) ledger.CurrencyCode = profile.CurrencyCode;
+        if (!string.IsNullOrWhiteSpace(profile.Contact)) ledger.Contact = profile.Contact;
+        if (!string.IsNullOrWhiteSpace(profile.Street1)) ledger.Street1 = profile.Street1;
+        if (!string.IsNullOrWhiteSpace(profile.City)) ledger.City = profile.City;
+        if (!string.IsNullOrWhiteSpace(profile.Province)) ledger.Province = profile.Province;
+        if (!string.IsNullOrWhiteSpace(profile.Country)) ledger.Country = profile.Country;
+        if (!string.IsNullOrWhiteSpace(profile.PostalCode)) ledger.PostalCode = profile.PostalCode;
+        if (!string.IsNullOrWhiteSpace(profile.Phone1)) ledger.Phone1 = profile.Phone1;
+        if (!string.IsNullOrWhiteSpace(profile.Email)) ledger.Email = profile.Email;
+    }
+
+    // Delegates to the shared formatter (ISage50Client.cs) - also used by
+    // CustomerSyncService.ScanForRefreshAsync for the Admin app's Customer
+    // Refresh grid, so both places format a profile identically.
+    private static string DescribeProfile(Sage50CustomerProfile p) => Sage50ProfileFormatter.Describe(p);
 
     public Task<Sage50Item?> FindItemByCodeOrDescriptionAsync(string codeOrDescription, CancellationToken ct)
     {
@@ -371,15 +485,15 @@ public class Sage50Client : ISage50Client
         EnsureConnected();
 
         _logger.LogInformation(
-            "Creating Sage 50 sales invoice for customer {Customer}, external ref {Ref}, {LineCount} line(s)",
-            invoice.CustomerCode, invoice.ExternalReference, invoice.Lines.Count);
+            "Creating Sage 50 sales invoice for customer {Customer}, external ref {Ref}, {LineCount} line(s), Net {NetDays} day(s) terms",
+            invoice.CustomerCode, invoice.ExternalReference, invoice.Lines.Count, invoice.NetTermDays);
 
         if (_settings.DryRun)
         {
             var fakeInvoiceNumber = $"DRYRUN-{invoice.ExternalReference}";
             _logger.LogInformation(
-                "DRY RUN: would create invoice {FakeNumber} for customer {Customer}, date {Date}, lines: {Lines}",
-                fakeInvoiceNumber, invoice.CustomerCode, invoice.InvoiceDate.ToShortDateString(),
+                "DRY RUN: would create invoice {FakeNumber} for customer {Customer}, date {Date}, Net {NetDays} day(s) terms, lines: {Lines}",
+                fakeInvoiceNumber, invoice.CustomerCode, invoice.InvoiceDate.ToShortDateString(), invoice.NetTermDays,
                 string.Join("; ", invoice.Lines.Select(l => $"{l.ItemCode} x{l.Quantity} @ {l.UnitPrice:C} -> {l.RevenueAccount}" + (string.IsNullOrWhiteSpace(l.TaxCode) ? "" : $" [tax:{l.TaxCode}]"))));
             return Task.FromResult(fakeInvoiceNumber);
         }
@@ -404,8 +518,14 @@ public class Sage50Client : ISage50Client
             var selectedCustomerId = journal.SelectAPARLedger(invoice.CustomerCode);
             if (selectedCustomerId <= 0)
             {
-                throw new InvalidOperationException(
-                    $"Sage 50 did not select a valid customer for '{invoice.CustomerCode}' (SelectAPARLedger returned {selectedCustomerId}) - cannot post invoice for external ref '{invoice.ExternalReference}'.");
+                // A recoverable CustomerNotFoundException, not a generic
+                // InvalidOperationException - see that class's doc comment for why
+                // this specific failure must NOT be treated as a possibly-
+                // compromised session (nothing was written yet) and must NOT
+                // terminate the process the way the catch block below does for
+                // everything else.
+                throw new CustomerNotFoundException(invoice.CustomerCode,
+                    $"Sage 50 did not select a valid customer for '{invoice.CustomerCode}' (SelectAPARLedger returned {selectedCustomerId}) - it may have been deleted or renamed in Sage 50 since this run started. Cannot post invoice for external ref '{invoice.ExternalReference}'.");
             }
 
             // NOT SetReferenceNumber - per the SDK's own docs that method is "the
@@ -419,6 +539,18 @@ public class Sage50Client : ISage50Client
             // throws SimplyNoAccessException for a plain invoice with no prepayment.
             journal.InvoiceNumber = invoice.ExternalReference;
             journal.SetJournalDate(invoice.InvoiceDate.ToString("yyyy-MM-dd"));
+
+            // Confirmed live 2026-08-21: this was never called at all before, so
+            // every posted invoice got an implicit Net 0 - Sage 50 showed Due Date
+            // = Invoice Date regardless of the customer's real terms. SelectAPARLedger
+            // does NOT auto-populate this from the customer's own Sage 50 terms (the
+            // SDK's docs only document auto-defaulting the paid type there, nothing
+            // about terms) - it has to be set explicitly on every invoice.
+            // SetTermDiscNetDay is the SDK's actual "Net 30"-style days-until-due
+            // field (SimplySDK.Support.InvoiceJournal); SetTermDiscDay/
+            // SetTermDiscPercent (early-payment discount terms) are left at their
+            // defaults since PortPro has no equivalent data to drive them from.
+            journal.SetTermDiscNetDay(invoice.NetTermDays);
 
             var line = 1;
             foreach (var l in invoice.Lines)
@@ -466,6 +598,14 @@ public class Sage50Client : ISage50Client
             {
                 throw new DuplicateInvoiceNumberException(
                     $"Invoice number '{invoice.ExternalReference}' already exists in Sage 50 for customer '{invoice.CustomerCode}'.", ex);
+            }
+
+            // Recoverable - see CustomerNotFoundException's doc comment. Re-thrown
+            // as-is, NOT passed to TerminateOnFatalWriteError, since nothing was
+            // written and there's no reason to suspect a compromised SDK session.
+            if (ex is CustomerNotFoundException)
+            {
+                throw;
             }
 
             TerminateOnFatalWriteError($"posting invoice for external ref '{invoice.ExternalReference}'", ex);

@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PortProSage Sync — User Guide</title>
+<style>
+  /* ------------------------------------------------------------------
+     Design: reuses the exact token system already established on the
+     app's own "Licensing & About" tab (same blue accent, same navy-
+     tinted neutrals, same Segoe UI stack) so this document reads as
+     the same product family, not a separately-branded artifact.
+     Light theme only, deliberately - the real WinForms app has no
+     dark mode, so a dark variant here would misrepresent what ships.
+     Update VERSION below whenever MainForm.AppVersion is bumped.
+     ------------------------------------------------------------------ */
+  :root {
+    --bg: #F3F5F8;
+    --surface: #FFFFFF;
+    --border: #E1E5EA;
+    --border-strong: #CDD3DB;
+    --text-primary: #1A2330;
+    --text-secondary: #5C6672;
+    --text-tertiary: #88919B;
+    --accent: #2158A8;
+    --accent-hover: #1B4788;
+    --accent-soft: #EAF1FB;
+    --accent-soft-border: #D3E2F6;
+    --success: #1C8A57;
+    --success-soft: #E7F6EE;
+    --success-soft-border: #CDECDB;
+    --warning: #92530C;
+    --warning-soft: #FBF0DE;
+    --warning-soft-border: #EFD8A6;
+    --code-bg: #F1F3F6;
+    --code-border: #E4E7EB;
+    --shadow-card: 0 1px 2px rgba(20, 30, 45, 0.05), 0 1px 1px rgba(20, 30, 45, 0.03);
+    --radius-lg: 10px;
+    --radius-md: 8px;
+    --radius-sm: 6px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: "Segoe UI", "Segoe UI Variable Text", "Segoe UI Variable", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    font-size: 15px;
+    line-height: 1.65;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  code {
+    font-family: "Consolas", "Cascadia Mono", monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 4px;
+    padding: 0.1em 0.4em;
+  }
+
+  pre {
+    font-family: "Consolas", "Cascadia Mono", monospace;
+    font-size: 13.5px;
+    background: var(--text-primary);
+    color: #E7ECF3;
+    border-radius: var(--radius-md);
+    padding: 14px 18px;
+    overflow-x: auto;
+    margin: 0;
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; }
+
+  h1, h2, h3, h4 { text-wrap: balance; font-weight: 600; margin: 0; }
+
+  /* ---------- Shell layout ---------- */
+
+  .shell {
+    display: grid;
+    grid-template-columns: 272px minmax(0, 1fr);
+    max-width: 1180px;
+    margin: 0 auto;
+    align-items: start;
+  }
+
+  /* ---------- Sidebar ---------- */
+
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 28px 20px 28px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    border-right: 1px solid var(--border);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .brand-mark {
+    flex: 0 0 auto;
+    width: 38px;
+    height: 38px;
+    border-radius: var(--radius-sm);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-soft-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--accent);
+  }
+
+  .brand-text .brand-name { font-size: 15px; font-weight: 600; }
+  .brand-text .brand-tagline { font-size: 11.5px; color: var(--text-tertiary); margin-top: 1px; }
+
+  .version-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-soft-border);
+    border-radius: 100px;
+    padding: 3px 10px;
+    width: fit-content;
+    font-variant-numeric: tabular-nums;
+  }
+  .version-pill .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--success); }
+
+  nav.toc {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  nav.toc .toc-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin: 0 0 8px 10px;
+  }
+
+  nav.toc a {
+    display: flex;
+    gap: 9px;
+    align-items: baseline;
+    color: var(--text-secondary);
+    font-size: 13.5px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+  }
+  nav.toc a:hover { background: var(--accent-soft); color: var(--accent); }
+  nav.toc a .num { font-variant-numeric: tabular-nums; color: var(--text-tertiary); font-size: 12px; flex: 0 0 16px; }
+  nav.toc a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  nav.toc a.active .num { color: var(--accent); }
+
+  .sidebar-footer {
+    margin-top: auto;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 11.5px;
+    color: var(--text-tertiary);
+    line-height: 1.6;
+  }
+  .sidebar-footer strong { color: var(--text-secondary); }
+
+  /* ---------- Main content ---------- */
+
+  main.content {
+    padding: 40px 48px 80px;
+    min-width: 0;
+  }
+
+  .page-head { margin-bottom: 36px; }
+  .page-head h1 { font-size: 27px; letter-spacing: -0.2px; }
+  .page-head .lede {
+    font-size: 16px;
+    color: var(--text-secondary);
+    margin-top: 10px;
+    max-width: 66ch;
+  }
+  .page-head .help-hint {
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--text-tertiary);
+  }
+  .page-head .help-hint strong { color: var(--text-secondary); }
+
+  section.doc-section {
+    margin-bottom: 46px;
+    scroll-margin-top: 20px;
+    max-width: 74ch;
+  }
+
+  section.doc-section > h2 {
+    font-size: 20px;
+    padding-bottom: 12px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  section.doc-section h3 {
+    font-size: 15.5px;
+    margin: 26px 0 10px;
+  }
+
+  section.doc-section h4 {
+    font-size: 13.5px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin: 20px 0 8px;
+  }
+
+  section.doc-section p { margin: 0 0 12px; }
+  section.doc-section ul, section.doc-section ol { margin: 0 0 14px; padding-left: 22px; }
+  section.doc-section li { margin-bottom: 7px; }
+  section.doc-section li > ul, section.doc-section li > ol { margin-top: 7px; margin-bottom: 0; }
+  section.doc-section li:last-child { margin-bottom: 0; }
+
+  /* ---------- Tables ---------- */
+
+  .table-wrap { overflow-x: auto; margin: 0 0 16px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 14px; vertical-align: top; }
+  thead th {
+    background: var(--code-bg);
+    font-weight: 600;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody tr + tr td { border-top: 1px solid var(--border); }
+  tbody td:first-child { font-weight: 600; white-space: nowrap; }
+
+  /* ---------- Callouts ---------- */
+
+  .callout {
+    display: flex;
+    gap: 12px;
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+    margin: 0 0 16px;
+    font-size: 13.5px;
+    border: 1px solid transparent;
+  }
+  .callout svg { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 1px; }
+  .callout p { margin: 0; }
+  .callout p + p { margin-top: 8px; }
+
+  .callout--note { background: var(--accent-soft); border-color: var(--accent-soft-border); color: var(--text-primary); }
+  .callout--note svg { color: var(--accent); }
+
+  .callout--warning { background: var(--warning-soft); border-color: var(--warning-soft-border); color: var(--text-primary); }
+  .callout--warning svg { color: var(--warning); }
+
+  .callout--example { background: var(--success-soft); border-color: var(--success-soft-border); color: var(--text-primary); }
+  .callout--example svg { color: var(--success); }
+
+  /* ---------- Footer / brand band ---------- */
+
+  footer.doc-footer {
+    max-width: 74ch;
+    margin-top: 60px;
+    padding-top: 28px;
+    border-top: 1px solid var(--border);
+  }
+
+  .authorized-use {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    padding: 18px 20px;
+    margin-bottom: 20px;
+  }
+  .authorized-use h4 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-tertiary);
+  }
+  .authorized-use p {
+    margin: 0;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  .footer-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+  .footer-meta a { color: var(--text-tertiary); }
+  .footer-meta a:hover { color: var(--accent); }
+
+  /* ---------- Responsive ---------- */
+
+  @media (max-width: 860px) {
+    .shell { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+    main.content { padding: 32px 20px 60px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">PS</div>
+      <div class="brand-text">
+        <div class="brand-name">PortProSage Sync</div>
+        <div class="brand-tagline">PortPro → Sage 50 sync, by SmallArc Inc.</div>
+      </div>
+    </div>
+    <div class="version-pill"><span class="dot"></span>Version 2.12.23</div>
+
+    <nav class="toc" aria-label="Table of contents">
+      <div class="toc-label">Contents</div>
+      <a href="#what-this-app-does"><span class="num">01</span>What this app actually does</a>
+      <a href="#two-processes"><span class="num">02</span>Two processes, one Sage 50 seat</a>
+      <a href="#top-bar"><span class="num">03</span>The top bar</a>
+      <a href="#manual-run"><span class="num">04</span>Manual Run tab</a>
+      <a href="#automatic-sync"><span class="num">05</span>Automatic Sync tab</a>
+      <a href="#watermark"><span class="num">06</span>Watermark tab</a>
+      <a href="#history-logs"><span class="num">07</span>History &amp; Logs tab</a>
+      <a href="#portpro-tab"><span class="num">08</span>PortPro tab</a>
+      <a href="#sage50-tab"><span class="num">09</span>Sage 50 tab</a>
+      <a href="#settings-tab"><span class="num">10</span>Settings tab</a>
+      <a href="#about-tab"><span class="num">11</span>About tab</a>
+      <a href="#licensing-about-tab"><span class="num">12</span>Licensing &amp; About tab</a>
+      <a href="#gap-fill"><span class="num">13</span>Understanding gap-fill</a>
+      <a href="#walkthroughs"><span class="num">14</span>Walkthroughs</a>
+      <a href="#faq"><span class="num">15</span>Troubleshooting / FAQ</a>
+      <a href="#glossary"><span class="num">16</span>Glossary</a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <strong>SmallArc Inc.</strong><br />
+      Edison, NJ (USA)<br />
+      © 2026 · All rights reserved
+    </div>
+  </aside>
+
+  <main class="content">
+    <header class="page-head">
+      <h1>PortProSage Sync — User Guide</h1>
+      <p class="lede">The complete, walk-through reference for the PortProSage Admin application — the tool RS Rush Transfer Xpress Inc. uses to sync PortPro invoices into Sage 50 (Canadian Edition).</p>
+      <p class="help-hint">If the blue <strong>"?"</strong> help icon next to a field doesn't answer your question, this guide should. Open it any time from inside the app: click <strong>Help</strong> in the top bar. Looking for the technical/developer documentation instead (architecture, file formats, how the Windows Service itself works)? See <code>README.md</code> in the same folder as this file.</p>
+    </header>
+
+    <section class="doc-section" id="what-this-app-does">
+      <h2>1. What this app actually does</h2>
+      <p>The Admin app itself <strong>never talks to PortPro or Sage 50 directly</strong>. All it does is:</p>
+      <ol>
+        <li>Read and edit two settings files (<code>appsettings.json</code> and <code>appsettings.Local.json</code>) that live in the <strong>Service folder</strong>.</li>
+        <li>When you click a Run/Start button, either launch <code>PortProSage.Service.exe</code> (the program that actually does the work) or drop a small request file for an already-running one to pick up.</li>
+      </ol>
+      <p>So editing a field and NOT clicking that tab's <strong>Save</strong> button does nothing — and clicking Save does not, by itself, run anything either. The two actions are separate on purpose: you can change settings any time without accidentally kicking off a sync.</p>
+      <p>Every field in the app has a small circular blue <strong>"?"</strong> icon next to it — click it for a plain-language explanation and a worked example, right where you're looking. This guide covers the same ground in more depth, plus how the tabs work together.</p>
+      <p>At the very bottom of the window is a status bar that shows something like <code>Source: appsettings.json → Sync:PollingIntervalMinutes</code> whenever you click into a field — so you always know exactly which file, and which setting inside it, you're editing.</p>
+    </section>
+
+    <section class="doc-section" id="two-processes">
+      <h2>2. Before you start: two processes, one Sage 50 seat</h2>
+      <p>There are two distinct ways to run a sync, and they are <strong>mutually exclusive</strong> — you can only ever have one active at a time:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th></th><th>Manual Run</th><th>Automatic Sync</th></tr></thead>
+          <tbody>
+            <tr><td>You start it from</td><td><strong>Manual Run</strong> tab</td><td><strong>Automatic Sync</strong> tab</td></tr>
+            <tr><td>What actually launches</td><td>A one-shot process that runs once and exits</td><td>A long-running process that keeps polling</td></tr>
+            <tr><td>You choose</td><td>Exactly which invoices to process (by date, range, list, or "continue")</td><td>Nothing per-run — it always continues from the watermark</td></tr>
+            <tr><td>Runs until</td><td>It finishes (usually seconds to a few minutes)</td><td>You click Stop, or the machine restarts</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Why they can't run together:</strong> both would try to open the same Sage 50 company file under the same Sage 50 username at the same time. Sage 50 rejects a second simultaneous session under one username — so the app disables whichever button would create a conflict, and the top bar's <strong>Process:</strong> status line always tells you which one (if either) is currently active.</p>
+      <p>If you need to run something manually while the Automatic Service is on, stop the Automatic Service first (top bar <strong>Stop</strong> button, or the Stop button on the Automatic Sync tab), do your manual run, then start it again.</p>
+    </section>
+
+    <section class="doc-section" id="top-bar">
+      <h2>3. The top bar</h2>
+      <p>Visible above every tab, at all times:</p>
+      <ul>
+        <li><strong>Service folder</strong> — the folder containing <code>appsettings.json</code>, <code>appsettings.Local.json</code>, and <code>PortProSage.Service.exe</code>. The app guesses this on first launch and remembers whatever you last pointed it at.
+          <ul>
+            <li><strong>Browse...</strong> — pick a different folder (a full folder picker dialog).</li>
+            <li><strong>Reload</strong> — re-read settings from whatever folder is currently typed in the box, without opening the picker. Use this if you edited the settings files by hand outside the app.</li>
+          </ul>
+        </li>
+        <li><strong>Help</strong> — opens this User Guide in your default browser.</li>
+        <li><strong>v2.12.25</strong> (top-right, gray) — the exact build number of the Admin app you're currently running. Useful when confirming "did the new build actually install" — compare this against what you were told to expect.</li>
+        <li><strong>Process:</strong> — always shows the real, current state:
+          <ul>
+            <li><strong>Not running</strong> (red) — nothing is active; either button is free to use.</li>
+            <li><strong>Automatic Service running - PID 1234, since 9:03 AM</strong> (green).</li>
+            <li><strong>Manual Run running - PID 5678, since 9:15 AM</strong> (orange).</li>
+            <li>A small spinning progress bar appears next to this label whenever anything is active.</li>
+          </ul>
+        </li>
+        <li><strong>Stop</strong> (top bar) — stops whichever process is currently running, without needing to switch to the tab that started it. Confirms first.</li>
+      </ul>
+    </section>
+
+    <section class="doc-section" id="manual-run">
+      <h2>4. Manual Run tab</h2>
+      <p>Use this to run a sync <strong>exactly once, right now</strong>, with full control over exactly which invoices get processed.</p>
+
+      <h3>Mode dropdown — the five ways to pick invoices</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Mode</th><th>Selects invoices by</th><th>When to use it</th></tr></thead>
+          <tbody>
+            <tr><td>Invoice date (default)</td><td>The invoice's own PortPro billing date, within your From/To window</td><td>The safe default for "process everything invoiced in this window." Can't accidentally pull in something merely <em>edited</em> recently that's actually dated long ago.</td></tr>
+            <tr><td>Continue</td><td>The saved watermark — automatically resumes right after the last invoice this app successfully processed</td><td>Routine day-to-day catch-up runs. No dates or numbers to fill in at all.</td></tr>
+            <tr><td>Last changed date</td><td>PortPro's "last updated" timestamp, within your From/To window</td><td>Chasing "what changed recently" specifically. <strong>Caution:</strong> can pull in an invoice dated well outside your window if it was merely edited — which has caused real failures before (an old invoice rejected by Sage 50's own cutoff rule, killing the whole run). Prefer Invoice date unless you specifically need this.</td></tr>
+            <tr><td>Invoice number range</td><td>Reference numbers between a Start and an End (both ends included)</td><td>You know the numeric range of what's missing, e.g. "everything between RSRE_000090 and RSRE_000095."</td></tr>
+            <tr><td>Invoice number list</td><td>An explicit, exact list of reference numbers you type in</td><td>You know precisely which invoice(s) you need. Looks each one up individually rather than paging through PortPro's list — also why it's more reliable at finding an invoice the list view sometimes misses (see <a href="#gap-fill">section 13</a>).</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Every mode except Continue is a <strong>one-time override</strong> for this run only — none of them read or change the saved "continue from" position.</p>
+
+      <div class="callout callout--example">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
+        <p><strong>Example — Invoice date.</strong> Goal: import everything invoiced in July 2026. Set Mode = <strong>Invoice date</strong>, From = <code>2026-07-01</code>, To = <code>2026-07-31</code>, then click <strong>Manual Run</strong>.</p>
+      </div>
+      <div class="callout callout--example">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
+        <p><strong>Example — Invoice number list.</strong> Goal: re-check three specific invoices that came back as failures last week. Set Mode = <strong>Invoice number list</strong>, and type: <code>RSRE_000284, RSRE_000301, RSRE_000455</code> then click <strong>Manual Run</strong>.</p>
+      </div>
+
+      <h3>Other fields on this tab</h3>
+      <ul>
+        <li><strong>Cutoff (Lower) Invoice Date</strong> — a hard floor: no invoice dated before this date is <em>ever</em> processed, by Manual Run or the Automatic Service, no matter which Mode is used. Exists specifically to stop Sage 50's own "Do Not Allow Transactions Dated Before…" rule from rejecting an invoice mid-run and killing everything after it. Shared with the Automatic Sync tab, saves instantly.</li>
+        <li><strong>Start invoice number / End invoice number</strong> — only used by Invoice number range mode. Leave either blank for "no bound in that direction."</li>
+        <li><strong>Invoice number list</strong> — only used by Invoice number list mode. This box resizes itself as you resize the window (tracks about 75% of the window's width).</li>
+        <li><strong>Override "Already Imported" check for this run</strong> — normally, an invoice this app already recorded as imported is silently skipped on every later run. Checking this box turns that skip off <em>for this run only</em>: a previously-imported invoice is re-validated and re-posted instead. Only available for Invoice date, Invoice number range, and Invoice number list modes.
+          <ul>
+            <li><strong>Never saved anywhere</strong> — always starts unchecked, and resets itself the moment the run it applied to finishes or is stopped.</li>
+            <li><strong>Shows an extra warning</strong> before the run starts, since a genuinely-still-present invoice would be posted twice if you're wrong. Only use this after confirming, in Sage 50 itself, that the invoice needs to go in again.</li>
+            <li><strong>Any run that used it is marked "(Override)"</strong> everywhere its Mode is shown, so it's never ambiguous afterward.</li>
+          </ul>
+        </li>
+        <li><strong>Max invoices to process (0 = no limit)</strong> — caps how many <em>genuinely processed</em> invoices this run will actually handle. "Processed" means imported (or simulated, under Dry Run) or failed — an already-imported invoice does <strong>not</strong> count against this cap, since nothing was actually done for it.</li>
+        <li><strong>Show command window while running</strong> — checked (default) pops up the Service's console window live; unchecked runs hidden in the background. Shared with Automatic Sync, saves instantly.</li>
+        <li><strong>Dry run (Simulated - Default 10 Invoices and no real Sage 50 Changes)</strong> — the exact same setting as the Sage 50 tab's Dry run checkbox, editable here too; toggling it either place saves immediately and applies everywhere.
+          <ul>
+            <li><strong>Checking it sets Max invoices to process to 10 automatically</strong> — keeps a test run quick by default. <strong>Unchecking it resets Max invoices back to 0</strong>, so a leftover test cap can't silently limit a real run.</li>
+            <li>A Dry Run invoice is never marked as imported, so the same range run for real afterward genuinely processes it.</li>
+            <li><strong>Any run that used Dry Run is marked "(Dry Run)"</strong> everywhere its Mode is shown, and every count is relabeled as simulated.</li>
+          </ul>
+        </li>
+      </ul>
+
+      <h3>Previous Run (read-only)</h3>
+      <p>A snapshot of the most recently completed run — whether started from here, from Automatic Sync, or from a trigger file. Shows Mode (with "(Override)"/"(Dry Run)" appended if used), date/invoice range, Max invoices, the first and last invoice actually processed, a SUCCESS / FINISHED WITH ERRORS / INTERRUPTED result line (marked simulated for a Dry Run), and the exact invoice list used, when applicable.</p>
+
+      <h3>Buttons</h3>
+      <ul>
+        <li><strong>Manual Run</strong> — validates your inputs, warns about a possibly-conflicting Sage 50 session, shows a confirmation dialog, then starts it. Switches you to History &amp; Logs automatically.</li>
+        <li><strong>Stop Manual Run</strong> — sends a graceful shutdown signal first, force-kills only if it doesn't respond within 5 seconds.</li>
+        <li><strong>Save</strong> — remembers your current field values for next time; also happens automatically the moment you click Manual Run.</li>
+      </ul>
+    </section>
+
+    <section class="doc-section" id="automatic-sync">
+      <h2>5. Automatic Sync tab</h2>
+      <p>Use this to configure and control the background service that runs continuously, watching for new/changed invoices on its own schedule.</p>
+      <h3>Fields</h3>
+      <ul>
+        <li><strong>Automatic Sync - Processing Delay (Days)</strong> — holds back the most recent N days before they're eligible to sync. A live readout shows exactly what date that resolves to. A rolling delay, not a permanent skip. 0 disables it.</li>
+        <li><strong>Automatic Sync - Polling Interval (minutes)</strong> — how often the service checks PortPro on its own. (Manual trigger files are always picked up within about 15 seconds regardless.)</li>
+        <li><strong>Cutoff (Lower) Invoice Date</strong> and <strong>Show command window while running</strong> — the same shared fields described under Manual Run; changing either here changes it everywhere.</li>
+      </ul>
+      <h3>Previous Run</h3>
+      <p>Identical in content and layout to the Manual Run tab's Previous Run section.</p>
+      <h3>Buttons</h3>
+      <ul>
+        <li><strong>Save Automatic Sync settings</strong> — saves Polling Interval and Processing Delay.</li>
+        <li><strong>Start Automatic Service</strong> — same pre-flight checks as Manual Run, shows a confirmation, then starts the long-running background process.</li>
+        <li><strong>Stop Automatic Service</strong> — confirms, then gracefully stops it.</li>
+      </ul>
+      <div class="callout callout--warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+        <p><strong>Settings changes need a restart.</strong> If the Automatic Service is already running and you change/Save a setting anywhere in the app, the running process keeps using the old values until you stop and restart it.</p>
+      </div>
+
+      <h3>Full Customer Refresh tab</h3>
+      <p>The third tab, right after Automatic Sync, for one specific job: pushing <strong>every</strong> PortPro customer's full profile (address, city, province, country, postal code, phone, email, contact, currency) onto its matching Sage 50 customer, on demand, right now — as opposed to the automatic "Update Customer with latest changes in PortPro" sweep (Sage 50 tab), which only ever touches a customer whose PortPro profile has changed since it was last synced. This tab ignores that changed-since-last-sync check entirely and refreshes every matching customer unconditionally.</p>
+      <div class="callout callout--warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.29 3.86l-8.02 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3l-8.02-14a2 2 0 0 0-3.42 0z"/></svg>
+        <p><strong>This will overwrite Sage 50 customer data.</strong> Whatever PortPro currently has on file replaces whatever's in Sage 50 for that customer — any change made directly in Sage 50 to a customer's address, phone, email, etc. is lost. It only updates customers that <strong>already exist</strong> in Sage 50 by name; it never creates a new one (a missing customer is still only ever created automatically, the normal way, the first time an invoice needs it).</p>
+      </div>
+      <ul>
+        <li><strong>"FULL Customer profile refresh" checkbox</strong> — a confirmation gate, not a setting. Must be checked to enable the button below, and is <strong>never saved anywhere</strong> — always starts unchecked, and resets itself back to unchecked immediately after every click of the button, whatever the outcome.</li>
+        <li><strong>Dry run (Simulated - Default 10 Customers and no real Sage 50 Changes)</strong> — a <strong>separate, independent Dry Run</strong> entirely its own - NOT the same setting as Manual Run / Sage 50 tab's Dry run, and toggling one never affects the other. <strong>Always defaults to checked</strong> when the app opens, and <strong>resets itself back to checked</strong> the moment a refresh finishes - succeeded, finished with errors, or interrupted.
+          <ul>
+            <li>Checking it sets Max customers to process to 10 automatically; unchecking it resets Max customers back to 0 (no limit).</li>
+          </ul>
+        </li>
+        <li><strong>Max customers to process (0 = no limit)</strong> — caps how many customers this refresh actually <em>updates</em> in Sage 50 (a customer not found in Sage 50 does not count against the cap). Never saved anywhere; resets to 10 the moment a refresh finishes.</li>
+        <li><strong>Refresh FULL Customer button</strong> — shows a confirmation dialog titled <strong>"ALERT..!! (FULL Customer refresh)"</strong> summarizing write mode, max customers, and the company file, then starts the refresh in its own dedicated process, the same way Manual Run does. Disabled while the Automatic Service or a Manual Run is active (all three connect to Sage 50 under the same account).</li>
+        <li>Runs independently of Manual Run and the Automatic Service — it doesn't select invoices by date or number at all — but still registers its own row in History &amp; Logs once finished, with <strong>Mode: "FULL Customer refresh"</strong> and <strong>Source: "Full Customer Refresh"</strong>. The completion pop-up is also titled <strong>"ALERT..!! (FULL Customer refresh)"</strong>.</li>
+      </ul>
+    </section>
+
+    <section class="doc-section" id="watermark">
+      <h2>6. Watermark tab</h2>
+      <p>The "watermark" is the saved bookmark — a date plus an invoice number — that Continue mode and the Automatic Service's own polling both use to know where they left off. This tab lets you view it, and, if truly necessary, override it by hand.</p>
+      <h3>Current Watermark (read-only)</h3>
+      <p>Shows the watermark date and invoice number currently saved, with a <strong>Refresh</strong> button. Reads <code>(none - no run has ever completed)</code> if nothing has ever synced successfully yet.</p>
+      <h3>Reset / Change Watermark</h3>
+      <ul>
+        <li><strong>New Watermark Date</strong> — check the box and pick a date to set it explicitly; leave <strong>unchecked</strong> to clear the watermark entirely.</li>
+        <li><strong>New Watermark Invoice #</strong> — reference/record-keeping only; the date is what actually controls fetching.</li>
+      </ul>
+      <p>Both fields start out pre-filled with a copy of the current watermark.</p>
+      <div class="callout callout--warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+        <p><strong>This can move the watermark backward, not just forward.</strong> Doing so makes the next Continue run re-check invoices in the newly-covered range — but it will not create duplicates: every invoice already recorded as imported is still recognized and skipped. Only genuinely missed ones get imported.</p>
+      </div>
+      <h3>Save button</h3>
+      <p>Blocked entirely while any run is active. Shows a clear WARNING dialog comparing old and new values before committing — the old value is not recoverable once overwritten.</p>
+    </section>
+
+    <section class="doc-section" id="history-logs">
+      <h2>7. History &amp; Logs tab</h2>
+      <p>Your record of every run that's ever happened — automatic, manual, or from a trigger file — with full drill-down detail.</p>
+
+      <h3>The grid</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td>Select</td><td>Checkbox for multi-row delete — see <a href="#deleting-a-run">Deleting a run</a>. Always starts unchecked.</td></tr>
+            <tr><td>#</td><td>A short, stable reference number for the run, assigned in the order it happened; never renumbers.</td></tr>
+            <tr><td>Request ID</td><td>The full internal ID for this run.</td></tr>
+            <tr><td>Source</td><td>"Automatic Service", "Manual Run", or "Trigger file".</td></tr>
+            <tr><td>Mode</td><td>Selection mode used (see <a href="#manual-run">section 4</a>); a gap-fill run shows "Finding the Gap (found/checked)" once finished (see <a href="#gap-fill">section 13</a>); an override run shows "(Override)" appended; a Dry Run shows "(Dry Run)" appended.</td></tr>
+            <tr><td>Process Start / End</td><td>When the run's process actually started and finished.</td></tr>
+            <tr><td>Inv Start / End Date</td><td>The actual invoice-date window this run covered.</td></tr>
+            <tr><td>Fetched</td><td>How many invoices PortPro returned (shown as <code>found/checked</code> for a gap-fill row).</td></tr>
+            <tr><td>Imported</td><td>How many were actually written to Sage 50.</td></tr>
+            <tr><td>Skipped</td><td>Skipped because already imported previously.</td></tr>
+            <tr><td>Not found</td><td>Candidates looked up individually that came back "doesn't exist". Only non-zero for Invoice number list / gap-fill.</td></tr>
+            <tr><td>Zero/-ve Amt</td><td>Skipped — invoice total was zero or negative.</td></tr>
+            <tr><td>Before cutoff</td><td>Skipped — dated before your Cutoff (Lower) Invoice Date.</td></tr>
+            <tr><td>Failed validation</td><td>Failed a pre-import check before ever reaching Sage 50.</td></tr>
+            <tr><td>Failed write</td><td>Passed validation but the actual write to Sage 50 failed.</td></tr>
+            <tr><td>Status</td><td>Completed / Running / Interrupted (partial) / Interrupted (no result) / Skipped / Pending.</td></tr>
+            <tr><td>Delete</td><td>Deletes just this one row — see <a href="#deleting-a-run">Deleting a run</a>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Click <strong>Refresh</strong> to reload from disk. The grid does <em>not</em> auto-refresh every couple of seconds anymore while something is running — only when you click Refresh, or once a run genuinely finishes.</p>
+
+      <h3 id="deleting-a-run">Deleting a run (or runs)</h3>
+      <p>Two ways to delete, both requiring confirmation first:</p>
+      <ul>
+        <li><strong>One row</strong> — click that row's <strong>Delete</strong> button.</li>
+        <li><strong>Several rows at once</strong> — tick <strong>Select</strong> on each row you want gone (or click <strong>Select all</strong>, top-right), then click <strong>Delete Selected</strong> (also top-right, in red).</li>
+      </ul>
+      <p>A run that's <strong>still actively in progress can't be deleted</strong> — you'll see a warning telling you to stop it first.</p>
+      <p>Deleting a run is permanent and removes everything it produced: its own request/result files, any failed-transaction CSV report, and its rows in the local tracking database — so those invoices are treated as brand new again the next time a real run touches them.</p>
+
+      <h3>The detail tabs</h3>
+      <ul>
+        <li><strong>Summary</strong> — full plain-text readout: request details, exact range/list used, every count, duration, watermark before/after.</li>
+        <li><strong>Validate Invoice Extracted</strong> — one row per invoice this run touched: invoice #, PortPro date, success/fail, resulting Sage 50 invoice number, messages.</li>
+        <li><strong>Invoice Transferred</strong> — one row per invoice actually written to Sage 50: PortPro #/date, Sage 50 #/date, due date, total amount, tax charged.</li>
+        <li><strong>Warnings / Validation</strong> — just the warning/validation lines from this run's log.</li>
+        <li><strong>Failed Transactions</strong> — just the error/failure lines.</li>
+        <li><strong>Full log</strong> — the complete raw log text for this run, with a live search box.</li>
+      </ul>
+
+      <h3>Reading a gap-fill row</h3>
+      <p>A "Finding the Gap" row is automatically created after almost every other run (see <a href="#gap-fill">section 13</a>). If you see one with "Fetched: 0/79" and "Not found: 79", that means it checked 79 candidates individually and genuinely didn't find any of them — a normal, healthy result, not an error.</p>
+    </section>
+
+    <section class="doc-section" id="portpro-tab">
+      <h2>8. PortPro tab</h2>
+      <p>Connection settings for PortPro's API. You'll rarely need to touch most of these after initial setup:</p>
+      <ul>
+        <li><strong>Base URL / Invoice endpoint</strong> — where PortPro's API lives and where invoice data comes from.</li>
+        <li><strong>Customer endpoint</strong> — the path used to fetch PortPro's <em>full</em> customer profile (address, billing email, contact, payment terms) — a separate, richer object than the lightweight caller info embedded on each invoice. Used when auto-creating a new Sage 50 customer, and by the periodic customer-update sync (see the Sage 50 tab).</li>
+        <li><strong>Access token endpoint</strong> — reference/legacy; the real login flow uses New token endpoint instead.</li>
+        <li><strong>New token endpoint</strong> — where a fresh access token is requested using the Refresh token, automatically, whenever the current one expires.</li>
+        <li><strong>Page size</strong> — how many invoices PortPro returns per page (the app pages through everything automatically).</li>
+        <li><strong>Timeout (seconds)</strong> — how long to wait for PortPro before giving up.</li>
+        <li><strong>Access token / Refresh token</strong> (secrets) — your PortPro API credentials, refreshed automatically. Use <strong>Test Connection</strong> to confirm the currently <em>saved</em> credentials work.</li>
+      </ul>
+      <p>Click <strong>Save PortPro settings</strong> to persist changes.</p>
+    </section>
+
+    <section class="doc-section" id="sage50-tab">
+      <h2>9. Sage 50 tab</h2>
+      <p>Connection credentials and the account-mapping rules that decide exactly where each invoice line posts in Sage 50. This is the most consequential tab in the app — take the Dry run switch seriously.</p>
+      <ul>
+        <li><strong>App name / App ID</strong> — how this app identifies itself to the Sage 50 SDK.</li>
+        <li><strong>Company data path</strong> — the full path to your <code>.SAI</code> company file. Use <strong>Test Connection</strong> to confirm it opens.</li>
+        <li><strong>Sage50 User Name / Password</strong> — must be a <strong>dedicated account</strong>, never one a person also logs into interactively.</li>
+        <li><strong>Expected SDK version</strong> — optional startup version check; leave blank to skip.</li>
+        <li><strong>Default revenue account</strong> — the GL account used for a charge with no specific mapping below. If also blank, an unmapped charge fails outright.</li>
+        <li><strong>Ignore account 1-on-1 match and apply default</strong> — checked: an unconfirmed mapped account just falls back to the default with a warning, instead of stopping the run.</li>
+        <li><strong>Default receivable account</strong> — currently has <strong>no effect</strong>. Sage 50's customer object has no per-customer receivable-account property to write it to — Simply Accounting/Sage 50 posts every customer to one global AR control account, configured once in Sage 50 itself (Setup ▸ Settings ▸ Customers &amp; Sales ▸ Linked Accounts). Kept in case a future SDK version adds support.</li>
+        <li><strong>Default net payment terms (days)</strong> — the fallback "Net N days" term applied to an invoice when PortPro's own real per-invoice terms can't be used. PortPro normally supplies real terms directly, so this is a safety net, not the primary source. Example: 30.</li>
+        <li><strong>Accounts To Trust</strong> — workaround for a known Sage 50 SDK quirk where a real, existing account is sometimes wrongly reported as missing. Only add an account here after confirming it's genuinely real in Sage 50.</li>
+        <li><strong>Auto-create missing customers / items</strong> — checked: an unrecognized PortPro customer or charge item is created automatically before posting.</li>
+        <li><strong>Update Customer with latest changes in PortPro</strong> — default checked. Once per Automatic Service cycle and once per Manual Run, checks every PortPro customer for a profile change since it was last synced, and pushes any change into the matching <em>existing</em> Sage 50 customer automatically. Does not affect creating brand new customers, which always happens with the full PortPro profile regardless of this setting.
+          <div class="callout callout--warning" style="margin-top: 10px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+            <p><strong>PortPro always wins.</strong> A manual correction made directly in Sage 50 (address, email, etc.) is overwritten the next time that customer's PortPro record changes.</p>
+          </div>
+        </li>
+        <li><strong>Dry run</strong> — <strong>the most important switch on this screen.</strong> Checked: nothing is actually written to Sage 50, the run just logs what it would do. Always test something unfamiliar with this checked first. Also editable directly from the Manual Run tab (see <a href="#manual-run">section 4</a>) - the exact same setting, in effect immediately either place.</li>
+        <li><strong>Tax codes</strong> grid — maps a Canadian tax abbreviation (HST/GST/PST/QST) to the matching Sage 50 tax code.</li>
+        <li><strong>Charge account map</strong> grid — maps each PortPro charge name to the Sage 50 GL account it should post to. Only <strong>Sage 50 Account Number</strong> actually affects posting.</li>
+      </ul>
+      <p>Click <strong>Save Sage 50 settings</strong> to persist changes.</p>
+    </section>
+
+    <section class="doc-section" id="settings-tab">
+      <h2>10. Settings tab</h2>
+      <p>Everything else: email notifications, where files live, log cleanup, and a destructive reset utility.</p>
+      <h3>Email (failed-transaction reports)</h3>
+      <ul>
+        <li><strong>Enabled</strong> — master switch. Unchecked: a CSV is still saved to disk, just no email sent.</li>
+        <li><strong>SMTP host / port / Use SSL</strong> — your outgoing mail server settings.</li>
+        <li><strong>From address / Username / Password</strong> — the sending account.</li>
+        <li><strong>Recipients</strong> — everyone who gets a report when a run has at least one failure.</li>
+      </ul>
+      <h3>Folder Locations</h3>
+      <ul>
+        <li><strong>Trigger folder</strong> — where new requests are dropped for the Service to pick up. Also holds <code>deleted-history-ids.json</code>.</li>
+        <li><strong>Processed trigger folder</strong> — where a request moves once handled; History &amp; Logs reads from here.</li>
+        <li><strong>State database path</strong> — tracks already-imported invoices and the watermark. Never point two client installs at the same file.</li>
+        <li><strong>Log folder</strong> — daily rolling log files.</li>
+        <li><strong>Failed transactions folder</strong> — CSV reports, one per run with a failure.</li>
+        <li><strong>Minimum log level</strong> — Information is normal; Debug only while actively troubleshooting.</li>
+        <li><strong>Cleanup log after execution (Days)</strong> — old log files past this many days are deleted automatically. Permanent — set 0 to disable.</li>
+      </ul>
+      <h3>Reset Imported-Invoice Tracking</h3>
+      <ul>
+        <li><strong>Currently tracked as already imported</strong> — a live count. Reflects the old company file until reset, if you've switched.</li>
+        <li><strong>Clear All Imported-Invoice Records</strong> — irreversible; see below.</li>
+      </ul>
+      <div class="callout callout--warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+        <p><strong>Clear All Imported-Invoice Records is irreversible.</strong> Wipes this app's entire memory of what's already been imported (does not touch Sage 50 itself). Only safe if you're certain the current Sage 50 company file genuinely doesn't already contain those invoices — otherwise they will be posted again as duplicates.</p>
+        <p>If you only need to clear tracking for <strong>one specific run</strong>, deleting that run from History &amp; Logs does that instead, without wiping everything else.</p>
+      </div>
+      <p>Click <strong>Save Settings</strong> to persist the non-secret fields above.</p>
+    </section>
+
+    <section class="doc-section" id="about-tab">
+      <h2>11. About tab</h2>
+      <p>Static reference info: app version, SmallArc Inc. contact details, and a note about SmallArc's other product, Fixyee (<code>www.fixyee.com</code>). No functional controls here — just company/licensing information.</p>
+    </section>
+
+    <section class="doc-section" id="licensing-about-tab">
+      <h2>12. Licensing &amp; About tab</h2>
+      <p>A newer, more detailed license-and-contact screen, kept as its own separate tab alongside the classic About tab rather than replacing it. Shows a License Information card, Company and Support side by side, an Other Products section, and the same Authorized Use notice as the About tab.</p>
+      <div class="callout callout--note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <p><strong>Currently a design preview.</strong> There is no licensing server behind this yet, so the license details shown are placeholder values, not read from a real license file. For your actual license terms, see the Authorized Use notice on either this tab or the About tab.</p>
+      </div>
+    </section>
+
+    <section class="doc-section" id="gap-fill">
+      <h2>13. Understanding automatic gap-fill ("Finding the Gap")</h2>
+      <p>This is the one behavior in the app that isn't a button you click — it just happens, automatically, after almost every run.</p>
+      <h3>Why it exists</h3>
+      <p>PortPro's normal invoice list — the one every date-range or number-range run uses — can, under certain conditions, silently leave out real invoices that genuinely exist. Looking that invoice up <em>individually</em>, by its exact reference number, finds it fine; it's specifically the bulk list view that can miss it. The app doesn't rely on you to remember to check — it checks automatically, every time.</p>
+      <h3>How it works</h3>
+      <p>After any range-based run finishes, the app automatically looks at the exact invoice-number range that run actually touched, figures out which numbers are <em>not</em> already recorded as imported, and looks each one up individually. This shows up in History &amp; Logs as its own separate row, labeled "Finding the Gap". You never select this yourself.</p>
+      <h3>Reading the result</h3>
+      <p>Once a gap-fill row finishes, its Mode column shows something like:</p>
+      <pre><code>Finding the Gap (19/98)</code></pre>
+      <p>That means: 98 candidate invoice numbers were checked one by one, and 19 of them turned out to be real invoices that genuinely existed (and have now been imported). The other 79 were checked and confirmed to simply not exist — completely normal; invoice numbering in any system has gaps.</p>
+      <div class="callout callout--note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <p><strong>A gap-fill row with "0 found" is not a failure</strong> — it means the sweep found no genuinely missing invoices, the expected, healthy outcome most of the time.</p>
+      </div>
+    </section>
+
+    <section class="doc-section" id="walkthroughs">
+      <h2>14. Walkthroughs: common tasks step by step</h2>
+
+      <h3>Run a normal catch-up sync manually, right now</h3>
+      <ol>
+        <li>Go to <strong>Manual Run</strong>.</li>
+        <li>Set Mode to <strong>Continue</strong>.</li>
+        <li>Click <strong>Manual Run</strong>, confirm the dialog.</li>
+        <li>You'll land on <strong>History &amp; Logs</strong> with the new run selected — watch Status until it says <strong>Completed</strong>.</li>
+      </ol>
+
+      <h3>Backfill a specific date range</h3>
+      <ol>
+        <li>Go to <strong>Manual Run</strong>.</li>
+        <li>Set Mode to <strong>Invoice date</strong>.</li>
+        <li>Set <strong>Invoice Date From</strong> and <strong>Invoice Date To</strong>.</li>
+        <li>Click <strong>Manual Run</strong>, confirm.</li>
+        <li>A "Finding the Gap" follow-up row appears automatically underneath — let it finish too.</li>
+      </ol>
+
+      <h3>Re-check one or a few specific invoices you know the numbers of</h3>
+      <ol>
+        <li>Go to <strong>Manual Run</strong>.</li>
+        <li>Set Mode to <strong>Invoice number list</strong>.</li>
+        <li>Type the reference numbers, comma-separated, e.g. <code>RSRE_000284, RSRE_000301</code>.</li>
+        <li>Click <strong>Manual Run</strong>, confirm.</li>
+      </ol>
+
+      <h3>Test something unfamiliar before running it for real</h3>
+      <ol>
+        <li>Go to <strong>Manual Run</strong>, check <strong>Dry run</strong> — Max invoices to process automatically becomes 10, so the test stays quick.</li>
+        <li>Set up whatever you want to test (a new date range, a mode you don't usually use) and click <strong>Manual Run</strong>.</li>
+        <li>Check <strong>History &amp; Logs</strong> — the row shows "(Dry Run)" in Mode, and every count is labeled as simulated, so it's never mistaken for a real result.</li>
+        <li>Uncheck <strong>Dry run</strong> (Max invoices resets to 0 automatically) and, if the test looked right, run it again for real.</li>
+      </ol>
+
+      <h3>Force-reprocess an invoice that's already marked as imported</h3>
+      <p>Use this only after confirming, in Sage 50 itself, that the invoice genuinely needs to go in again.</p>
+      <ol>
+        <li>Go to <strong>Manual Run</strong>.</li>
+        <li>Set Mode appropriately and enter the invoice(s).</li>
+        <li>Check <strong>Override "Already Imported" check for this run</strong>.</li>
+        <li>Click <strong>Manual Run</strong> — confirm the extra warning dialog only once you're sure.</li>
+        <li>Confirm the normal run dialog too. The Mode will show <strong>"(Override)"</strong> afterward.</li>
+      </ol>
+
+      <h3>Figure out why a run had failures</h3>
+      <ol>
+        <li>Go to <strong>History &amp; Logs</strong>.</li>
+        <li>Select the run (look for Failed validation/write &gt; 0, or a non-Completed Status).</li>
+        <li>Check <strong>Summary</strong> first for the overall counts.</li>
+        <li>Check <strong>Failed Transactions</strong> for the specific error message(s).</li>
+        <li>Use <strong>Full log</strong> and its search box for raw context.</li>
+      </ol>
+
+      <h3>Clean up an old test run from History &amp; Logs</h3>
+      <ol>
+        <li>Go to <strong>History &amp; Logs</strong>.</li>
+        <li>For one run: click <strong>Delete</strong>. For several: tick <strong>Select</strong> (or <strong>Select all</strong>), then <strong>Delete Selected</strong>.</li>
+        <li>Confirm — permanently removes that run's files, reports, and tracking rows.</li>
+      </ol>
+
+      <h3>Confirm a setting change actually took effect</h3>
+      <ol>
+        <li>Make your change, click that tab's <strong>Save</strong> button.</li>
+        <li>Go to <strong>Automatic Sync</strong>, click <strong>Stop Automatic Service</strong>.</li>
+        <li>Click <strong>Start Automatic Service</strong> again.</li>
+        <li>(Optional) Check the confirmation dialog shown when starting — it summarizes the settings in effect.</li>
+      </ol>
+
+      <h3>An invoice needs to be re-imported after fixing an account mapping</h3>
+      <ol>
+        <li>Fix the mapping on the <strong>Sage 50</strong> tab, click <strong>Save Sage 50 settings</strong>.</li>
+        <li>Go to <strong>Manual Run</strong>, Mode = <strong>Invoice number list</strong>, enter the reference number.</li>
+        <li>Consider checking <strong>Dry run</strong> first to confirm the fix resolves it.</li>
+      </ol>
+
+      <h3>Something looks stuck — check what's actually running</h3>
+      <ol>
+        <li>Look at the <strong>Process:</strong> line in the top bar.</li>
+        <li>Use the top bar's <strong>Stop</strong> button if something genuinely needs stopping.</li>
+      </ol>
+    </section>
+
+    <section class="doc-section" id="faq">
+      <h2>15. Troubleshooting / FAQ</h2>
+
+      <h3>I changed a setting and nothing seems different.</h3>
+      <p>Did you click that tab's Save button? And if the Automatic Service was already running, did you restart it afterward?</p>
+
+      <h3>The Manual Run / Start Automatic Service button is grayed out.</h3>
+      <p>The other process is currently active — check the <strong>Process:</strong> line in the top bar. Stop it first.</p>
+
+      <h3>A run shows "Interrupted (no result)" or "Interrupted (partial)".</h3>
+      <p>The process stopped before finishing cleanly. Nothing already successfully imported is lost or will be double-imported; re-running the same range/Continue picks up exactly where it left off. Check <strong>Full log</strong>.</p>
+
+      <h3>A "Finding the Gap" row found 0 invoices — is that a problem?</h3>
+      <p>No — see <a href="#gap-fill">section 13</a>. That's the normal, healthy result most of the time.</p>
+
+      <h3>An invoice was imported twice.</h3>
+      <p>Shouldn't happen under normal operation. Check <strong>Validate Invoice Extracted</strong> for that invoice's Request ID(s), and see the Settings tab's Reset Imported-Invoice Tracking section (and whether "Override Already Imported check" was used).</p>
+
+      <h3>I deleted a run from History &amp; Logs by mistake — can I get it back?</h3>
+      <p>No — deleting a run is permanent, by design. If the invoices it imported are still correctly in Sage 50, Sage 50 itself is unaffected — only this app's own history and bookkeeping.</p>
+
+      <h3>Sage 50 says an account "doesn't exist" but I can see it in the chart of accounts.</h3>
+      <p>A known Sage 50 SDK quirk — see <strong>Accounts To Trust</strong> on the Sage 50 tab.</p>
+
+      <h3>Where do failed-transaction emails come from, and who gets them?</h3>
+      <p>Configured on the <strong>Settings</strong> tab, under Email. If Enabled is unchecked, no email goes out, but a CSV report is still saved.</p>
+    </section>
+
+    <section class="doc-section" id="glossary">
+      <h2>16. Glossary</h2>
+      <ul>
+        <li><strong>Watermark</strong> — the saved bookmark (a date + invoice number) that Continue mode and the Automatic Service use to know where they left off.</li>
+        <li><strong>Continue mode</strong> — the Mode option that resumes from the watermark automatically.</li>
+        <li><strong>Gap-fill / "Finding the Gap"</strong> — the automatic follow-up sweep double-checking for invoices the bulk list view might have missed. See <a href="#gap-fill">section 13</a>.</li>
+        <li><strong>Override Already Imported check</strong> — a Manual Run checkbox that lets a previously-imported invoice be re-processed for one run only. Never persisted; see <a href="#manual-run">section 4</a>.</li>
+        <li><strong>Dry run</strong> — a Sage 50 tab checkbox that simulates a run without writing anything real to Sage 50.</li>
+        <li><strong>Trigger folder</strong> — the folder the running Service watches for new manual/trigger requests.</li>
+        <li><strong>Request ID</strong> — the unique internal ID assigned to a single run, with a shorter "#" number for easier reference.</li>
+        <li><strong>Cutoff (Lower) Invoice Date</strong> — the hard floor date below which no invoice is ever processed.</li>
+        <li><strong>Processing Delay (Days)</strong> — how many of the most recent days are held back from automatic/Continue processing.</li>
+      </ul>
+    </section>
+
+    <footer class="doc-footer">
+      <div class="authorized-use">
+        <h4>Authorized Use</h4>
+        <p>This software is licensed and authorized by SmallArc Inc. for use exclusively at the licensed location and under the terms of the applicable licensing agreement. Unauthorized use, reproduction, distribution, or deployment without the express written consent of SmallArc Inc. is prohibited.</p>
+      </div>
+      <div class="footer-meta">
+        <span>© 2026 SmallArc Inc. · PortProSage Sync v2.12.25</span>
+        <a href="mailto:contact@smallarc.com">contact@smallarc.com</a>
+      </div>
+    </footer>
+  </main>
+</div>
+
+<script>
+  // Highlights the sidebar link for whichever section is currently in view -
+  // a wayfinding aid for a 16-section document, not decoration.
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a'));
+    var sections = links
+      .map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); })
+      .filter(Boolean);
+
+    if (!('IntersectionObserver' in window) || sections.length === 0) return;
+
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        var link = links.find(function (a) { return a.getAttribute('href') === '#' + entry.target.id; });
+        if (!link) return;
+        if (entry.isIntersecting) {
+          links.forEach(function (a) { a.classList.remove('active'); });
+          link.classList.add('active');
+        }
+      });
+    }, { rootMargin: '-10% 0px -75% 0px' });
+
+    sections.forEach(function (s) { observer.observe(s); });
+  })();
+</script>
+
+</body>
+</html>

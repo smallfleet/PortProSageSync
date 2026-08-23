@@ -11,6 +11,12 @@ public class TransferredInvoiceRow
     public string Sage50InvoiceNumber { get; set; } = string.Empty;
     public string PortProDate { get; set; } = string.Empty;
     public string Sage50Date { get; set; } = string.Empty;
+
+    /// <summary>Sage50Date + the resolved Net term days - added 2026-08-22 alongside
+    /// the due-date/terms fix (SyncOrchestrator.ResolveNetTermDays /
+    /// Sage50Client.SetTermDiscNetDay).</summary>
+    public string DueDate { get; set; } = string.Empty;
+
     public decimal TotalAmount { get; set; }
     public decimal TaxCharged { get; set; }
 }
@@ -46,9 +52,12 @@ public static class LogExtractorService
     private const string TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff zzz";
 
     // Mirrors the exact structured-logging call in SyncOrchestrator.RunAsync -
-    // "TRANSFER: Ref=RSRE_000123 Sage50Number=1045 PortProDate=2026-08-01 Sage50Date=2026-08-01 TotalAmount=450.00 TaxCharged=58.50".
+    // "TRANSFER: Ref=RSRE_000123 Sage50Number=1045 PortProDate=2026-08-01 Sage50Date=2026-08-01 DueDate=2026-09-01 TotalAmount=450.00 TaxCharged=58.50".
+    // DueDate is optional in the pattern (older log lines from before 2026-08-22
+    // won't have it) so a historical run's log still parses instead of silently
+    // matching nothing.
     private static readonly Regex TransferLinePattern = new(
-        @"TRANSFER: Ref=(?<ref>\S+) Sage50Number=(?<sage>\S+) PortProDate=(?<pdate>\S+) Sage50Date=(?<sdate>\S+) TotalAmount=(?<total>-?[\d.]+) TaxCharged=(?<tax>-?[\d.]+)",
+        @"TRANSFER: Ref=(?<ref>\S+) Sage50Number=(?<sage>\S+) PortProDate=(?<pdate>\S+) Sage50Date=(?<sdate>\S+)(?: DueDate=(?<due>\S+))? TotalAmount=(?<total>-?[\d.]+) TaxCharged=(?<tax>-?[\d.]+)",
         RegexOptions.Compiled);
 
     // Mirrors the exact structured-logging call in SyncOrchestrator.RunAsync -
@@ -77,6 +86,7 @@ public static class LogExtractorService
                 Sage50InvoiceNumber = match.Groups["sage"].Value,
                 PortProDate = match.Groups["pdate"].Value,
                 Sage50Date = match.Groups["sdate"].Value,
+                DueDate = match.Groups["due"].Success ? match.Groups["due"].Value : "",
                 TotalAmount = decimal.TryParse(match.Groups["total"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var total) ? total : 0m,
                 TaxCharged = decimal.TryParse(match.Groups["tax"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var tax) ? tax : 0m
             });

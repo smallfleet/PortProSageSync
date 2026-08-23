@@ -10,6 +10,7 @@ namespace PortProSage.Service;
 public class Worker : BackgroundService
 {
     private readonly SyncOrchestrator _orchestrator;
+    private readonly CustomerSyncService _customerSync;
     private readonly SyncSettings _syncSettings;
     private readonly ILogger<Worker> _logger;
 
@@ -17,9 +18,10 @@ public class Worker : BackgroundService
     // since they represent an operator actively waiting on a result.
     private static readonly TimeSpan TriggerPollInterval = TimeSpan.FromSeconds(15);
 
-    public Worker(SyncOrchestrator orchestrator, SyncSettings syncSettings, ILogger<Worker> logger)
+    public Worker(SyncOrchestrator orchestrator, CustomerSyncService customerSync, SyncSettings syncSettings, ILogger<Worker> logger)
     {
         _orchestrator = orchestrator;
+        _customerSync = customerSync;
         _syncSettings = syncSettings;
         _logger = logger;
     }
@@ -125,6 +127,13 @@ public class Worker : BackgroundService
             writeRequest: r => TriggerFileManager.Write(autoPollFolder, r),
             writeResult: (id, r) => TriggerFileManager.WriteResult(autoPollFolder, id, r),
             _logger, ct);
+
+        // Once per automatic cycle - see CustomerSyncService's doc comment and
+        // Sage50Settings.SyncCustomerUpdatesFromPortPro (the on/off switch).
+        // Deliberately not skipped even when this cycle itself skipped/found
+        // nothing (result.Skipped, or a caught-up watermark) - customer profile
+        // changes are independent of whether any invoices happened to be due.
+        await _customerSync.SyncChangedCustomersAsync(ct);
     }
 
     /// <summary>Any other live process running the exact same PortProSage.Service.exe

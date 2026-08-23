@@ -12,9 +12,11 @@ public partial class MainForm
     private TextBox _sage50ExpectedSdkVersion = new();
     private TextBox _sage50DefaultRevenueAccount = new();
     private TextBox _sage50DefaultReceivableAccount = new();
+    private NumericUpDown _sage50DefaultNetTermDays = new() { Minimum = 0, Maximum = 365 };
     private CheckBox _sage50AutoCreateCustomers = new() { Text = "Auto-create missing customers" };
+    private CheckBox _sage50SyncCustomerUpdates = new() { Text = "Update Customer with latest changes in PortPro" };
     private CheckBox _sage50AutoCreateItems = new() { Text = "Auto-create missing items/services" };
-    private CheckBox _sage50DryRun = new() { Text = "Dry run (simulate writes - no real Sage 50 changes)" };
+    private CheckBox _sage50DryRun = new() { Text = "Dry run (Simulated - Default 10 Invoices and no real Sage 50 Changes)" };
     private CheckBox _sage50IgnoreAccountMismatchUseDefault = new() { Text = "Ignore account 1-on-1 match and apply default" };
     private TextBox _sage50AccountsUnverifiable = new() { Width = 400 };
     private DataGridView _taxCodesGrid = new() { Width = 400, Height = 120, AllowUserToAddRows = true };
@@ -93,9 +95,20 @@ public partial class MainForm
             "really there in Sage 50 - rather than tracking down each one individually, this just tells the sync " +
             "\"when in doubt, use my default account instead of stopping everything.\"");
         AddPercentRow(grid, "Default receivable account", _sage50DefaultReceivableAccount, f, "PortProSage:Sage50:DefaultReceivableAccount",
-            "The GL accounts-receivable account assigned to a customer that gets auto-created because they didn't " +
-            "already exist in Sage 50.\n\nExample: 1200",
+            "Confirmed live 2026-08-21 (checked directly against the Sage 50 SDK): this currently has NO EFFECT - " +
+            "Sage 50's customer object has no per-customer receivable-account property to write it to. Simply " +
+            "Accounting/Sage 50 posts every customer to one global AR control account, configured once in Sage 50 " +
+            "itself (Setup > Settings > Customers & Sales > Linked Accounts), not per customer through this " +
+            "integration. Left here in case a future Sage 50 SDK version adds support for it.",
             fieldPercent);
+        AddPercentRow(grid, "Default net payment terms (days)", _sage50DefaultNetTermDays, f, "PortProSage:Sage50:DefaultNetTermDays",
+            "How many days after the invoice date it's due (Sage 50's \"Net 30\"-style term) - this is what actually " +
+            "fixes Sage 50 showing \"Due Date = Invoice Date\" on every imported invoice, a real bug confirmed live " +
+            "2026-08-21 (Sage 50 was never being told the terms at all, so it defaulted to Net 0).\n\n" +
+            "PortPro sends its own real payment terms on every invoice, and this app uses THAT first - this field " +
+            "is only the fallback for the rare case PortPro's value is missing or in a unit other than days.\n\n" +
+            "Example: 30",
+            10);
         AddPercentRow(grid, "Accounts To Trust\n(comma-separated)", _sage50AccountsUnverifiable, f, "PortProSage:Sage50:AccountsUnverifiableBySdk",
             "USE THIS ONLY WHEN: a sync run fails with an error saying a GL account \"does not exist\" in Sage 50 " +
             "- but when you open Sage 50 yourself and check the Chart of Accounts, that account IS actually there " +
@@ -119,6 +132,21 @@ public partial class MainForm
             "When checked, a PortPro customer that doesn't already exist in Sage 50 is created automatically before " +
             "posting their invoice. When unchecked, that invoice fails validation instead (\"customer not found\") " +
             "rather than silently creating new customer records.");
+        AddCheckRow(grid, _sage50SyncCustomerUpdates, f, "PortProSage:Sage50:SyncCustomerUpdatesFromPortPro",
+            "Checked (default): once per Automatic Service cycle and once per Manual Run, this checks every " +
+            "PortPro customer for a profile change (address/email/contact/phone/currency/terms) since it was last " +
+            "synced, and pushes any change into the matching EXISTING Sage 50 customer automatically.\n\n" +
+            "This does NOT affect creating brand new customers - that always happens (with the full PortPro " +
+            "profile) regardless of this setting, whenever an invoice needs a customer Sage 50 doesn't have yet.\n\n" +
+            "⚠ Two real risks to weigh before leaving this checked:\n" +
+            "1. PortPro always wins. If someone corrects a customer's address/email/etc. directly in Sage 50, " +
+            "that correction is silently overwritten the next time PortPro's own record for that customer changes.\n" +
+            "2. Blast radius. Any Sage 50 write failure in this app terminates the WHOLE Service process " +
+            "immediately (a deliberate safety policy after a past incident, not specific to this feature) - so a " +
+            "single problematic customer record (renamed, deleted, etc. in Sage 50) could crash an otherwise-" +
+            "healthy sync cycle, not just skip that one customer.\n\n" +
+            "Unchecked: existing Sage 50 customers are left alone forever once created - only brand new customers " +
+            "are ever written.");
         AddCheckRow(grid, _sage50AutoCreateItems, f, "PortProSage:Sage50:AutoCreateItems",
             "Same idea as auto-creating customers, but for service items/charges. When checked, a PortPro charge " +
             "name with no matching Sage 50 item (e.g. 'FUEL SURCHARGE 3') gets a new item created automatically, " +
@@ -126,7 +154,10 @@ public partial class MainForm
         AddCheckRow(grid, _sage50DryRun, f, "PortProSage:Sage50:DryRun",
             "The most important switch on this whole screen. Checked = simulated: the Service logs exactly what it " +
             "would create or post, but writes nothing at all to Sage 50. Unchecked = real: invoices, customers, and " +
-            "items are actually created in Sage 50 for real. Always test a change with this checked first.");
+            "items are actually created in Sage 50 for real. Always test a change with this checked first.\n\n" +
+            "Also editable directly from the Manual Run tab (the exact same setting, shown in both places) - " +
+            "toggling it either place saves immediately and takes effect everywhere.");
+        WireDryRunControl(_sage50DryRun);
 
         SetupTaxCodesGrid();
         AddPercentRow(grid, "Tax codes\n(PortPro abbreviation -> Sage 50 code)", _taxCodesGrid, f, "PortProSage:Sage50:TaxCodesByAbbreviation",
@@ -353,7 +384,9 @@ public partial class MainForm
         _sage50ExpectedSdkVersion.Text = _appSettings.GetString("PortProSage.Sage50.ExpectedSdkVersion");
         _sage50DefaultRevenueAccount.Text = _appSettings.GetString("PortProSage.Sage50.DefaultRevenueAccount");
         _sage50DefaultReceivableAccount.Text = _appSettings.GetString("PortProSage.Sage50.DefaultReceivableAccount");
+        _sage50DefaultNetTermDays.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sage50.DefaultNetTermDays", 30), _sage50DefaultNetTermDays.Minimum, _sage50DefaultNetTermDays.Maximum);
         _sage50AutoCreateCustomers.Checked = _appSettings.GetBool("PortProSage.Sage50.AutoCreateCustomers");
+        _sage50SyncCustomerUpdates.Checked = _appSettings.GetBool("PortProSage.Sage50.SyncCustomerUpdatesFromPortPro", true);
         _sage50AutoCreateItems.Checked = _appSettings.GetBool("PortProSage.Sage50.AutoCreateItems");
         _sage50DryRun.Checked = _appSettings.GetBool("PortProSage.Sage50.DryRun");
         _sage50IgnoreAccountMismatchUseDefault.Checked = _appSettings.GetBool("PortProSage.Sage50.IgnoreAccountMismatchUseDefault");
@@ -386,7 +419,9 @@ public partial class MainForm
         _appSettings.SetString("PortProSage.Sage50.ExpectedSdkVersion", _sage50ExpectedSdkVersion.Text);
         _appSettings.SetString("PortProSage.Sage50.DefaultRevenueAccount", _sage50DefaultRevenueAccount.Text);
         _appSettings.SetString("PortProSage.Sage50.DefaultReceivableAccount", _sage50DefaultReceivableAccount.Text);
+        _appSettings.SetInt("PortProSage.Sage50.DefaultNetTermDays", (int)_sage50DefaultNetTermDays.Value);
         _appSettings.SetBool("PortProSage.Sage50.AutoCreateCustomers", _sage50AutoCreateCustomers.Checked);
+        _appSettings.SetBool("PortProSage.Sage50.SyncCustomerUpdatesFromPortPro", _sage50SyncCustomerUpdates.Checked);
         _appSettings.SetBool("PortProSage.Sage50.AutoCreateItems", _sage50AutoCreateItems.Checked);
         _appSettings.SetBool("PortProSage.Sage50.DryRun", _sage50DryRun.Checked);
         _appSettings.SetBool("PortProSage.Sage50.IgnoreAccountMismatchUseDefault", _sage50IgnoreAccountMismatchUseDefault.Checked);

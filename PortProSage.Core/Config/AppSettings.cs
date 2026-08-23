@@ -82,6 +82,13 @@ public class PortProSettings
     /// <summary>Path (relative to BaseUrl) for fetching invoices, e.g. /invoices</summary>
     public string InvoiceEndpoint { get; set; } = "/invoices";
 
+    /// <summary>Path (relative to BaseUrl) for the full customer profile - confirmed
+    /// live 2026-08-21 as /customer (singular). Distinct from the lightweight
+    /// "caller" object embedded on each invoice - see PortProCustomer's doc
+    /// comment. Both GET {CustomerEndpoint}/{id} (single) and GET {CustomerEndpoint}
+    /// (paginated list, skip/limit) work against this same path.</summary>
+    public string CustomerEndpoint { get; set; } = "/customer";
+
     /// <summary>Path (relative to BaseUrl) used to validate/exchange the initial access token, e.g. /token</summary>
     public string AccessTokenEndpoint { get; set; } = "/token";
 
@@ -180,11 +187,43 @@ public class Sage50Settings
     /// </summary>
     public List<ChargeAccountMapping> ChargeAccountMap { get; set; } = new();
 
-    /// <summary>Default GL receivable account for auto-created customers.</summary>
+    /// <summary>Confirmed live 2026-08-21 (via reflection over the actual Sage 50 SDK
+    /// assembly) this has NO effect today - CustomerLedger has no per-customer
+    /// receivable-account property to write it to. Simply Accounting/Sage 50 posts
+    /// every customer to one global AR control account, configured once in Sage 50
+    /// itself (Setup ▸ Settings ▸ Customers &amp; Sales ▸ Linked Accounts), not per
+    /// customer via this SDK. Kept only in case a future SDK version exposes this;
+    /// currently threaded through Sage50Client.CreateCustomerAsync purely for
+    /// logging/tracking, never actually written.</summary>
     public string DefaultReceivableAccount { get; set; } = string.Empty;
+
+    /// <summary>Fallback "Net N days" term applied to an invoice when PortPro's own
+    /// per-invoice payment_terms can't be used (missing, or payment_terms_method
+    /// isn't "day" - the only unit confirmed live so far). PortPro normally
+    /// supplies real per-invoice terms directly (see SyncOrchestrator.
+    /// MapToSage50Invoice), so this is a safety net, not the primary source.</summary>
+    public int DefaultNetTermDays { get; set; } = 30;
 
     /// <summary>Whether the integration is allowed to create missing customers automatically.</summary>
     public bool AutoCreateCustomers { get; set; } = true;
+
+    /// <summary>Default TRUE. Controls CustomerSyncService's periodic sweep (once
+    /// per Automatic Service cycle, and once per Manual Run - see Worker.cs/
+    /// Diagnostics.cs): checked means an existing Sage 50 customer whose PortPro
+    /// profile has changed since last synced gets updated automatically - PortPro
+    /// always wins, so a manual correction made directly in Sage 50 for one of
+    /// the same fields (address/email/contact/phone/currency) would be
+    /// overwritten the next time that customer's PortPro record changes.
+    /// Unchecked: brand new customers still get created (with their full PortPro
+    /// profile) exactly as before, but an existing Sage 50 customer - found by
+    /// name - is left alone forever, never revisited.
+    ///
+    /// Also affects blast radius, not just data risk: any Sage 50 write failure
+    /// in this codebase (Sage50Client.TerminateOnFatalWriteError) terminates the
+    /// whole Service process immediately, not just that one write - so enabling
+    /// this means a single problematic customer record in Sage 50 (renamed,
+    /// deleted, whatever) could crash an otherwise-healthy sync cycle.</summary>
+    public bool SyncCustomerUpdatesFromPortPro { get; set; } = true;
 
     /// <summary>Whether the integration is allowed to create missing items/services automatically.</summary>
     public bool AutoCreateItems { get; set; } = true;

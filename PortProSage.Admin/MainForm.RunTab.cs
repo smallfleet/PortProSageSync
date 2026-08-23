@@ -28,7 +28,7 @@ public partial class MainForm
     private TextBox _runInvoiceNumberList = new() { Width = 400 }; // real width set live by UpdateInvoiceNumberListWidth
     private CheckBox _runOverrideAlreadyImported = new() { Text = "Override \"Already Imported\" check for this run", AutoSize = true };
     private NumericUpDown _runMaxInvoices = new() { Minimum = 0, Maximum = 100000, Width = 120 };
-    private Label _runDryRunStatus = new() { AutoSize = true };
+    private CheckBox _runDryRun = new() { Text = "Dry run (Simulated - Default 10 Invoices and no real Sage 50 Changes)", AutoSize = true };
     private Button _manualRunButton = new() { Text = "Manual Run", Width = 140, Height = 36 };
     private Button _manualRunStopButton = new() { Text = "Stop Manual Run", Width = 140, Height = 36, Enabled = false };
     private Button _manualRunSaveButton = new() { Text = "Save", Width = 90, Height = 36 };
@@ -172,18 +172,20 @@ public partial class MainForm
             "SyncRequest.OverrideAlreadyImportedCheck (one-time, this run only)", OverrideAlreadyImportedHelpText);
         AddRow(grid, "Max invoices to process (0 = no limit)", _runMaxInvoices, "(request)", "SyncRequest.MaxInvoicesToProcess",
             "Caps how many eligible (amount > 0) invoices this run actually processes, on top of whatever Mode " +
-            "selects - once this many have been handled, the run stops even if more would otherwise qualify. " +
-            "0 means no cap.\n\n" +
+            "selects - once this many have been GENUINELY PROCESSED, the run stops even if more would otherwise " +
+            "qualify. 0 means no cap.\n\n" +
+            "\"Processed\" means imported (or, under Dry Run, simulated as imported - see the Dry run checkbox " +
+            "below) or failed - an invoice already recorded as imported previously does NOT count against this " +
+            "cap, since nothing was actually done for it. Example: Max = 10 with 5 of the next invoices already " +
+            "imported and 10 genuinely new ones processes all 10 new ones (15 total looked at, not stopping at " +
+            "invoice #10 overall) - the cap tracks real work, not how many invoices were glanced at.\n\n" +
             "Example: Continue mode with Max invoices = 10 processes only the next 10 unprocessed invoices, " +
             "even if 50 have changed since the last run.");
         AddCheckRow(grid, _runShowCommandWindow, "(request - not a settings file)", "PortProSage:Sync:ShowCommandWindow", ShowCommandWindowHelpText);
         WireShowCommandWindowControl(_runShowCommandWindow);
 
-        _runDryRunStatus.Text = "Dry run status unknown - load config first.";
-        var dryRunRow = grid.RowCount++;
-        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        grid.Controls.Add(new Label { Text = "Current write mode:", AutoSize = true, Margin = new Padding(3, 8, 3, 3) }, 0, dryRunRow);
-        grid.Controls.Add(_runDryRunStatus, 1, dryRunRow);
+        AddCheckRow(grid, _runDryRun, "(request - not a settings file)", "PortProSage:Sage50:DryRun", RunDryRunHelpText);
+        WireDryRunControl(_runDryRun);
 
         BuildPreviousRunSection(grid, _prevRunMode, _prevRunFrom, _prevRunTo, _prevRunMaxInvoices,
             _prevRunFirstInvoiceProcessed, _prevRunLastInvoiceProcessed, _prevRunResult, _prevRunInvoiceListUsed);
@@ -244,7 +246,7 @@ public partial class MainForm
         LoadManualRunFields(); // restores whatever was last Saved (or last run) - not tied to RefreshAllTabsFromConfig,
                                 // since this is local UI state independent of which Service folder/config is loaded,
                                 // and re-loading it on every Reload would stomp in-progress edits.
-        RefreshAllTabsFromConfig += () => _runDryRunStatus.Text = _sage50DryRun.Checked ? "DRY RUN (simulated - nothing written to Sage 50)" : "REAL WRITE (changes Sage 50 for real)";
+        RefreshAllTabsFromConfig += RefreshDryRunControls;
         return page;
     }
 
@@ -426,7 +428,8 @@ public partial class MainForm
             modeText = (request is null
                 ? "(automatic poll - continue from where we left off)"
                 : request.UseWatermark ? "Continue (from where we left off)" : request.FilterType.ToString())
-                + (request?.OverrideAlreadyImportedCheck == true ? " (Override)" : "");
+                + (request?.OverrideAlreadyImportedCheck == true ? " (Override)" : "")
+                + (entry.Result.WasDryRun ? " (Dry Run)" : "");
             // The actual resolved invoice-date window (see SyncResult.EffectiveFromUtc's
             // doc comment), not the persisted watermark - the watermark only moves for a
             // Continue run and is otherwise stale/unrelated to what an explicit-range run
@@ -458,14 +461,15 @@ public partial class MainForm
             // to show (they run unattended).
             var r = entry.Result;
             var hasFailures = r.InvoicesFailedValidation > 0 || r.InvoicesFailedImport > 0;
-            resultText = !r.IsFinal
+            var dryRunPrefix = r.WasDryRun ? "[DRY RUN - simulated, nothing written to Sage 50] " : "";
+            resultText = dryRunPrefix + (!r.IsFinal
                 ? $"INTERRUPTED before finishing - as of last checkpoint: imported={r.InvoicesImported}, " +
                   $"alreadyImported={r.InvoicesSkippedAlreadyImported}, failedValidation={r.InvoicesFailedValidation}, " +
                   $"failedImport={r.InvoicesFailedImport}. See Failed Transactions / Full Log."
                 : hasFailures
                     ? $"FINISHED WITH ERRORS - imported={r.InvoicesImported}, alreadyImported={r.InvoicesSkippedAlreadyImported}, " +
                       $"failedValidation={r.InvoicesFailedValidation}, failedImport={r.InvoicesFailedImport}. See Failed Transactions / Full Log."
-                    : $"SUCCESS - imported={r.InvoicesImported}, alreadyImported={r.InvoicesSkippedAlreadyImported}, notFound={r.InvoicesNotFound}.";
+                    : $"SUCCESS - imported={r.InvoicesImported}, alreadyImported={r.InvoicesSkippedAlreadyImported}, notFound={r.InvoicesNotFound}.");
 
             invoiceListUsedText = r.ResolvedInvoiceNumberList ?? "";
         }
@@ -739,6 +743,12 @@ public partial class MainForm
 
         _pendingRequestId = request.RequestId;
         _pendingProcessedFolder = _manualRunFolder;
+        // An ordinary Manual Run, not a Customer Refresh - explicitly set here
+        // (not just left at whatever it was) so a customer refresh that was
+        // stopped/interrupted before ResultPollTimer_Tick could clear this itself
+        // can never leak into this, unrelated, later run and show the wrong
+        // (customer-worded) completion pop-up when this one finishes.
+        _pendingRunKind = PendingRunKind.ManualRun;
         _resultPollTimer.Start();
 
         // Set immediately, not just via the next RefreshServiceStatus() tick -
@@ -770,9 +780,11 @@ public partial class MainForm
         GracefulStop(_manualRunProcess);
         _resultPollTimer.Stop();
         _pendingRequestId = null;
+        _pendingRunKind = PendingRunKind.None;
         RefreshServiceStatus();
         RefreshHistoryList();
         ResetRunFormToDefaults();
+        ResetCustomerRefreshFormToDefaults();
     }
 
     /// <summary>Called by RefreshServiceStatus() (MainForm.ServiceControl.cs) every time
@@ -783,6 +795,8 @@ public partial class MainForm
         if (state == ServiceRunState.ManualRunning)
         {
             _manualRunButton.Enabled = false;
+            _customerRefreshScanButton.Enabled = false;
+            UpdateCustomerRefreshRunButtonEnabled(false);
             _manualRunStopButton.Enabled = true;
             _manualRunProcess = process;
         }
@@ -791,6 +805,8 @@ public partial class MainForm
             _manualRunStopButton.Enabled = false;
             _manualRunProcess = null;
             _manualRunButton.Enabled = state == ServiceRunState.NotRunning;
+            _customerRefreshScanButton.Enabled = state == ServiceRunState.NotRunning;
+            UpdateCustomerRefreshRunButtonEnabled(state == ServiceRunState.NotRunning);
 
             if (_pendingRequestId is not null && state == ServiceRunState.NotRunning)
             {

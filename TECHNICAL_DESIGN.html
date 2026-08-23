@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PortProSage Sync — Technical Design Document</title>
+<style>
+  /* ------------------------------------------------------------------
+     Same design tokens/components as USER_GUIDE.html (and the app's own
+     "Licensing & About" tab) so this reads as the same product family.
+     Light theme only, deliberately - the real app has no dark mode.
+     Update VERSION below whenever MainForm.AppVersion is bumped.
+     Additions over USER_GUIDE.html: .flow-* (self-contained CSS process-
+     flow diagrams - no mermaid/CDN dependency, since this may be opened
+     on a server with no internet access) and .arch-grid (component
+     diagram).
+     ------------------------------------------------------------------ */
+  :root {
+    --bg: #F3F5F8;
+    --surface: #FFFFFF;
+    --border: #E1E5EA;
+    --border-strong: #CDD3DB;
+    --text-primary: #1A2330;
+    --text-secondary: #5C6672;
+    --text-tertiary: #88919B;
+    --accent: #2158A8;
+    --accent-hover: #1B4788;
+    --accent-soft: #EAF1FB;
+    --accent-soft-border: #D3E2F6;
+    --success: #1C8A57;
+    --success-soft: #E7F6EE;
+    --success-soft-border: #CDECDB;
+    --warning: #92530C;
+    --warning-soft: #FBF0DE;
+    --warning-soft-border: #EFD8A6;
+    --danger: #A32626;
+    --danger-soft: #FBEAEA;
+    --danger-soft-border: #F2CACA;
+    --code-bg: #F1F3F6;
+    --code-border: #E4E7EB;
+    --shadow-card: 0 1px 2px rgba(20, 30, 45, 0.05), 0 1px 1px rgba(20, 30, 45, 0.03);
+    --radius-lg: 10px;
+    --radius-md: 8px;
+    --radius-sm: 6px;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text-primary);
+    font-family: "Segoe UI", "Segoe UI Variable Text", "Segoe UI Variable", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    font-size: 15px; line-height: 1.65;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  code {
+    font-family: "Consolas", "Cascadia Mono", monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 4px;
+    padding: 0.1em 0.4em;
+  }
+  pre {
+    font-family: "Consolas", "Cascadia Mono", monospace;
+    font-size: 13px;
+    background: var(--text-primary);
+    color: #E7ECF3;
+    border-radius: var(--radius-md);
+    padding: 14px 18px;
+    overflow-x: auto;
+    margin: 0 0 16px;
+    line-height: 1.55;
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; }
+
+  h1, h2, h3, h4 { text-wrap: balance; font-weight: 600; margin: 0; }
+
+  .shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); max-width: 1180px; margin: 0 auto; align-items: start; }
+
+  .sidebar {
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+    padding: 28px 20px 28px 28px;
+    display: flex; flex-direction: column; gap: 24px;
+    border-right: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    flex: 0 0 auto; width: 38px; height: 38px; border-radius: var(--radius-sm);
+    background: var(--accent-soft); border: 1px solid var(--accent-soft-border);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px; color: var(--accent);
+  }
+  .brand-text .brand-name { font-size: 15px; font-weight: 600; }
+  .brand-text .brand-tagline { font-size: 11.5px; color: var(--text-tertiary); margin-top: 1px; }
+
+  .version-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 600; color: var(--accent);
+    background: var(--accent-soft); border: 1px solid var(--accent-soft-border);
+    border-radius: 100px; padding: 3px 10px; width: fit-content;
+    font-variant-numeric: tabular-nums;
+  }
+  .version-pill .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--success); }
+
+  .doc-kind-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 600; color: var(--text-secondary);
+    background: var(--code-bg); border: 1px solid var(--code-border);
+    border-radius: 100px; padding: 3px 10px; width: fit-content;
+  }
+
+  nav.toc { display: flex; flex-direction: column; gap: 1px; }
+  nav.toc .toc-label { font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-tertiary); margin: 0 0 8px 10px; }
+  nav.toc a { display: flex; gap: 9px; align-items: baseline; color: var(--text-secondary); font-size: 13.5px; padding: 6px 10px; border-radius: var(--radius-sm); text-decoration: none; }
+  nav.toc a:hover { background: var(--accent-soft); color: var(--accent); }
+  nav.toc a .num { font-variant-numeric: tabular-nums; color: var(--text-tertiary); font-size: 12px; flex: 0 0 16px; }
+  nav.toc a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  nav.toc a.active .num { color: var(--accent); }
+
+  .sidebar-footer { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-tertiary); line-height: 1.6; }
+  .sidebar-footer strong { color: var(--text-secondary); }
+
+  main.content { padding: 40px 48px 80px; min-width: 0; }
+
+  .page-head { margin-bottom: 36px; }
+  .page-head h1 { font-size: 27px; letter-spacing: -0.2px; }
+  .page-head .lede { font-size: 16px; color: var(--text-secondary); margin-top: 10px; max-width: 68ch; }
+  .page-head .help-hint { margin-top: 14px; font-size: 13px; color: var(--text-tertiary); }
+  .page-head .help-hint strong { color: var(--text-secondary); }
+
+  section.doc-section { margin-bottom: 46px; scroll-margin-top: 20px; max-width: 78ch; }
+  section.doc-section > h2 { font-size: 20px; padding-bottom: 12px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+  section.doc-section h3 { font-size: 15.5px; margin: 26px 0 10px; }
+  section.doc-section h4 { font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.4px; margin: 20px 0 8px; }
+  section.doc-section p { margin: 0 0 12px; }
+  section.doc-section ul, section.doc-section ol { margin: 0 0 14px; padding-left: 22px; }
+  section.doc-section li { margin-bottom: 7px; }
+  section.doc-section li > ul, section.doc-section li > ol { margin-top: 7px; margin-bottom: 0; }
+  section.doc-section li:last-child { margin-bottom: 0; }
+
+  .table-wrap { overflow-x: auto; margin: 0 0 16px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 13px; vertical-align: top; }
+  thead th { background: var(--code-bg); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--text-secondary); border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tbody tr + tr td { border-top: 1px solid var(--border); }
+  tbody td:first-child { font-weight: 600; }
+
+  .callout { display: flex; gap: 12px; border-radius: var(--radius-md); padding: 14px 16px; margin: 0 0 16px; font-size: 13.5px; border: 1px solid transparent; }
+  .callout svg { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 1px; }
+  .callout p { margin: 0; }
+  .callout p + p { margin-top: 8px; }
+  .callout--note { background: var(--accent-soft); border-color: var(--accent-soft-border); color: var(--text-primary); }
+  .callout--note svg { color: var(--accent); }
+  .callout--warning { background: var(--warning-soft); border-color: var(--warning-soft-border); color: var(--text-primary); }
+  .callout--warning svg { color: var(--warning); }
+  .callout--example { background: var(--success-soft); border-color: var(--success-soft-border); color: var(--text-primary); }
+  .callout--example svg { color: var(--success); }
+
+  /* ---------- Architecture component grid ---------- */
+
+  .arch-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 0 0 16px; }
+  .arch-card { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-card); padding: 14px 16px; }
+  .arch-card h4 { margin: 0 0 8px; font-size: 12.5px; text-transform: none; letter-spacing: 0; color: var(--accent); font-weight: 700; }
+  .arch-card ul { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--text-secondary); }
+  .arch-card li { margin-bottom: 4px; }
+  .arch-card.emph { border-color: var(--accent-soft-border); background: var(--accent-soft); }
+  .arch-card.emph h4 { color: var(--accent-hover); }
+  .arch-connector { grid-column: 1 / -1; text-align: center; font-size: 11.5px; color: var(--text-tertiary); padding: 2px 0; }
+  @media (max-width: 700px) { .arch-grid { grid-template-columns: 1fr; } }
+
+  /* ---------- Self-contained process-flow diagrams ---------- */
+
+  .flow { display: flex; flex-direction: column; align-items: stretch; margin: 0 0 20px; max-width: 100%; }
+  .flow-step {
+    border: 1px solid var(--border-strong); border-radius: var(--radius-md);
+    background: var(--surface); box-shadow: var(--shadow-card);
+    padding: 10px 15px; font-size: 13px; text-align: center;
+  }
+  .flow-step .tag { display: block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-tertiary); margin-bottom: 3px; }
+  .flow-step.decision { background: var(--accent-soft); border-color: var(--accent-soft-border); }
+  .flow-step.decision .tag { color: var(--accent-hover); }
+  .flow-step.terminal-ok { background: var(--success-soft); border-color: var(--success-soft-border); }
+  .flow-step.terminal-ok .tag { color: var(--success); }
+  .flow-step.terminal-warn { background: var(--warning-soft); border-color: var(--warning-soft-border); }
+  .flow-step.terminal-warn .tag { color: var(--warning); }
+  .flow-step.terminal-fail { background: var(--danger-soft); border-color: var(--danger-soft-border); }
+  .flow-step.terminal-fail .tag { color: var(--danger); }
+  .flow-step.actor { background: var(--code-bg); border-style: dashed; font-weight: 600; }
+
+  .flow-arrow { display: flex; justify-content: center; align-items: center; height: 22px; color: var(--text-tertiary); }
+  .flow-arrow svg { width: 14px; height: 14px; }
+
+  .flow-branch { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 2px 0; }
+  .flow-branch.wide3 { grid-template-columns: repeat(3, 1fr); }
+  .flow-branch-col { display: flex; flex-direction: column; }
+  .flow-branch-label {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+    color: var(--text-tertiary); text-align: center; margin-bottom: 6px;
+    padding-bottom: 6px; border-bottom: 1px dashed var(--border-strong);
+  }
+  .flow-branch-col.yes .flow-branch-label { color: var(--success); }
+  .flow-branch-col.no .flow-branch-label { color: var(--danger); }
+  @media (max-width: 640px) { .flow-branch, .flow-branch.wide3 { grid-template-columns: 1fr; } }
+
+  .runbook { list-style: none; margin: 0 0 20px; padding: 0; counter-reset: step; }
+  .runbook li {
+    position: relative; padding: 10px 14px 10px 46px; margin-bottom: 6px;
+    border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface);
+    font-size: 13.5px;
+  }
+  .runbook li::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .runbook li strong.actor { color: var(--accent); }
+
+  /* ---------- Footer ---------- */
+
+  footer.doc-footer { max-width: 78ch; margin-top: 60px; padding-top: 28px; border-top: 1px solid var(--border); }
+  .authorized-use { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); padding: 18px 20px; margin-bottom: 20px; }
+  .authorized-use h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-tertiary); }
+  .authorized-use p { margin: 0; font-size: 12.5px; color: var(--text-secondary); line-height: 1.6; }
+  .footer-meta { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--text-tertiary); }
+  .footer-meta a { color: var(--text-tertiary); }
+  .footer-meta a:hover { color: var(--accent); }
+
+  @media (max-width: 860px) {
+    .shell { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+    main.content { padding: 32px 20px 60px; }
+  }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">PS</div>
+      <div class="brand-text">
+        <div class="brand-name">PortProSage Sync</div>
+        <div class="brand-tagline">PortPro → Sage 50 sync, by SmallArc Inc.</div>
+      </div>
+    </div>
+    <div class="version-pill"><span class="dot"></span>Version 2.12.25</div>
+    <div class="doc-kind-pill">Technical Design Document</div>
+
+    <nav class="toc" aria-label="Table of contents">
+      <div class="toc-label">Contents</div>
+      <a href="#overview"><span class="num">01</span>System overview</a>
+      <a href="#environment"><span class="num">02</span>Environment &amp; prerequisites</a>
+      <a href="#architecture"><span class="num">03</span>Architecture</a>
+      <a href="#portpro-api"><span class="num">04</span>PortPro API surface</a>
+      <a href="#sage50-sdk"><span class="num">05</span>Sage 50 SDK surface</a>
+      <a href="#business-logic"><span class="num">06</span>Core business logic</a>
+      <a href="#process-flows"><span class="num">07</span>Process flows</a>
+      <a href="#data-model"><span class="num">08</span>Local data model</a>
+      <a href="#configuration"><span class="num">09</span>Configuration reference</a>
+      <a href="#failure-handling"><span class="num">10</span>Failure handling</a>
+      <a href="#versioning"><span class="num">11</span>Versioning &amp; deployment</a>
+      <a href="#security"><span class="num">12</span>Security &amp; secrets</a>
+      <a href="#quirks"><span class="num">13</span>Confirmed quirks &amp; incidents</a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <strong>SmallArc Inc.</strong><br />
+      Edison, NJ (USA)<br />
+      © 2026 · All rights reserved
+    </div>
+  </aside>
+
+  <main class="content">
+    <header class="page-head">
+      <h1>PortProSage Sync — Technical Design Document</h1>
+      <p class="lede">The engineering-level reference: the environment it requires, the exact PortPro and Sage 50 APIs it calls, the business logic that decides what happens to every invoice and customer, and the process/data flow end to end.</p>
+      <p class="help-hint">This assumes you already know what the app <em>does</em> for an operator — see <strong>USER_GUIDE.html</strong> for that. This document is for whoever maintains, extends, redeploys, or troubleshoots the system at the code level. Quick-start build/run instructions live in <code>README.md</code>.</p>
+    </header>
+
+    <section class="doc-section" id="overview">
+      <h2>1. System overview</h2>
+      <p>PortProSage Sync moves invoice and customer data one way: <strong>PortPro (source of truth) → Sage 50 Canadian Edition (destination)</strong>. It runs as a Windows Service that either polls PortPro on a schedule or executes a single explicit request, validates/maps each invoice against Sage 50's own master data (customers, items, GL accounts), and posts it via the Sage 50 SDK. A separate WinForms Admin application edits configuration and starts/stops/monitors runs — it never talks to PortPro or Sage 50 itself.</p>
+      <p>Nothing is ever pulled back out of Sage 50 into PortPro. The one exception that touches Sage 50 without an invoice attached is the customer-profile push (incremental sync or Full Customer Refresh) — still one-directional, PortPro → Sage 50.</p>
+    </section>
+
+    <section class="doc-section" id="environment">
+      <h2>2. Environment &amp; prerequisites</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Requirement</th><th>Detail</th></tr></thead>
+          <tbody>
+            <tr><td>OS</td><td>Windows Server (confirmed on Windows Server 2022 Standard) — must be a machine where Sage 50 Canadian Edition is installed and licensed, since the Sage 50 SDK is an in-process managed assembly, not a remote API.</td></tr>
+            <tr><td>.NET runtimes</td><td><code>PortProSage.Core</code>/<code>.Service</code>/<code>.Trigger</code> target <strong>.NET Framework 4.8</strong> — required because the Sage 50 SDK assembly (<code>Sage_SA.SDK.dll</code>) is a .NET Framework component, and multi-user mode's connectivity check depends on <code>System.Runtime.Remoting</code>, unavailable on .NET Core/.NET 5+. <code>PortProSage.Admin</code> targets <strong>.NET 10.0-windows</strong> — it never touches the SDK directly, so it isn't bound by that constraint.</td></tr>
+            <tr><td>Sage 50 Canadian Edition</td><td>A full, licensed, activated installation on the same machine, with the company file (<code>.SAI</code>) already created. The bundled SDK <strong>must exactly match the installed Sage 50 product version</strong> — Sage does not support a mismatched SDK, and two SDK versions cannot coexist. Check via Sage 50 → Help → About; download the matching SDK from the Sage 50 Canadian Edition SDK Download Portal.</td></tr>
+            <tr><td>Sage 50 SDK files</td><td><code>lib/Sage50SDK/*.dll</code> bundled alongside the built Service/Trigger executables. <code>Sage50Client</code> logs the bundled SDK's file version at every connect, and warns (non-fatally) if <code>Sage50:ExpectedSdkVersion</code> doesn't match.</td></tr>
+            <tr><td>Sage 50 user account</td><td>A <strong>dedicated, non-interactive</strong> account (e.g. <code>PortProConnect</code>) — never one a human also logs in with. Sage 50 rejects a second simultaneous session under the same username, even in multi-user mode.</td></tr>
+            <tr><td>Multi-user mode</td><td>The company file must be shared in multi-user mode so this service can connect while a human keeps a separate session open under a different username. Single-user mode would exclusively lock the file for as long as this service runs.</td></tr>
+            <tr><td>PortPro API access</td><td>An Access Token + Refresh Token pair issued directly by PortPro (no OAuth client id/secret flow). Outbound HTTPS access to PortPro's API host (<code>api1.app.portpro.io</code>).</td></tr>
+            <tr><td>Local storage</td><td>A writable folder for the SQLite state database, rolling daily logs, the trigger/request folder tree, and failed-transaction CSVs. All configurable via <code>Sync:*</code>; defaults under <code>C:\PortProSageSync\</code>.</td></tr>
+            <tr><td>Concurrency</td><td>Exactly <strong>one</strong> thing may hold a Sage 50 session at a time — the Automatic Service, a Manual Run, or a Full Customer Refresh. Enforced by scanning for a running <code>PortProSage.Service.exe</code> process before starting a new one.</td></tr>
+            <tr><td>Email (optional)</td><td>SMTP credentials for failed-transaction report emails — <code>PortProSage:Email:*</code>, disabled until configured.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="doc-section" id="architecture">
+      <h2>3. Architecture</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Project</th><th>Target</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td><code>PortProSage.Core</code></td><td>net48</td><td>Shared library — PortPro HTTP client, Sage 50 SDK wrapper, validation/mapping, sync orchestration, local SQLite state, config models.</td></tr>
+            <tr><td><code>PortProSage.Service</code></td><td>net48</td><td>The actual executable. Runs three ways: as an installed <strong>Windows Service</strong> (polling PortPro, watching the trigger folder); as a <strong>one-shot process</strong> via <code>--run-once &lt;request.json&gt;</code> (every Manual Run and Full Customer Refresh); via <strong>diagnostic CLI flags</strong> for isolated troubleshooting.</td></tr>
+            <tr><td><code>PortProSage.Trigger</code></td><td>net48</td><td>A small standalone CLI for dropping a request file from outside the Admin app (e.g. a scheduled task on another machine). Superseded for day-to-day use by the Admin app's Manual Run tab.</td></tr>
+            <tr><td><code>PortProSage.Admin</code></td><td>net10.0-windows</td><td>WinForms configuration/control UI. Edits settings files directly, starts runs by launching the Service exe or dropping a file. <strong>Never</strong> calls PortPro or the Sage 50 SDK — duplicates just the JSON request/result contract so it doesn't need to reference Core's net48/SDK dependency chain.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Why file-drop instead of a network/IPC API</h3>
+      <p>The Admin app and the Service communicate purely through the filesystem: a <code>SyncRequest</code> is serialized to <code>&lt;id&gt;.request.json</code>, the Service processes it and writes <code>&lt;id&gt;.result.json</code> next to it, checkpointing after every invoice so a killed process still leaves a real partial result behind. Chosen over a REST endpoint or named pipe because the trigger tool needs zero network/IPC setup (just filesystem access, works from a scheduled task or mapped drive unchanged); a result file surviving on disk after its writer exits is exactly what History &amp; Logs is built to read; and it naturally serializes access — only one process can plausibly be mid-write to Sage 50 at a time in practice.</p>
+
+      <h3>Component diagram</h3>
+      <div class="arch-grid">
+        <div class="arch-card emph">
+          <h4>PortProSage.Admin (.NET 10, WinForms)</h4>
+          <ul><li>Manual Run / Full Customer Refresh / Automatic Sync / History &amp; Logs UI</li><li>Edits appsettings.json / appsettings.Local.json directly</li><li>Writes request.json, launches Service.exe, polls result.json</li></ul>
+        </div>
+        <div class="arch-card">
+          <h4>Filesystem (shared folder tree)</h4>
+          <ul><li>appsettings.json / appsettings.Local.json</li><li>requests/manual, requests/auto-poll, requests/ (trigger)</li><li>*.result.json (checkpointed live)</li><li>state.db (SQLite), rolling logs, failed-transaction CSVs</li></ul>
+        </div>
+        <div class="arch-card emph">
+          <h4>PortProSage.Service.exe (.NET Framework 4.8)</h4>
+          <ul><li>Worker (poll loop + trigger watch) / --run-once</li><li>SyncOrchestrator, InvoiceValidationService</li><li>CustomerSyncService, PortProClient, Sage50Client</li></ul>
+        </div>
+        <div class="arch-connector">▲ writes / launches / polls ▼</div>
+        <div class="arch-card">
+          <h4>PortPro API</h4>
+          <ul><li>api1.app.portpro.io</li><li>Invoices, customers (HTTPS/JSON)</li></ul>
+        </div>
+        <div class="arch-card">
+          <h4>Sage 50 SDK</h4>
+          <ul><li>SimplySDK (in-process managed assembly)</li><li>Company .SAI file</li></ul>
+        </div>
+        <div class="arch-card">
+          <h4>state.db + logs + CSVs</h4>
+          <ul><li>Watermark, imported_invoice, customer_sync_state</li><li>Read by both Service and Admin (History &amp; Logs)</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="portpro-api">
+      <h2>4. PortPro API surface</h2>
+      <p>Every endpoint, base URL, and query parameter name below was confirmed <strong>live</strong> — either by extracting string literals from the previously-working connector tool's compiled binary and testing them against the real API, or by direct <code>curl</code> calls against production using the real refresh token. Where a name looks like it doesn't quite match its semantic meaning (<code>billingFrom</code>/<code>billingTo</code> used for the "invoice date" filter), that's the confirmed real parameter name, not a guess.</p>
+
+      <h3>4.1 Authentication</h3>
+      <ul>
+        <li>PortPro issues an <strong>Access Token + Refresh Token</strong> pair directly (no client id/secret, no standard OAuth flow) — configured once as <code>PortPro:AccessToken</code>/<code>RefreshToken</code> (secrets, kept out of <code>appsettings.json</code>).</li>
+        <li><code>POST {BaseUrl}/generate-new-token</code> mints a fresh access token from the refresh token — called automatically when the cached token is judged expired, and on-demand on a <code>401</code> (retrying that one request exactly once with the new token).</li>
+        <li>Every request carries <code>Authorization: Bearer {accessToken}</code>.</li>
+        <li><code>429 Too Many Requests</code> is retried with backoff (honoring <code>Retry-After</code> when present, exponential up to 30s otherwise, up to 5 attempts) — added after a large <code>InvoiceNumberList</code> run's rapid single-invoice lookups triggered rate limiting that, unhandled, failed the entire run instead of just one lookup.</li>
+      </ul>
+
+      <h3>4.2 Invoices — list endpoint</h3>
+      <p><code>GET {BaseUrl}/invoices</code>, paginated via <code>skip</code>/<code>limit</code> (limit = <code>PortPro:PageSize</code>, default 100). Every page of every list call also sends <code>allInvoices=true</code>.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Sync mode</th><th>Query parameters added</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>LastChangedDate</td><td><code>updatedFrom</code>/<code>updatedTo</code></td><td>PortPro's "last touched" timestamp — can include an invoice dated well outside the window if merely edited.</td></tr>
+            <tr><td>CompletedDateRange ("Invoice date")</td><td><code>billingFrom</code>/<code>billingTo</code></td><td>The invoice's own real date, despite the parameter name.</td></tr>
+            <tr><td>InvoiceNumberRange</td><td><code>billingFrom</code>/<code>billingTo</code> widened to 10y back → tomorrow</td><td>No server-side reference-number filter exists. An unbounded query was confirmed to make PortPro silently omit real invoices (multi-charge-set ones); a date-bounded query returns the complete set. Filtered by <code>ReferenceNumber</code> client-side.</td></tr>
+            <tr><td>InvoiceNumberList / GapScan</td><td><em>n/a</em></td><td>Uses the single-invoice endpoint instead — see 4.3.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Response shape: <code>{"data": [{load fields..., "invoice": [charge-set fields...]}]}</code> — one <code>data</code> entry is one PortPro load; its <code>invoice[]</code> can hold more than one charge set. Flattened so nothing downstream deals with the envelope.</p>
+      <div class="callout callout--warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.29 3.86l-8.02 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3l-8.02-14a2 2 0 0 0-3.42 0z"/></svg>
+        <p>An unrecognized <code>FilterType</code> reaching the query builder <strong>throws immediately</strong> rather than silently sending no filter — a deliberate guard after a version-skew incident where an older Service build, given a request from a newer Admin build using an unknown FilterType, fell through with no filter and began really importing the entire production account. See §13.</p>
+      </div>
+
+      <h3>4.3 Invoices — single-invoice endpoint</h3>
+      <p><code>GET {BaseUrl}/invoices/{referenceNumber}</code> — looks up one invoice directly, bypassing pagination. Confirmed to find at least one real invoice the list endpoint could not return under any query tried. Used for <code>InvoiceNumberList</code> (one-at-a-time, 150ms pace between calls; a 404 is logged and skipped, not fatal), <code>InvoiceNumberGapScan</code> (rewrites into InvoiceNumberList internally), and the <code>--check-invoice</code> diagnostic. Wraps its response differently than the list endpoint, and one reference number can legitimately span multiple charge sets that get combined (amounts summed, pricing lines concatenated), not treated as duplicates.</p>
+
+      <h3>4.4 Customers</h3>
+      <p>Confirmed live to be a <strong>separate, richer object</strong> from the lightweight <code>caller</code> embedded on each invoice (<code>_id</code>, <code>company_name</code>, <code>currency</code>, <code>externalSystemID</code> only):</p>
+      <ul>
+        <li><code>GET {BaseUrl}/customer/{id}</code> — one customer's full profile, ~94 fields. <code>id</code> = <code>invoice.caller._id</code>.</li>
+        <li><code>GET {BaseUrl}/customer</code>, paginated — the entire list, same full-profile shape as the single fetch, so a full scan (~223 customers on this account) needs no per-customer detail call.</li>
+      </ul>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>PortPro field</th><th>Meaning</th><th>Mapped to</th></tr></thead>
+          <tbody>
+            <tr><td>company_name</td><td>Legal/display name</td><td>Sage 50 Name (also the match key)</td></tr>
+            <tr><td>currency</td><td>Sometimes blank</td><td>Sage 50 CurrencyCode (left at default if blank)</td></tr>
+            <tr><td>main_contact_name</td><td>Primary contact</td><td>Sage 50 Contact</td></tr>
+            <tr><td>address1 / city / state / country / zip_code</td><td>Address</td><td>Street1 / City / Province / Country / PostalCode</td></tr>
+            <tr><td>mobile</td><td>Phone</td><td>Sage 50 Phone1</td></tr>
+            <tr><td>billingEmail</td><td>Real, human-entered billing email</td><td>Sage 50 Email</td></tr>
+            <tr><td>email</td><td>PortPro-generated proxy address</td><td><em>not mapped</em></td></tr>
+            <tr><td>updatedAt</td><td>Last-changed timestamp</td><td>Compared against customer_sync_state</td></tr>
+            <tr><td>defaultPaymentTerms.{method,days}</td><td>Customer-level default terms</td><td><em>not mapped — per-invoice terms used instead, see 6.8</em></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>4.5 Per-invoice payment terms</h3>
+      <p>Confirmed present on the invoice <strong>envelope</strong> (sibling to <code>_id</code>/<code>invoice</code>/<code>createdAt</code>), not the customer object — genuinely varies per invoice: <code>payment_terms</code> (→ <code>PaymentTermsNetDays</code>), <code>payment_terms_method</code>, <code>invoiceDueDate</code> (present but not currently consumed — Sage 50's own due-date calculation from the days value is used instead, so it stays consistent with Sage 50's own invoice date).</p>
+
+      <h3>4.6 Known API-shape gotchas</h3>
+      <ul>
+        <li><strong>Pagination instability against a live dataset.</strong> A gap-fill sweep re-fetching the exact same range a prior run just fetched can occasionally still find "missing" invoices — confirmed this is records shifting between sequential skip/limit calls against live, mutating data, not a systemic omission. This is why gap-fill is a permanent safety net (§6.9), not a one-time fix.</li>
+        <li><strong>Multi-charge-set invoices can be invisible to the list endpoint.</strong> A confirmed real case (2 charge sets, same reference number) never appeared via the list endpoint under any query, while a single-charge-set neighbor did. The single-invoice endpoint found it fine.</li>
+      </ul>
+    </section>
+
+    <section class="doc-section" id="sage50-sdk">
+      <h2>5. Sage 50 SDK surface</h2>
+      <p><strong>This is a managed .NET assembly</strong> (<code>SimplySDK</code> namespace, ships as <code>Sage_SA.SDK.dll</code>), <strong>not a COM component</strong> — there is no ProgID to resolve; it's referenced and called directly, confirmed against the SDK's own shipped XML documentation and cross-checked with live reflection over the shipped assembly plus live calls against a real company file.</p>
+
+      <h3>5.1 Connection model</h3>
+      <pre><code>SDKInstanceManager.Instance                       // process-wide singleton
+    .SetAlertImplementation(HeadlessSdkAlert)      // MUST be set before OpenDatabase - the default
+                                                    // implementation throws on every alert, including
+                                                    // ordinary Yes/No confirmations a human would click through
+    .OpenDatabase(companyPath, userName, password,
+                  openMultiUserMode: true,
+                  appName, appId, 1)                // appId ("TPAppCode") max 6 characters
+    .OpenCustomerLedger() / OpenInventoryLedger() / OpenAccountLedger()   // opened once, reused for the
+                                                                          // connection's lifetime
+    .OpenSalesJournal()                             // opened fresh per invoice, closed in a finally block
+    .CloseDatabase()                                // on Dispose</code></pre>
+      <p><code>Sage50Client</code> is a DI singleton with a connected flag — <code>ConnectAsync</code> is idempotent after the first real connect. The three long-lived ledgers are opened once and reused, <strong>not</strong> reopened per call — confirmed live that opening/closing has real overhead, and a 120-invoice run was doing this several times <em>per invoice</em>. <code>SalesJournal</code> is deliberately <strong>not</strong> pooled the same way — opened fresh and closed per invoice, since a failed write has real incident history (§13) of leaving a session in a bad state.</p>
+
+      <h3>5.2 Objects and methods actually used</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Object</th><th>Purpose</th><th>Key methods/properties</th></tr></thead>
+          <tbody>
+            <tr><td>ReceivableModule.CustomerLedger</td><td>Customer master data</td><td><code>LoadByName</code>, <code>InitializeNew</code>, <code>Save</code>; settable: Name, Contact, Street1, Street2, City, Province, Country, PostalCode, Phone1, Phone2, Fax, Email, WebSite, CurrencyCode</td></tr>
+            <tr><td>InventoryModule.InventoryLedger</td><td>Service items</td><td><code>LoadByPartCode</code>, <code>InitializeNew</code>, <code>Save</code>; Number, Name, IsServiceType, RevenueAccount</td></tr>
+            <tr><td>GeneralModule.AccountLedger</td><td>GL account existence</td><td><code>LoadByAccountNumber(int)</code> — preferred; <code>LoadByAccountDisplayString</code> confirmed to return false for every real account tried</td></tr>
+            <tr><td>Support.SalesJournal / InvoiceJournal</td><td>Posts the sales invoice</td><td><code>SelectTransType((short)0)</code> (must be first — 0=Invoice/1=Order/2=Quote); <code>SelectAPARLedger(name)</code> (≤0 = not resolved); <code>InvoiceNumber</code> (NOT SetReferenceNumber — that's the prepayment/deposit field); <code>SetJournalDate</code>; <code>SetTermDiscNetDay(int)</code>; per line: <code>SetItemNumber</code>/<code>SetDescription</code>/<code>SetQuantity</code>/<code>SetPrice</code>/<code>SetLineAccount</code>/<code>SetTaxCodeString</code>; <code>Post()</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>5.3 Confirmed limitations (verified via live reflection, not assumed)</h3>
+      <ul>
+        <li><strong>No per-customer receivable/AR account property exists at all.</strong> Sage 50 posts every customer to one global AR control account, configured once in Sage 50 itself — not settable per customer regardless of <code>Sage50:DefaultReceivableAccount</code>'s value (kept for audit/logging only).</li>
+        <li><strong>No per-customer payment-terms property exists either.</strong> Terms live only on the invoice-posting object — must be set explicitly on every single invoice (§6.8).</li>
+        <li><strong>SelectAPARLedger does not auto-populate payment terms.</strong></li>
+        <li><strong>Re-reading InvoiceNumber after Post() is unreliable</strong> — the code returns the value it set before posting, not what it reads back afterward.</li>
+        <li><strong>Any unhandled exception from a real write is treated as evidence of a possibly-compromised SDK session</strong> and terminates the whole process — see §10.</li>
+      </ul>
+    </section>
+
+    <section class="doc-section" id="business-logic">
+      <h2>6. Core business logic</h2>
+
+      <h3>6.1 Sync modes (FilterType)</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Mode</th><th>Selects by</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>LastChangedDate</td><td>PortPro updatedAt window, or the watermark when UseWatermark=true ("Continue")</td><td>Automatic polling always uses UseWatermark=true.</td></tr>
+            <tr><td>CompletedDateRange</td><td>Invoice's own billing date window</td><td>Admin UI labels this "Invoice date" — the safe default.</td></tr>
+            <tr><td>InvoiceNumberRange</td><td>Reference number between Start/End, inclusive</td><td>Client-side filtered within a wide date-bounded fetch.</td></tr>
+            <tr><td>InvoiceNumberList</td><td>Explicit comma-separated set</td><td>One-at-a-time single-invoice lookups.</td></tr>
+            <tr><td>InvoiceNumberGapScan</td><td><em>internal only</em></td><td>Rewrites into InvoiceNumberList — driven by GapFillRunner, §6.9.</td></tr>
+            <tr><td>FullCustomerRefresh</td><td><em>no invoices at all</em></td><td>Entirely separate path — §6.10. Invoices* fields on SyncResult repurposed for customer counts.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>6.2 Watermark / "Continue"</h3>
+      <p>A persisted (date, last-processed-invoice-number) pair in <code>state.db</code>. A UseWatermark=true request resolves From from the saved date and To as "now"; only a watermark-driven run advances it afterward. Every other mode is a one-time override that never reads or writes it — proven by capturing Before/After on every run, showing an explicit-range run leaves it genuinely untouched.</p>
+
+      <h3>6.3 Cutoff (lower) invoice date</h3>
+      <p><code>Sync:CutoffInvoiceDate</code> — a hard floor applied identically regardless of mode: an invoice dated before this is skipped outright, never attempted against Sage 50. Stops Sage 50's own "Do Not Allow Transactions Dated Before…" configuration from rejecting an invoice mid-run.</p>
+
+      <h3>6.4 Max invoices / max customers cap</h3>
+      <p>Enforced <strong>inside the same run's own loop</strong>, not by pre-computing a boundary for a separately-refetched run (confirmed that approach doesn't reliably cap anything against live data). Counts only <strong>genuinely processed</strong> items — imported + failed validation + failed write for invoices; for Full Customer Refresh, the same field means "max customers to actually update" (a not-found-in-Sage-50 skip doesn't count).</p>
+
+      <h3>6.5 Dry Run — two independent flags</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Flag</th><th>Config key</th><th>Scope</th></tr></thead>
+          <tbody>
+            <tr><td>Shared Dry Run</td><td><code>Sage50:DryRun</code> (persisted)</td><td>Every ordinary Manual Run, the Automatic Service, and the periodic customer-sync sweep. Editable identically on Manual Run and Sage 50 tabs — same setting, saved immediately either place.</td></tr>
+            <tr><td>Full Customer Refresh's own Dry Run</td><td><code>SyncRequest.CustomerRefreshDryRun</code> — never persisted, defaults to true</td><td>Applies only to that one refresh run. Overrides <code>Sage50Settings.DryRun</code> <strong>in-memory, for that one dedicated process only</strong> (same technique the diagnostic commands use) — never touches appsettings.Local.json.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>When either flag is set, every Sage 50 write call short-circuits to a log line and a synthetic <code>DRYRUN-</code> result without calling the SDK. <code>MarkImported</code>/<code>MarkCustomerSynced</code> are both guarded so a Dry Run result is never recorded as if real — otherwise turning Dry Run off later would make those items look "already done" forever.</p>
+
+      <h3>6.6 Customer resolution, auto-create, and per-run caching</h3>
+      <p><code>InvoiceValidationService.ValidateCustomerAsync</code>, once per invoice:</p>
+      <ol>
+        <li>Match key is <code>caller.company_name</code> (falling back to <code>callerName</code>) — matched against Sage 50 by <strong>name only</strong>; there's no separate customer-code concept in this SDK.</li>
+        <li><strong>Per-run cache first.</strong> A customer already found-or-created earlier in this same run is never re-checked. This class is a DI singleton reused across every poll cycle, so the cache is explicitly cleared at the top of every <code>RunAsync</code> call, not just at process startup.</li>
+        <li>Cache miss → <code>FindCustomerByNameAsync</code>. Found → cached and used.</li>
+        <li>Not found → if auto-create is off, validation fails. If on: fetch PortPro's <strong>full</strong> profile via <code>GET /customer/{id}</code> when available (falling back to name + currency only if the id is missing or the fetch fails — never blocks creation), build a profile (shared mapping with the customer-sync path), create it, cache it, and record it in <code>customer_sync_state</code>.</li>
+      </ol>
+      <div class="callout callout--warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.29 3.86l-8.02 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3l-8.02-14a2 2 0 0 0-3.42 0z"/></svg>
+        <p><strong>Mid-run deletion recovery.</strong> Because the cache can span hours, a cached customer can genuinely be deleted/renamed in Sage 50 <em>during</em> the run. <code>SelectAPARLedger</code> independently re-validates immediately before posting — if it no longer resolves, it throws <code>CustomerNotFoundException</code> (recoverable — nothing was written; it's a pure selection call). <code>ProcessOneInvoiceAsync</code> evicts the stale cache entry and fails just that one invoice; a <em>later</em> invoice for the same customer in the same run gets a fresh look and a real chance to auto-recreate the customer and succeed immediately. The one affected invoice is picked up by gap-fill or the next run.</p>
+      </div>
+
+      <h3>6.7 Item/GL account resolution</h3>
+      <p>Each PortPro charge line is matched to a Sage 50 service item by code/description; missing ones are auto-created using a configured <code>ChargeAccountMap</code> entry's account, or the default revenue account as fallback. Resolution order: <strong>charge-specific mapping → default revenue account → hard error</strong> (the invoice fails rather than posting to an undefined account). PortPro's own <code>glCode</code> is reference/audit only, never used to resolve the posting account. Whichever account is chosen is confirmed to exist (<code>LoadByAccountNumber</code>, not <code>LoadByAccountDisplayString</code>) before import. A small allow-list (<code>AccountsUnverifiableBySdk</code>) bypasses the SDK check for accounts confirmed real but which the SDK itself can't verify.</p>
+
+      <h3>6.8 Due date / payment terms</h3>
+      <p>Every invoice used to post with an implicit Net 0 (<code>SetTermDiscNetDay</code> was never called at all), so Sage 50 always showed Due Date = Invoice Date. <code>ResolveNetTermDays</code> now resolves days-until-due from <strong>PortPro's own per-invoice terms</strong> (§4.5, confirmed genuinely per-invoice) when present and in units of days, falling back to <code>Sage50:DefaultNetTermDays</code> (default 30) with a warning otherwise. The resolved due date is recorded on the outcome and surfaced in the "Invoice Transferred" grid.</p>
+
+      <h3>6.9 Gap-fill ("Finding the Gap")</h3>
+      <p>Not a mode an operator picks — an automatic follow-up, triggered after <strong>every</strong> completed, range-based run regardless of source. Computes the lowest/highest reference number the original run actually touched, and re-runs exactly that range through the InvoiceNumberList path — checking each candidate individually, confirmed more reliable than the list endpoint for multi-charge-set invoices. Recorded as its own History &amp; Logs entry. Skipped if the original run didn't complete cleanly, fetched nothing, or is itself a gap-fill sub-run. Remains necessary permanently — the residual symptom is pagination instability against a live dataset (§4.6), not a fixable client-side omission.</p>
+
+      <h3>6.10 Customer sync — incremental sweep vs. Full Customer Refresh</h3>
+      <p>Both implemented by one shared method (<code>forceAll</code>, <code>maxCustomers</code>), exposed as two entry points:</p>
+      <ul>
+        <li><strong>Incremental sweep</strong> — once per Automatic Service cycle and once per Manual Run. Gated by <code>Sage50:SyncCustomerUpdatesFromPortPro</code> (default on). Compares each customer's updatedAt against <code>customer_sync_state</code>; unchanged ones skip before any Sage 50 lookup. A changed, existing customer gets updated; one not found in Sage 50 is just marked synced anyway. <strong>Never creates.</strong></li>
+        <li><strong>Full Customer Refresh</strong> — bypasses the changed-since-last-sync check entirely. Deliberately <strong>not</strong> gated by the sweep's on/off setting — an explicit, one-off action with its own confirmation UI. Honors its own max-customers cap and its own independent Dry Run.</li>
+      </ul>
+      <p>Both paths update <code>customer_sync_state</code> on success (unless Dry Run) — a Full Customer Refresh also resets the incremental sweep's "last synced" watermark for every customer it touches.</p>
+
+      <h3>6.11 History &amp; Logs / audit trail</h3>
+      <p>Every run produces a request/result JSON pair on disk, checkpointed live. Reconstructed into the grid from four sources (processed archive, live trigger folder, Manual Run subfolder, auto-poll subfolder) plus a log-line fallback for older entries. Deleting a run removes its files, any failed-transaction CSV, and its <code>imported_invoice</code> rows, and records the deletion permanently in an exclusion list so it can't silently reappear via the log-reconstruction fallback.</p>
+    </section>
+
+    <section class="doc-section" id="process-flows">
+      <h2>7. Process flows</h2>
+
+      <h3>7.1 Manual Run / Full Customer Refresh — end to end</h3>
+      <ol class="runbook">
+        <li><strong class="actor">Operator:</strong> fills the form, clicks Run / Refresh FULL Customer.</li>
+        <li><strong class="actor">Admin:</strong> validates inputs, shows confirmation dialog(s) — write mode, company file, and for Full Customer Refresh, the "ALERT..!!" dialog.</li>
+        <li><strong class="actor">Admin:</strong> writes <code>&lt;id&gt;.request.json</code>, launches <code>PortProSage.Service.exe --run-once &lt;path&gt;</code>, begins polling for the result file every 2 seconds.</li>
+        <li><strong class="actor">Service:</strong> reads the request file.</li>
+        <li><strong class="actor">Service (Full Customer Refresh):</strong> overrides DryRun in-memory from the request, fetches every PortPro customer, and for each (up to Max customers updated) loads it by name in Sage 50 and saves the refreshed profile, or logs a DRY RUN line.</li>
+        <li><strong class="actor">Service (invoice sync):</strong> fetches invoices (list or single-invoice endpoint), and for each: cutoff check, already-imported check, validate customer/items/accounts, create the invoice (or log DRY RUN), checkpoint the result file.</li>
+        <li><strong class="actor">Service (invoice sync only):</strong> runs the automatic gap-fill sweep (its own History &amp; Logs entry) and the incremental customer-sync sweep.</li>
+        <li><strong class="actor">Service:</strong> writes the final result file (<code>IsFinal=true</code>) and exits.</li>
+        <li><strong class="actor">Admin:</strong> detects <code>IsFinal</code>, stops polling, shows the completion pop-up (customer-worded "ALERT..!!" pop-up for a Full Customer Refresh), refreshes History &amp; Logs, resets one-time form fields to their defaults.</li>
+      </ol>
+
+      <h3>7.2 Per-invoice decision flow</h3>
+      <div class="flow">
+        <div class="flow-step actor">Invoice fetched from PortPro</div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step decision">Date before Cutoff Invoice Date?</div>
+        <div class="flow-branch">
+          <div class="flow-branch-col yes"><div class="flow-branch-label">Yes</div><div class="flow-step terminal-warn">Skip — Before cutoff</div></div>
+          <div class="flow-branch-col no"><div class="flow-branch-label">No</div><div class="flow-step decision">Already recorded as imported? (unless Override checked)</div></div>
+        </div>
+        <div class="flow-branch">
+          <div class="flow-branch-col yes"><div class="flow-branch-label">Yes</div><div class="flow-step terminal-warn">Skip — ALREADY_IMPORTED</div></div>
+          <div class="flow-branch-col no"><div class="flow-branch-label">No</div><div class="flow-step">Validate: customer, charge lines, accounts</div></div>
+        </div>
+        <div class="flow-branch">
+          <div class="flow-branch-col yes"><div class="flow-branch-label">Invalid</div><div class="flow-step terminal-fail">Fail — Failed validation</div></div>
+          <div class="flow-branch-col no"><div class="flow-branch-label">Valid</div><div class="flow-step">Map to Sage50Invoice, resolve NetTermDays</div></div>
+        </div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step">Sage50Client.CreateInvoiceAsync</div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-branch wide3">
+          <div class="flow-branch-col"><div class="flow-branch-label">Posted OK</div><div class="flow-step terminal-ok">MarkImported<br/>InvoicesImported++</div></div>
+          <div class="flow-branch-col"><div class="flow-branch-label">Duplicate #</div><div class="flow-step terminal-ok">MarkImported anyway<br/>(treated as success)</div></div>
+          <div class="flow-branch-col"><div class="flow-branch-label">Customer not found</div><div class="flow-step terminal-warn">Evict from cache<br/>fail this invoice only —<br/>recoverable via gap-fill/next run</div></div>
+        </div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step terminal-fail">Any other exception: TerminateOnFatalWriteError — Environment.Exit, whole process stops</div>
+      </div>
+
+      <h3>7.3 Customer resolution (per invoice)</h3>
+      <div class="flow">
+        <div class="flow-step actor">Need customer for invoice</div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step decision">In this run's cache already?</div>
+        <div class="flow-branch">
+          <div class="flow-branch-col yes"><div class="flow-branch-label">Yes</div><div class="flow-step terminal-ok">Use cached Sage 50 code</div></div>
+          <div class="flow-branch-col no"><div class="flow-branch-label">No</div><div class="flow-step">CustomerLedger.LoadByName</div></div>
+        </div>
+        <div class="flow-branch">
+          <div class="flow-branch-col yes"><div class="flow-branch-label">Found</div><div class="flow-step terminal-ok">Cache + use</div></div>
+          <div class="flow-branch-col no"><div class="flow-branch-label">Not found</div><div class="flow-step decision">AutoCreateCustomers enabled?</div></div>
+        </div>
+        <div class="flow-branch">
+          <div class="flow-branch-col no"><div class="flow-branch-label">No</div><div class="flow-step terminal-fail">Validation error — customer not found</div></div>
+          <div class="flow-branch-col yes"><div class="flow-branch-label">Yes</div><div class="flow-step">GET /customer/{id} — full PortPro profile</div></div>
+        </div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step">BuildSage50Profile + CreateCustomerAsync</div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step terminal-ok">Cache + record in customer_sync_state</div>
+      </div>
+
+      <h3>7.4 Full Customer Refresh</h3>
+      <div class="flow">
+        <div class="flow-step actor">Operator checks confirm gate + Dry Run/Max customers, clicks Refresh FULL Customer</div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step decision">"ALERT..!!" confirmation dialog — proceed?</div>
+        <div class="flow-branch">
+          <div class="flow-branch-col no"><div class="flow-branch-label">No</div><div class="flow-step terminal-warn">Cancelled — confirm checkbox resets</div></div>
+          <div class="flow-branch-col yes"><div class="flow-branch-label">Yes</div><div class="flow-step">Write request, launch Service --run-once</div></div>
+        </div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step">Override Sage50Settings.DryRun in-memory from request.CustomerRefreshDryRun</div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step">GET /customer — every PortPro customer</div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step decision">For each (up to Max customers updated): found in Sage 50 by name?</div>
+        <div class="flow-branch">
+          <div class="flow-branch-col no"><div class="flow-branch-label">No</div><div class="flow-step terminal-warn">Skip — never created here</div></div>
+          <div class="flow-branch-col yes"><div class="flow-branch-label">Yes</div><div class="flow-step terminal-ok">UpdateCustomerAsync — overwrite from PortPro profile, mark synced unless Dry Run</div></div>
+        </div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step">Write result.json — Mode: "FULL Customer refresh"</div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step terminal-ok">Admin: "ALERT..!!" completion pop-up; Dry Run/Max customers reset to defaults</div>
+      </div>
+
+      <h3>7.5 Gap-fill sweep</h3>
+      <div class="flow">
+        <div class="flow-step actor">Any range-based run finishes: IsFinal=true, not Skipped</div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step decision">FilterType was already InvoiceNumberList?</div>
+        <div class="flow-branch">
+          <div class="flow-branch-col yes"><div class="flow-branch-label">Yes</div><div class="flow-step terminal-warn">Skip — this IS a gap-fill sub-run</div></div>
+          <div class="flow-branch-col no"><div class="flow-branch-label">No</div><div class="flow-step decision">Any invoices fetched?</div></div>
+        </div>
+        <div class="flow-branch">
+          <div class="flow-branch-col no"><div class="flow-branch-label">No</div><div class="flow-step terminal-warn">Skip — nothing to sweep</div></div>
+          <div class="flow-branch-col yes"><div class="flow-branch-label">Yes</div><div class="flow-step">Compute lowest/highest reference number this run touched</div></div>
+        </div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step decision">Consistent prefix between min and max?</div>
+        <div class="flow-branch">
+          <div class="flow-branch-col no"><div class="flow-branch-label">No</div><div class="flow-step terminal-warn">Skip — can't determine a pattern</div></div>
+          <div class="flow-branch-col yes"><div class="flow-branch-label">Yes</div><div class="flow-step">Build InvoiceNumberGapScan request for that exact range</div></div>
+        </div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step">Candidates = range minus already-imported; rewritten into InvoiceNumberList, each checked via single-invoice endpoint</div>
+        <div class="flow-arrow">▼</div>
+        <div class="flow-step terminal-ok">Own History &amp; Logs entry: "Finding the Gap (found/checked)"</div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="data-model">
+      <h2>8. Local data model (state.db)</h2>
+      <p>A single SQLite file (<code>Sync:StateDatabasePath</code>), created/migrated automatically on first use.</p>
+      <pre><code>CREATE TABLE watermark (
+    key   TEXT PRIMARY KEY,   -- 'last_changed_date' / 'last_processed_invoice_number'
+    value TEXT NOT NULL
+);
+
+CREATE TABLE imported_invoice (
+    portpro_invoice_id    TEXT PRIMARY KEY,   -- PortPro's own invoice id - the real dedup key
+    reference_number      TEXT NOT NULL,      -- human-readable, e.g. RSRE_000284
+    sage50_invoice_number  TEXT NOT NULL,
+    imported_at_utc       TEXT NOT NULL
+);
+
+CREATE TABLE customer_sync_state (
+    portpro_customer_id TEXT PRIMARY KEY,
+    company_name        TEXT NOT NULL,
+    portpro_updated_at  TEXT NOT NULL,       -- the PortPro updatedAt this customer was last synced AS OF
+    synced_at_utc         TEXT NOT NULL
+);</code></pre>
+      <ul>
+        <li><strong>Dedup key is PortPro's invoice id</strong>, not the reference number — the "already imported" check is keyed on the id, so a reference-number reuse can never falsely suppress a genuinely different invoice.</li>
+        <li><code>imported_invoice</code> rows are written <strong>immediately per invoice</strong>, not batched — this is what lets a killed process resume cleanly: everything already recorded stays recorded, and the watermark (which only advances once, at the very end of the loop) simply never advances for a run that died mid-way.</li>
+        <li>A separate <code>deleted-history-ids.json</code> file (not a DB table — lives in the trigger folder) is a permanent exclusion list, so a deleted run's history entry can't reappear via log reconstruction.</li>
+      </ul>
+    </section>
+
+    <section class="doc-section" id="configuration">
+      <h2>9. Configuration reference</h2>
+      <p>Single <code>appsettings.json</code> (no Development/Production split, no <code>DOTNET_ENVIRONMENT</code>). Real secrets are always blank there and supplied via <code>appsettings.Local.json</code> (git-ignored, loaded last, overrides the checked-in file) — see §12.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Section</th><th>Key settings</th></tr></thead>
+          <tbody>
+            <tr><td>PortPro</td><td>BaseUrl, InvoiceEndpoint, CustomerEndpoint, AccessTokenEndpoint, NewTokenEndpoint, AccessToken*, RefreshToken*, PageSize, TimeoutSeconds</td></tr>
+            <tr><td>Sage50</td><td>CompanyDataPath, UserName, Password*, AppName, AppId, ExpectedSdkVersion, DefaultRevenueAccount, DefaultReceivableAccount (no effect), DefaultNetTermDays, AutoCreateCustomers, SyncCustomerUpdatesFromPortPro, AutoCreateItems, DryRun, IgnoreAccountMismatchUseDefault, AccountsUnverifiableBySdk[], TaxCodesByAbbreviation{}, ChargeAccountMap[]</td></tr>
+            <tr><td>Sync</td><td>PollingIntervalMinutes, ProcessingDelayDays, CutoffInvoiceDate, TriggerFolder, ProcessedTriggerFolder, StateDatabasePath, LogFolder, FailedTransactionsFolder, MinimumLogLevel, LogRetentionDays, ShowCommandWindow</td></tr>
+            <tr><td>Email</td><td>SmtpHost, SmtpPort, UseSsl, FromAddress, Username, Password*, RecipientAddressesCsv, Enabled</td></tr>
+            <tr><td>Fixyee</td><td>BaseUrl, ApiKey*, Enabled — placeholder, unused</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="font-size:12.5px;color:var(--text-tertiary)">* Secret — always blank in appsettings.json, real value only in appsettings.Local.json.</p>
+    </section>
+
+    <section class="doc-section" id="failure-handling">
+      <h2>10. Failure handling philosophy</h2>
+      <p>Two distinct failure classes, deliberately treated differently:</p>
+      <div class="callout callout--warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.29 3.86l-8.02 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3l-8.02-14a2 2 0 0 0-3.42 0z"/></svg>
+        <p><strong>Fatal — terminates the whole process.</strong> Any unhandled exception from a real (non-Dry-Run) Sage 50 write call, except the two recoverable cases below, is treated as possible evidence of a compromised SDK session and calls <code>Environment.Exit(1)</code> immediately. Traces back to a real incident: a genuine write failure left the SDK session itself in a bad state, and every subsequent call in that session started throwing too — but the code at the time kept catching each failure per-invoice and continuing, cascading through ~30 more invoices against an already-compromised session with no reliable way to tell which "succeeded" for real. This also gives correct watermark behavior for free — dying mid-loop means the watermark (which only advances once, at the end) is simply never reached, and invoices already durably recorded are never reprocessed on restart.</p>
+      </div>
+      <div class="callout callout--note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+        <p><strong>Recoverable — fails just one invoice, run continues.</strong> <code>DuplicateInvoiceNumberException</code> (Sage 50's own duplicate-number validation rejected the post before writing anything — evidence of correct validation, not a compromised session; the invoice is marked imported and the run continues). <code>CustomerNotFoundException</code> (SelectAPARLedger — a pure selection call, not a write — couldn't resolve a cached customer; the stale cache entry is evicted and the run continues).</p>
+      </div>
+      <p>An unrecognized <code>FilterType</code> reaching <code>PortProClient.BuildQueryString</code> also fails loudly and immediately (§4.2) rather than silently fetching with no filter — a deliberate guard against version skew between the Admin app and the Service executable processing its request.</p>
+    </section>
+
+    <section class="doc-section" id="versioning">
+      <h2>11. Versioning &amp; deployment</h2>
+      <ul>
+        <li><strong>Version scheme</strong>: <code>X.YY.ZZ</code> — X major (big feature release), YY minor (a release-worthy batch, e.g. what ships in the next production installer), ZZ build (any other new exe, including small dev-test iterations). Bumped by hand with every Admin build handed out for testing.</li>
+        <li><strong>Build configs</strong>: <code>PortProSage.Service</code> and <code>PortProSage.Trigger</code> built in both Debug and Release; <code>PortProSage.Admin</code> has a single build.</li>
+        <li><strong>Deployment scripts</strong>: <code>Install-Production.ps1</code> (fresh install — folders, appsettings.Local.json, Windows Service registration) and <code>Build-Installer.ps1</code> (packages a redistributable installer, bundling the documentation alongside the binaries).</li>
+      </ul>
+    </section>
+
+    <section class="doc-section" id="security">
+      <h2>12. Security &amp; secrets</h2>
+      <ul>
+        <li><code>appsettings.json</code> is checked into source control and <strong>never contains real secrets</strong> — PortPro AccessToken/RefreshToken and Sage50 Password are always blank there.</li>
+        <li><code>appsettings.Local.json</code> (git-ignored, copied from the <code>.example</code> file) holds the real values for one specific install, loaded last so it overrides the checked-in file. Each deployment gets its own.</li>
+        <li>The Sage 50 account used by this service is a <strong>dedicated, non-interactive</strong> account, deliberately separate from any human's own login — both for the technical reason (a second simultaneous session is rejected) and so Sage 50's own audit trail clearly distinguishes automated writes from human ones.</li>
+        <li>PortPro's Access Token refreshes itself automatically from the Refresh Token; neither is ever logged.</li>
+      </ul>
+    </section>
+
+    <section class="doc-section" id="quirks">
+      <h2>13. Confirmed quirks &amp; prior incidents</h2>
+      <p>A consolidated list of things that were <strong>tested and confirmed live</strong>, not assumed — kept here so a future change doesn't accidentally re-introduce a previously-fixed problem.</p>
+      <ol>
+        <li>PortPro's list endpoint can silently omit real invoices (multi-charge-set ones) under any query tried, while the single-invoice endpoint finds them. → Gap-fill exists permanently because of this.</li>
+        <li>An unbounded InvoiceNumberRange query omits data PortPro's API otherwise has — a wide date bound was required for the complete result set.</li>
+        <li><code>SetReferenceNumber</code> is the wrong field for the invoice number — it's the prepayment/deposit reference and throws for a plain invoice. <code>InvoiceNumber</code> is correct.</li>
+        <li><code>SelectTransType</code> must be called before any other invoice-specific setter, or the journal defaults to a mode where they throw.</li>
+        <li>A real Sage 50 write failure can leave the SDK session itself corrupted for the rest of that process's lifetime. → the fatal-write-terminates-the-process policy.</li>
+        <li><code>LoadByAccountDisplayString</code> does not work for existence checks — confirmed false for every real account tried; <code>LoadByAccountNumber</code> (numeric) does.</li>
+        <li>Reading <code>InvoiceNumber</code> back after <code>Post()</code> returns an unreliable value — use what was set before posting.</li>
+        <li><code>SetTermDiscNetDay</code> was never called at all before the due-date fix — every invoice posted with an implicit Net 0.</li>
+        <li>A version-skew mismatch between the Admin app and the Service exe can silently mean "process everything" if an unrecognized FilterType falls through to no filter — confirmed to have actually happened once. → the fail-loud guard.</li>
+        <li>Rapid sequential single-invoice PortPro lookups can trigger 429 rate limiting on a large list/gap-fill run. → retry-with-backoff plus a deliberate pace between calls.</li>
+        <li>Concurrent writes to the same result.json (a run checkpointing while the Admin app polls it) can hit a file-sharing conflict on a long, busy run. → retry-with-backoff on the writer, <code>FileShare.ReadWrite</code> on every reader.</li>
+      </ol>
+    </section>
+
+    <footer class="doc-footer">
+      <div class="authorized-use">
+        <h4>Authorized Use</h4>
+        <p>This software is licensed and authorized by SmallArc Inc. for use exclusively at the licensed location and under the terms of the applicable licensing agreement. Unauthorized use, reproduction, distribution, or deployment without the express written consent of SmallArc Inc. is prohibited.</p>
+      </div>
+      <div class="footer-meta">
+        <span>© 2026 SmallArc Inc. · PortProSage Sync v2.12.25</span>
+        <a href="mailto:contact@smallarc.com">contact@smallarc.com</a>
+      </div>
+    </footer>
+  </main>
+</div>
+
+<script>
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a'));
+    var sections = links
+      .map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); })
+      .filter(Boolean);
+
+    if (!('IntersectionObserver' in window) || sections.length === 0) return;
+
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        var link = links.find(function (a) { return a.getAttribute('href') === '#' + entry.target.id; });
+        if (!link) return;
+        if (entry.isIntersecting) {
+          links.forEach(function (a) { a.classList.remove('active'); });
+          link.classList.add('active');
+        }
+      });
+    }, { rootMargin: '-10% 0px -75% 0px' });
+
+    sections.forEach(function (s) { observer.observe(s); });
+  })();
+</script>
+
+</body>
+</html>

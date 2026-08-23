@@ -32,7 +32,39 @@ public enum FilterType
     /// 2026-08-14 to systematically find every invoice affected by the multi-
     /// charge-set list-endpoint gap (see InvoiceNumberList's doc comment) across a
     /// whole range, instead of checking suspected gaps one at a time by hand.</summary>
-    InvoiceNumberGapScan
+    InvoiceNumberGapScan,
+
+    /// <summary>Not an invoice sync at all - the EXECUTE half of the Admin app's
+    /// "Customer Refresh" tab (MainForm.CustomerRefreshTab.cs; the enum name keeps
+    /// its original "Full" wording internally even though the UI dropped it 2026-
+    /// 08-23 in favor of an explicit per-row picker - see CustomerRefreshScan
+    /// below for the PREVIEW half). Processes EXACTLY the PortPro customer ids in
+    /// SyncRequest.CustomerRefreshSelectedPortProIds - never "all customers"
+    /// implicitly - creating each one in Sage 50 if it doesn't already exist
+    /// (INSERT) or pushing its changed profile if it does (UPDATE), bypassing the
+    /// incremental "only if updatedAt changed" check CustomerSyncService.
+    /// SyncChangedCustomersAsync normally applies. Handled entirely separately
+    /// from SyncOrchestrator.RunAsync (see Diagnostics.RunOnceAsync) - no invoices
+    /// are fetched or touched at all, so every Invoices* field on the resulting
+    /// SyncResult is repurposed to carry customer counts instead (InvoicesFetched=
+    /// customers selected, InvoicesImported=created+updated, InvoicesSkippedBeforeCutoff=
+    /// created, InvoicesSkippedAlreadyImported=updated, InvoicesFailedImport=
+    /// failed) - see RunHistoryService/MainForm.HistoryTab.cs's Customer-Refresh-
+    /// specific display handling for where these are unpacked back into
+    /// customer-appropriate labels.</summary>
+    FullCustomerRefresh,
+
+    /// <summary>The PREVIEW half of the Admin app's "Customer Refresh" tab -
+    /// entirely read-only, no Sage 50 writes at all. Fetches every PortPro
+    /// customer, checks each against Sage 50 by name (and, for a match, reads
+    /// back its current Sage 50 profile too), and returns one
+    /// CustomerRefreshCandidate per customer on SyncResult.CustomerRefreshCandidates
+    /// describing what WOULD happen (INSERT/UPDATE) with a side-by-side PortPro-
+    /// vs-Sage50 comparison - populates the Admin app's grid so the operator can
+    /// pick exactly which ones to actually run via FullCustomerRefresh above.
+    /// Still needs a real (if read-only) Sage 50 connection, so it's subject to
+    /// the same one-at-a-time concurrency rule as every other run.</summary>
+    CustomerRefreshScan
 }
 
 /// <summary>
@@ -76,9 +108,32 @@ public class SyncRequest
     /// disagree, and the second run just processes everything in the boundary
     /// regardless of the original N. Enforcing the cap inside the same run's own
     /// loop is the only way it's actually a cap. Null means unlimited (the default
-    /// for automatic polling and ordinary manual triggers).
+    /// for automatic polling and ordinary manual triggers). Not used at all by
+    /// FilterType.FullCustomerRefresh as of 2026-08-23 - see
+    /// CustomerRefreshSelectedPortProIds below, which replaced the old "max
+    /// customers" cap with an explicit per-customer picker instead.
     /// </summary>
     public int? MaxInvoicesToProcess { get; set; }
+
+    /// <summary>Only meaningful for FilterType.FullCustomerRefresh - see that enum
+    /// value's doc comment. Deliberately NOT the same flag as Sage50Settings.
+    /// DryRun (the one every other write in this app shares) - the Admin app's
+    /// Customer Refresh tab has its own independent Dry Run checkbox (defaults to
+    /// checked/true every time, never persisted, never affects or is affected by
+    /// the shared Sage50 tab / Manual Run Dry Run checkbox). Diagnostics.
+    /// RunFullCustomerRefreshAsync applies this by overriding Sage50Settings.DryRun
+    /// in-memory for THIS PROCESS ONLY (same pattern as Diagnostics.
+    /// RealTransferAsync/CreateTestItemAsync forcing DryRun off) - never touches
+    /// appsettings.Local.json.</summary>
+    public bool CustomerRefreshDryRun { get; set; } = true;
+
+    /// <summary>Only meaningful for FilterType.FullCustomerRefresh - the exact set
+    /// of PortPro customer ids to process (create or update, as appropriate),
+    /// built from whichever rows the operator checked in the Admin app's Customer
+    /// Refresh grid after a CustomerRefreshScan preview. Never "all customers" -
+    /// see FilterType.FullCustomerRefresh's doc comment for why this replaced the
+    /// old blanket "refresh everything" behavior and its "max customers" cap.</summary>
+    public List<string>? CustomerRefreshSelectedPortProIds { get; set; }
 
     /// <summary>Bypasses SyncStateRepository.IsAlreadyImported's skip check for
     /// this run only - an invoice this app already recorded as imported gets
@@ -126,6 +181,14 @@ public class SyncResult
     /// the very start of SyncOrchestrator.RunAsync, so every run type gets it for
     /// free.</summary>
     public int ProcessId { get; set; }
+
+    /// <summary>Captured once, at the very start of SyncOrchestrator.RunAsync, from
+    /// Sage50Settings.DryRun - so History &amp; Logs can label a run as simulated
+    /// (Mode column, Summary) instead of leaving "Imported: 19" looking like 19
+    /// real Sage 50 writes happened when nothing was actually written. Confirmed
+    /// live 2026-08-22 this was a real gap - a completed Dry Run gave no visible
+    /// indication anywhere in its own history record that it had been simulated.</summary>
+    public bool WasDryRun { get; set; }
 
     /// <summary>The actual comma-separated reference-number list this run used, for
     /// FilterType.InvoiceNumberList or InvoiceNumberGapScan requests - a manually-
@@ -210,6 +273,71 @@ public class SyncResult
     /// date-based watermark, not this number, is what actually drives the query.
     /// </summary>
     public string? LastProcessedInvoiceNumberAfterRun { get; set; }
+
+    /// <summary>Only populated for FilterType.CustomerRefreshScan - one entry per
+    /// PortPro customer found, describing what a subsequent FullCustomerRefresh
+    /// run WOULD do for it. Null for every other FilterType.</summary>
+    public List<CustomerRefreshCandidate>? CustomerRefreshCandidates { get; set; }
+
+    /// <summary>Only populated for FilterType.FullCustomerRefresh (the EXECUTE
+    /// half) - one entry per customer it actually attempted, so the Admin app can
+    /// update the existing Customer Refresh grid's rows in place (Applied/Date
+    /// columns) rather than clearing the grid after a run. Null for every other
+    /// FilterType.</summary>
+    public List<CustomerRefreshOutcome>? CustomerRefreshOutcomes { get; set; }
+}
+
+/// <summary>One row in the Admin app's Customer Refresh grid - see FilterType.
+/// CustomerRefreshScan's doc comment. PortProDetails/SageDetails are both
+/// formatted by Sage50ProfileFormatter.Describe so they read identically
+/// side by side (currency=..., contact=..., address=..., phone=..., email=...).</summary>
+public class CustomerRefreshCandidate
+{
+    public string PortProCustomerId { get; set; } = string.Empty;
+    public string CompanyName { get; set; } = string.Empty;
+
+    /// <summary>"INSERT" (no match found in Sage 50 by name) or "UPDATE" (a match
+    /// was found).</summary>
+    public string Operation { get; set; } = string.Empty;
+
+    public string PortProDetails { get; set; } = string.Empty;
+
+    /// <summary>The matched Sage 50 customer's own Name - null for an INSERT
+    /// candidate (nothing matched).</summary>
+    public string? SageCustomerName { get; set; }
+
+    /// <summary>Sage 50's CURRENT profile for the matched customer, formatted the
+    /// same way as PortProDetails for a direct side-by-side comparison - null for
+    /// an INSERT candidate.</summary>
+    public string? SageDetails { get; set; }
+
+    /// <summary>The most recent Run Selected outcome for this customer, from
+    /// SyncStateRepository's customer_refresh_status table (persisted, so this
+    /// survives closing the app and re-Extracting) - null if this customer has
+    /// never been run from the Customer Refresh tab. Overwritten every time it's
+    /// selected and run again (see RecordCustomerRefreshOutcome's doc comment).
+    /// Populated by CustomerSyncService.ScanForRefreshAsync so the grid shows it
+    /// immediately after Extract, before anything is (re-)selected this session.</summary>
+    public bool? LastOperationSuccess { get; set; }
+    public DateTimeOffset? LastAppliedAtUtc { get; set; }
+}
+
+/// <summary>The result of actually processing one customer during a
+/// FilterType.FullCustomerRefresh (EXECUTE) run - see CustomerSyncService.
+/// ExecuteSelectedRefreshAsync. Matched back to its CustomerRefreshCandidate row
+/// in the Admin app's grid by PortProCustomerId.</summary>
+public class CustomerRefreshOutcome
+{
+    public string PortProCustomerId { get; set; } = string.Empty;
+    public string CompanyName { get; set; } = string.Empty;
+
+    /// <summary>"INSERT" or "UPDATE" - echoes which one was actually attempted,
+    /// same values as CustomerRefreshCandidate.Operation.</summary>
+    public string Operation { get; set; } = string.Empty;
+
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public DateTimeOffset AppliedAtUtc { get; set; }
 }
 
 public class InvoiceProcessingOutcome
@@ -229,6 +357,13 @@ public class InvoiceProcessingOutcome
     /// set once the invoice is actually mapped/posted, so this is null for outcomes
     /// that failed validation before mapping was attempted.</summary>
     public DateTimeOffset? Sage50InvoiceDate { get; set; }
+
+    /// <summary>Sage50InvoiceDate + the resolved NetTermDays (see SyncOrchestrator.
+    /// ResolveNetTermDays) - the actual due date Sage 50 computes from the terms
+    /// this app sets via SetTermDiscNetDay. Same null-for-failed-validation caveat
+    /// as Sage50InvoiceDate above. Added 2026-08-22 alongside the due-date/terms
+    /// fix so the resolved due date is visible, not just implied by NetTermDays.</summary>
+    public DateTimeOffset? Sage50DueDate { get; set; }
 
     public decimal TotalAmount { get; set; }
 

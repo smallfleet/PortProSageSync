@@ -1,3 +1,4 @@
+using System.Linq;
 using PortProSage.Admin.Models;
 using PortProSage.Admin.Services;
 
@@ -291,15 +292,17 @@ public partial class MainForm
         _historyTransferredGrid.Columns.Add("PortProDate", "PortPro Date");
         _historyTransferredGrid.Columns.Add("Sage50Number", "Sage 50 Invoice #");
         _historyTransferredGrid.Columns.Add("Sage50Date", "Sage 50 Date");
+        _historyTransferredGrid.Columns.Add("DueDate", "Due Date");
         _historyTransferredGrid.Columns.Add("TotalAmount", "Total Amount");
         _historyTransferredGrid.Columns.Add("TaxCharged", "Tax Charged");
 
         // Proportional widths (FillWeight, not pixels) - sums to 100, so these read
         // directly as percentages of the available width.
-        _historyTransferredGrid.Columns["PortProRef"].FillWeight = 25;
-        _historyTransferredGrid.Columns["PortProDate"].FillWeight = 15;
-        _historyTransferredGrid.Columns["Sage50Number"].FillWeight = 25;
-        _historyTransferredGrid.Columns["Sage50Date"].FillWeight = 15;
+        _historyTransferredGrid.Columns["PortProRef"].FillWeight = 22;
+        _historyTransferredGrid.Columns["PortProDate"].FillWeight = 13;
+        _historyTransferredGrid.Columns["Sage50Number"].FillWeight = 22;
+        _historyTransferredGrid.Columns["Sage50Date"].FillWeight = 13;
+        _historyTransferredGrid.Columns["DueDate"].FillWeight = 10;
         _historyTransferredGrid.Columns["TotalAmount"].FillWeight = 10;
         _historyTransferredGrid.Columns["TaxCharged"].FillWeight = 10;
 
@@ -344,6 +347,12 @@ public partial class MainForm
     /// InvoicesFetched + InvoicesNotFound.</summary>
     private static string FormatModeText(FilterType filterType, SyncResult? result)
     {
+        // Not an invoice run at all, so this deliberately doesn't read like one -
+        // see FilterType.FullCustomerRefresh/CustomerRefreshScan's doc comments.
+        // "Full" dropped from the UI-facing text 2026-08-23 (the enum name keeps
+        // it internally only).
+        if (filterType == FilterType.FullCustomerRefresh) return "Customer Refresh";
+        if (filterType == FilterType.CustomerRefreshScan) return "Customer Refresh (scan)";
         if (filterType != FilterType.InvoiceNumberGapScan) return filterType.ToString();
         if (result is null || !result.IsFinal) return "Finding the Gap";
 
@@ -432,12 +441,17 @@ public partial class MainForm
             // re-processed run is never mistaken for an ordinary one just by glancing
             // at the Mode column.
             var overrideSuffix = entry.Request?.OverrideAlreadyImportedCheck == true ? " (Override)" : "";
+            // Same idea for Dry Run - confirmed live 2026-08-22 a completed Dry Run
+            // gave no visible indication anywhere in its own history that it was
+            // simulated, not a real write.
+            var dryRunSuffix = entry.Result?.WasDryRun == true ? " (Dry Run)" : "";
             var mode = (entry.Result?.Skipped == true
                 ? "Skipped - Process Running"
                 : entry.Request is not null
                     ? (entry.Request.UseWatermark ? "Continue" : FormatModeText(entry.Request.FilterType, entry.Result))
-                    : "(auto-poll)") + overrideSuffix;
-            var source = entry.IsAutomaticPoll || entry.ReconstructedFromLog ? "Automatic Service"
+                    : "(auto-poll)") + overrideSuffix + dryRunSuffix;
+            var source = entry.Request?.FilterType is FilterType.FullCustomerRefresh or FilterType.CustomerRefreshScan ? "Customer Refresh"
+                : entry.IsAutomaticPoll || entry.ReconstructedFromLog ? "Automatic Service"
                 : entry.IsManual ? "Manual Run"
                 : "Trigger file";
 
@@ -687,11 +701,29 @@ public partial class MainForm
         var result = TriggerService.TryReadResult(_pendingProcessedFolder, _pendingRequestId);
         if (result is { IsFinal: true })
         {
+            var kind = _pendingRunKind;
             _pendingRequestId = null;
+            _pendingRunKind = PendingRunKind.None;
             _resultPollTimer.Stop();
             RefreshHistoryList();
+            // Both called unconditionally (not just whichever tab was actually
+            // used) - see ResetCustomerRefreshFormToDefaults' doc comment for why
+            // that's simpler and just as correct.
             ResetRunFormToDefaults();
-            ShowRunCompletionMessage(result);
+            ResetCustomerRefreshFormToDefaults();
+            switch (kind)
+            {
+                case PendingRunKind.CustomerRefreshScan:
+                    PopulateCustomerRefreshGrid(result.CustomerRefreshCandidates ?? new List<CustomerRefreshCandidate>());
+                    break;
+                case PendingRunKind.CustomerRefreshExecute:
+                    ShowCustomerRefreshCompletionMessage(result);
+                    ApplyCustomerRefreshOutcomes(result.CustomerRefreshOutcomes ?? new List<CustomerRefreshOutcome>());
+                    break;
+                default:
+                    ShowRunCompletionMessage(result);
+                    break;
+            }
             return;
         }
 
@@ -709,11 +741,35 @@ public partial class MainForm
 
         if (!stillTrackingThisRequest)
         {
+            var kind = _pendingRunKind;
             _pendingRequestId = null;
+            _pendingRunKind = PendingRunKind.None;
             _resultPollTimer.Stop();
             RefreshHistoryList();
-            ShowRunCompletionMessage(result); // result here is non-null-but-not-final (a checkpoint), or null if the
-                                               // process died before ever writing one - both handled below.
+            // Not calling ResetRunFormToDefaults() here - this branch (dead process,
+            // no clean finish detected) never has, for any tab; only resetting the
+            // tab that was actually just used, consistent with that existing behavior.
+            // result here is non-null-but-not-final (a checkpoint), or null if the
+            // process died before ever writing one - both handled below.
+            switch (kind)
+            {
+                case PendingRunKind.CustomerRefreshScan:
+                    ResetCustomerRefreshFormToDefaults();
+                    ClearCustomerRefreshGrid();
+                    MessageBox.Show(this,
+                        "The scan stopped without ever recording a result - it may have crashed immediately. Check " +
+                        "the Full Log tab (below, in History & Logs) for what happened.",
+                        "Scan did not complete", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    break;
+                case PendingRunKind.CustomerRefreshExecute:
+                    ResetCustomerRefreshFormToDefaults();
+                    ShowCustomerRefreshCompletionMessage(result);
+                    ApplyCustomerRefreshOutcomes(result?.CustomerRefreshOutcomes ?? new List<CustomerRefreshOutcome>());
+                    break;
+                default:
+                    ShowRunCompletionMessage(result);
+                    break;
+            }
             return;
         }
 
@@ -746,13 +802,23 @@ public partial class MainForm
 
         var hasFailures = result.InvoicesFailedValidation > 0 || result.InvoicesFailedImport > 0;
 
+        // Confirmed live 2026-08-22: a completed Dry Run's popup looked identical
+        // to a real run's, with no indication anywhere that nothing was actually
+        // written to Sage 50 - this banner (and the reworded "Imported" lines
+        // below) fixes that.
+        var dryRunBanner = result.WasDryRun
+            ? "*** DRY RUN - simulated only, nothing was actually written to Sage 50. ***\n\n"
+            : "";
+        var importedLabel = result.WasDryRun ? "Imported (simulated)" : "Imported";
+
         if (!result.IsFinal)
         {
             MessageBox.Show(this,
+                dryRunBanner +
                 "Run was INTERRUPTED before finishing - the process stopped unexpectedly (crashed, was force-" +
                 "stopped, or hit a fatal Sage 50 write error).\n\n" +
                 $"As of its last checkpoint:\n" +
-                $"Imported: {result.InvoicesImported}\n" +
+                $"{importedLabel}: {result.InvoicesImported}\n" +
                 $"Failed validation: {result.InvoicesFailedValidation}\n" +
                 $"Failed write: {result.InvoicesFailedImport}\n\n" +
                 "Check the Failed Transactions tab or Full Log (below, in History & Logs) for exactly what happened - " +
@@ -764,8 +830,9 @@ public partial class MainForm
         if (hasFailures)
         {
             MessageBox.Show(this,
+                dryRunBanner +
                 "Run finished WITH ERRORS.\n\n" +
-                $"Imported: {result.InvoicesImported}\n" +
+                $"{importedLabel}: {result.InvoicesImported}\n" +
                 $"Already imported (skipped): {result.InvoicesSkippedAlreadyImported}\n" +
                 $"Not found: {result.InvoicesNotFound}\n" +
                 $"Failed validation: {result.InvoicesFailedValidation}\n" +
@@ -776,8 +843,11 @@ public partial class MainForm
         else
         {
             MessageBox.Show(this,
+                dryRunBanner +
                 "Run completed successfully.\n\n" +
-                $"Imported {result.InvoicesImported} invoice(s) from PortPro to Sage 50.\n" +
+                (result.WasDryRun
+                    ? $"Would have imported {result.InvoicesImported} invoice(s) from PortPro to Sage 50 - nothing actually written.\n"
+                    : $"Imported {result.InvoicesImported} invoice(s) from PortPro to Sage 50.\n") +
                 $"Already imported (skipped): {result.InvoicesSkippedAlreadyImported}\n" +
                 $"Not found: {result.InvoicesNotFound}\n" +
                 $"Zero/negative amount (skipped): {result.InvoicesSkippedZeroOrNegativeAmount}\n" +
@@ -861,6 +931,7 @@ public partial class MainForm
         {
             _historyTransferredGrid.Rows.Add(
                 row.PortProReference, row.PortProDate, row.Sage50InvoiceNumber, row.Sage50Date,
+                string.IsNullOrEmpty(row.DueDate) ? "(n/a - pre-2026-08-22 run)" : row.DueDate,
                 row.TotalAmount, row.TaxCharged);
         }
 
@@ -948,11 +1019,50 @@ public partial class MainForm
 
             lines.Add($"Duration: {(entry.Result.FinishedAtUtc - entry.Result.StartedAtUtc).TotalSeconds:0.0} sec");
 
+            // Neither is an invoice run at all (see FilterType.FullCustomerRefresh/
+            // CustomerRefreshScan's doc comments) - shown under customer-appropriate
+            // labels instead of the invoice-oriented wording the rest of this method
+            // uses, and skipping the watermark/Start-End Invoice # lines entirely
+            // (meaningless here - no invoices were touched).
+            if (entry.Request?.FilterType == FilterType.CustomerRefreshScan)
+            {
+                lines.Add("");
+                var candidates = entry.Result.CustomerRefreshCandidates ?? new List<CustomerRefreshCandidate>();
+                var insertCount = candidates.Count(c => c.Operation == "INSERT");
+                var updateCount = candidates.Count(c => c.Operation == "UPDATE");
+                lines.Add($"Candidates found: {candidates.Count} ({insertCount} to insert, {updateCount} to update)");
+                lines.Add("Read-only - nothing was written to Sage 50. Go to the Customer Refresh tab to select and run them.");
+                return string.Join(Environment.NewLine, lines);
+            }
+
+            if (entry.Request?.FilterType == FilterType.FullCustomerRefresh)
+            {
+                lines.Add("");
+                lines.Add($"Customers selected: {entry.Result.InvoicesFetched}");
+                // Created/Updated live in repurposed slots - see Diagnostics.
+                // RunFullCustomerRefreshAsync's mapping comment.
+                lines.Add(entry.Result.WasDryRun
+                    ? $"Created in Sage 50 (SIMULATED - Dry Run): {entry.Result.InvoicesSkippedBeforeCutoff}"
+                    : $"Created in Sage 50: {entry.Result.InvoicesSkippedBeforeCutoff}");
+                lines.Add(entry.Result.WasDryRun
+                    ? $"Updated in Sage 50 (SIMULATED - Dry Run): {entry.Result.InvoicesSkippedAlreadyImported}"
+                    : $"Updated in Sage 50: {entry.Result.InvoicesSkippedAlreadyImported}");
+                lines.Add($"Failed: {entry.Result.InvoicesFailedImport}");
+                return string.Join(Environment.NewLine, lines);
+            }
+
             if (entry.IsPending && !entry.IsLiveProcess)
             {
                 lines.Add("");
                 lines.Add("INTERRUPTED - the process stopped before finishing. The counts below are real, " +
                            "as of its last checkpoint (saved after every invoice), not blanks.");
+            }
+
+            if (entry.Result.WasDryRun)
+            {
+                lines.Add("");
+                lines.Add("*** DRY RUN - nothing below was actually written to Sage 50. Every count is what " +
+                           "WOULD have happened on a real run; Sage 50 itself was never touched. ***");
             }
 
             // For an InvoiceNumberList/gap-fill run, "Fetched: 0" alone reads as if
@@ -970,7 +1080,9 @@ public partial class MainForm
 
             lines.Add("");
             lines.Add($"Fetched: {fetchedText}");
-            lines.Add($"Imported (real writes this run): {entry.Result.InvoicesImported}");
+            lines.Add(entry.Result.WasDryRun
+                ? $"Imported (SIMULATED - Dry Run, nothing actually written): {entry.Result.InvoicesImported}"
+                : $"Imported (real writes this run): {entry.Result.InvoicesImported}");
             lines.Add($"Already imported (skipped): {entry.Result.InvoicesSkippedAlreadyImported}");
             lines.Add($"Not found: {notFoundCount}");
             lines.Add($"Zero/negative amount (skipped): {entry.Result.InvoicesSkippedZeroOrNegativeAmount}");

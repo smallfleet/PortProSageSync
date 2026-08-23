@@ -156,6 +156,19 @@ public static class Diagnostics
         void WriteRequestFileFor(SyncRequest r) => File.WriteAllText(Path.Combine(requestFolder, $"{r.RequestId}.request.json"), JsonSerializer.Serialize(r, jsonOptions));
         void WriteResultFileFor(string id, SyncResult r) => WriteResultFileWithRetry(Path.Combine(requestFolder, $"{id}.result.json"), JsonSerializer.Serialize(r, jsonOptions), logger);
 
+        // Neither an invoice sync at all - see FilterType.FullCustomerRefresh's
+        // and CustomerRefreshScan's doc comments. Both handled entirely
+        // separately from SyncOrchestrator.RunAsync below (no invoice fetch, no
+        // gap-fill, no watermark) and return early.
+        if (request.FilterType == FilterType.CustomerRefreshScan)
+        {
+            return await RunCustomerRefreshScanAsync(request, services, logger, WriteResultFile, ct);
+        }
+        if (request.FilterType == FilterType.FullCustomerRefresh)
+        {
+            return await RunFullCustomerRefreshAsync(request, services, logger, WriteResultFile, ct);
+        }
+
         var orchestrator = services.GetRequiredService<SyncOrchestrator>();
         // Checkpointed after every invoice (onProgress), not just once at the very
         // end - a Manual Run that's stopped (or crashes) mid-way used to leave
@@ -177,6 +190,10 @@ public static class Diagnostics
         // the Automatic Service's poll cycles - see GapFillRunner's doc comment.
         await GapFillRunner.RunIfApplicableAsync(request, result, orchestrator, WriteRequestFileFor, WriteResultFileFor, logger, ct);
 
+        // Once per Manual Run too - see CustomerSyncService's doc comment and
+        // Sage50Settings.SyncCustomerUpdatesFromPortPro.
+        await services.GetRequiredService<CustomerSyncService>().SyncChangedCustomersAsync(ct);
+
         // Per-invoice detail no longer dumped here - SyncOrchestrator.RunAsync now logs
         // an "OUTCOME: ..." line for every invoice live, as it happens (see its doc
         // comment), so doing it again here after the fact would just duplicate every
@@ -185,6 +202,121 @@ public static class Diagnostics
         // "success=false" substrings, both still present in the live OUTCOME lines.
 
         return result.InvoicesFailedImport > 0 || result.InvoicesFailedValidation > 0 ? 1 : 0;
+    }
+
+    /// <summary>
+    /// Runs the read-only PREVIEW half of the Admin app's Customer Refresh tab
+    /// (FilterType.CustomerRefreshScan) - see that enum value's doc comment and
+    /// CustomerSyncService.ScanForRefreshAsync. Writes a SyncResult the same way
+    /// RunOnceAsync does (so it shows up in History &amp; Logs identically), with
+    /// the candidate list on SyncResult.CustomerRefreshCandidates and
+    /// InvoicesFetched repurposed as a simple candidate count. No Sage 50 writes
+    /// happen at all, so WasDryRun is always false here - Dry Run doesn't apply to
+    /// a scan that never writes regardless.
+    /// </summary>
+    private static async Task<int> RunCustomerRefreshScanAsync(SyncRequest request, IServiceProvider services,
+        ILogger logger, Action<SyncResult> writeResultFile, CancellationToken ct)
+    {
+        logger.LogWarning("=== CUSTOMER REFRESH SCAN: checking every PortPro customer against Sage 50 (read-only) ===");
+
+        var result = new SyncResult
+        {
+            RequestId = request.RequestId,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id,
+            WasDryRun = false
+        };
+        writeResultFile(result);
+
+        var customerSync = services.GetRequiredService<CustomerSyncService>();
+        var candidates = await customerSync.ScanForRefreshAsync(ct);
+
+        result.FinishedAtUtc = DateTimeOffset.UtcNow;
+        result.IsFinal = true;
+        result.InvoicesFetched = candidates.Count;
+        result.CustomerRefreshCandidates = candidates;
+        writeResultFile(result);
+
+        logger.LogWarning("CUSTOMER REFRESH SCAN complete: {Count} candidate(s) found.", candidates.Count);
+        return 0;
+    }
+
+    /// <summary>
+    /// Runs the EXECUTE half of the Admin app's Customer Refresh tab (FilterType.
+    /// FullCustomerRefresh) - see that enum value's doc comment and
+    /// CustomerSyncService.ExecuteSelectedRefreshAsync. Processes EXACTLY
+    /// request.CustomerRefreshSelectedPortProIds - never "all customers". Writes a
+    /// SyncResult the same way RunOnceAsync does (so it shows up in History &amp;
+    /// Logs identically), but with every Invoices* field repurposed to carry
+    /// customer counts instead, since no invoice was fetched or touched at all
+    /// this run.
+    /// </summary>
+    private static async Task<int> RunFullCustomerRefreshAsync(SyncRequest request, IServiceProvider services,
+        ILogger logger, Action<SyncResult> writeResultFile, CancellationToken ct)
+    {
+        logger.LogWarning("=== CUSTOMER REFRESH: creating/updating the operator-selected PortPro customers in Sage 50 ===");
+
+        var selectedIds = request.CustomerRefreshSelectedPortProIds ?? new List<string>();
+        if (selectedIds.Count == 0)
+        {
+            logger.LogError("FAILED: no customers were selected (CustomerRefreshSelectedPortProIds is empty) - nothing to do.");
+            var emptyResult = new SyncResult
+            {
+                RequestId = request.RequestId,
+                StartedAtUtc = DateTimeOffset.UtcNow,
+                FinishedAtUtc = DateTimeOffset.UtcNow,
+                ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id,
+                IsFinal = true
+            };
+            writeResultFile(emptyResult);
+            return 1;
+        }
+
+        var sage50Settings = services.GetRequiredService<Sage50Settings>();
+
+        // Independent of the shared Sage50:DryRun setting - see SyncRequest.
+        // CustomerRefreshDryRun's doc comment. Overridden in-memory for THIS
+        // PROCESS ONLY (never touches appsettings.Local.json), same pattern as
+        // RealTransferAsync/CreateTestItemAsync forcing DryRun off above - this
+        // process only ever runs this one operation and exits, so there's no
+        // later automatic/manual run in this same process for the override to
+        // leak into.
+        sage50Settings.DryRun = request.CustomerRefreshDryRun;
+        logger.LogWarning(
+            "CUSTOMER REFRESH: DryRun forced to {DryRun} in-memory for this process only, from this run's own " +
+            "independent Dry Run checkbox - the shared Sage50:DryRun setting is untouched.",
+            request.CustomerRefreshDryRun);
+
+        var startedAtUtc = DateTimeOffset.UtcNow;
+        var result = new SyncResult
+        {
+            RequestId = request.RequestId,
+            StartedAtUtc = startedAtUtc,
+            ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id,
+            WasDryRun = sage50Settings.DryRun
+        };
+        writeResultFile(result); // early checkpoint, same reasoning as SyncOrchestrator.RunAsync's onProgress
+
+        var customerSync = services.GetRequiredService<CustomerSyncService>();
+        var syncResult = await customerSync.ExecuteSelectedRefreshAsync(selectedIds, ct);
+
+        result.FinishedAtUtc = DateTimeOffset.UtcNow;
+        result.IsFinal = true;
+        result.InvoicesFetched = syncResult.Changed;
+        result.InvoicesImported = syncResult.Created + syncResult.Updated;
+        // Repurposed slots so Created/Updated stay visible separately - see
+        // MainForm.HistoryTab.cs's Customer-Refresh-specific summary handling.
+        result.InvoicesSkippedBeforeCutoff = syncResult.Created;
+        result.InvoicesSkippedAlreadyImported = syncResult.Updated;
+        result.InvoicesFailedImport = syncResult.Failed;
+        result.CustomerRefreshOutcomes = syncResult.Outcomes;
+        writeResultFile(result);
+
+        logger.LogWarning(
+            "CUSTOMER REFRESH complete: selected={Selected} created={Created} updated={Updated} failed={Failed}",
+            syncResult.Changed, syncResult.Created, syncResult.Updated, syncResult.Failed);
+
+        return syncResult.Failed > 0 ? 1 : 0;
     }
 
     /// <summary>Writes a checkpoint/result file with FileShare.Read (so a concurrent

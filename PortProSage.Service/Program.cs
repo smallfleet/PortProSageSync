@@ -83,6 +83,7 @@ builder.Services.AddSingleton<ISage50Client, Sage50Client>();
 builder.Services.AddSingleton<InvoiceValidationService>();
 builder.Services.AddSingleton<EmailService>();
 builder.Services.AddSingleton<SyncOrchestrator>();
+builder.Services.AddSingleton<CustomerSyncService>();
 
 builder.Services.AddHostedService<Worker>();
 

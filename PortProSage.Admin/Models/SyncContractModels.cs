@@ -22,7 +22,14 @@ public enum FilterType
     // Service would deserialize a request file written by this app as the wrong
     // filter type entirely.
     InvoiceNumberList,
-    InvoiceNumberGapScan
+    InvoiceNumberGapScan,
+
+    // Also appended at the end, same reasoning - mirrors Core's
+    // FilterType.FullCustomerRefresh (PortProSage.Core/Models/SyncModels.cs).
+    FullCustomerRefresh,
+
+    // Same reasoning again - mirrors Core's FilterType.CustomerRefreshScan.
+    CustomerRefreshScan
 }
 
 public class SyncRequest
@@ -38,7 +45,19 @@ public class SyncRequest
     public string? InvoiceNumberList { get; set; }
 
     public bool UseWatermark { get; set; }
+
     public int? MaxInvoicesToProcess { get; set; }
+
+    /// <summary>Mirrors Core's SyncRequest.CustomerRefreshDryRun - only meaningful
+    /// for FilterType.FullCustomerRefresh, and deliberately independent from the
+    /// shared Sage50:DryRun setting every other write in this app uses. See
+    /// MainForm.CustomerRefreshTab.cs.</summary>
+    public bool CustomerRefreshDryRun { get; set; } = true;
+
+    /// <summary>Mirrors Core's SyncRequest.CustomerRefreshSelectedPortProIds - the
+    /// exact PortPro customer ids the operator checked in the Customer Refresh
+    /// grid. Only meaningful for FilterType.FullCustomerRefresh.</summary>
+    public List<string>? CustomerRefreshSelectedPortProIds { get; set; }
 
     /// <summary>Mirrors Core's SyncRequest.OverrideAlreadyImportedCheck - see that
     /// doc comment. Set from Manual Run's checkbox (MainForm.RunTab.cs), which is
@@ -55,6 +74,10 @@ public class SyncResult
     public DateTimeOffset StartedAtUtc { get; set; }
     public DateTimeOffset FinishedAtUtc { get; set; }
     public int ProcessId { get; set; }
+
+    /// <summary>Mirrors Core's SyncResult.WasDryRun - captured once at the start of
+    /// the run from Sage50Settings.DryRun.</summary>
+    public bool WasDryRun { get; set; }
 
     /// <summary>The actual comma-separated reference-number list this run used -
     /// mirrors Core's SyncResult.ResolvedInvoiceNumberList. Populated for
@@ -104,6 +127,44 @@ public class SyncResult
     public DateTimeOffset? WatermarkAfterRun { get; set; }
     public string? LastProcessedInvoiceNumberBeforeRun { get; set; }
     public string? LastProcessedInvoiceNumberAfterRun { get; set; }
+
+    /// <summary>Mirrors Core's SyncResult.CustomerRefreshCandidates - only
+    /// populated for FilterType.CustomerRefreshScan.</summary>
+    public List<CustomerRefreshCandidate>? CustomerRefreshCandidates { get; set; }
+
+    /// <summary>Mirrors Core's SyncResult.CustomerRefreshOutcomes - only
+    /// populated for FilterType.FullCustomerRefresh (the EXECUTE half).</summary>
+    public List<CustomerRefreshOutcome>? CustomerRefreshOutcomes { get; set; }
+}
+
+/// <summary>Mirrors Core's CustomerRefreshCandidate - one row in the Customer
+/// Refresh grid.</summary>
+public class CustomerRefreshCandidate
+{
+    public string PortProCustomerId { get; set; } = string.Empty;
+    public string CompanyName { get; set; } = string.Empty;
+    public string Operation { get; set; } = string.Empty;
+    public string PortProDetails { get; set; } = string.Empty;
+    public string? SageCustomerName { get; set; }
+    public string? SageDetails { get; set; }
+
+    /// <summary>Mirrors Core's CustomerRefreshCandidate.LastOperationSuccess/
+    /// LastAppliedAtUtc - the persisted last Run Selected outcome for this
+    /// customer, from before this session too. Null if never run.</summary>
+    public bool? LastOperationSuccess { get; set; }
+    public DateTimeOffset? LastAppliedAtUtc { get; set; }
+}
+
+/// <summary>Mirrors Core's CustomerRefreshOutcome - the result of actually
+/// processing one customer, matched back to its grid row by PortProCustomerId.</summary>
+public class CustomerRefreshOutcome
+{
+    public string PortProCustomerId { get; set; } = string.Empty;
+    public string CompanyName { get; set; } = string.Empty;
+    public string Operation { get; set; } = string.Empty;
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public DateTimeOffset AppliedAtUtc { get; set; }
 }
 
 public class InvoiceProcessingOutcome

@@ -43,8 +43,129 @@ public class SyncStateRepository
                 sage50_invoice_number TEXT NOT NULL,
                 imported_at_utc TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS customer_sync_state (
+                portpro_customer_id TEXT PRIMARY KEY,
+                company_name TEXT NOT NULL,
+                portpro_updated_at TEXT NOT NULL,
+                synced_at_utc TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS customer_refresh_status (
+                portpro_customer_id TEXT PRIMARY KEY,
+                company_name TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                success INTEGER NOT NULL,
+                message TEXT NOT NULL,
+                applied_at_utc TEXT NOT NULL
+            );
             """;
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>The PortPro updatedAt this customer's profile was last synced into
+    /// Sage 50 as of - CustomerSyncService compares this against the customer's
+    /// CURRENT updatedAt (from GetAllCustomersAsync) to detect a change since
+    /// then. Null means never synced (either genuinely new, or synced before this
+    /// table existed).</summary>
+    public DateTimeOffset? GetCustomerLastSyncedUpdatedAt(string portProCustomerId)
+    {
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT portpro_updated_at FROM customer_sync_state WHERE portpro_customer_id = $id;";
+        cmd.Parameters.AddWithValue("$id", portProCustomerId);
+        var value = cmd.ExecuteScalar() as string;
+
+        return value is null ? null : DateTimeOffset.Parse(value);
+    }
+
+    /// <summary>Records that this customer's profile (as of portProUpdatedAt) has
+    /// been pushed into Sage 50 - called both right after an auto-create
+    /// (InvoiceValidationService) and after CustomerSyncService pushes an update
+    /// to an existing customer, so the same change is never re-applied twice.</summary>
+    public void MarkCustomerSynced(string portProCustomerId, string companyName, DateTimeOffset portProUpdatedAt)
+    {
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO customer_sync_state (portpro_customer_id, company_name, portpro_updated_at, synced_at_utc)
+            VALUES ($id, $name, $updatedAt, $now)
+            ON CONFLICT(portpro_customer_id) DO UPDATE SET
+                company_name = excluded.company_name,
+                portpro_updated_at = excluded.portpro_updated_at,
+                synced_at_utc = excluded.synced_at_utc;
+            """;
+        cmd.Parameters.AddWithValue("$id", portProCustomerId);
+        cmd.Parameters.AddWithValue("$name", companyName);
+        cmd.Parameters.AddWithValue("$updatedAt", portProUpdatedAt.ToString("O"));
+        cmd.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Records the outcome of the Admin app's Customer Refresh "Run
+    /// Selected" for one customer - one row per PortPro customer id, always
+    /// overwritten by whatever happened most recently (confirmed requirement
+    /// 2026-08-24: "if it is selected then this date will be overwritten"), so
+    /// this is deliberately a separate table from customer_sync_state rather than
+    /// reusing its synced_at_utc - that one is shared with the automatic
+    /// incidental sweep and would conflate "the background sweep touched this"
+    /// with "the operator explicitly ran this from the Customer Refresh tab".
+    /// Called for every REAL attempt, success or failure - see
+    /// CustomerSyncService.ExecuteSelectedRefreshAsync, which deliberately does
+    /// NOT call this for a Dry Run (confirmed 2026-08-24: nothing actually
+    /// happened in Sage 50, so recording a status/date for it would misleadingly
+    /// survive into a later session as if this customer had genuinely been
+    /// created/updated). So "last operation" here is always the true most recent
+    /// REAL attempt, not just the most recent success, and never a simulation.</summary>
+    public void RecordCustomerRefreshOutcome(string portProCustomerId, string companyName, string operation, bool success, string message, DateTimeOffset appliedAtUtc)
+    {
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO customer_refresh_status (portpro_customer_id, company_name, operation, success, message, applied_at_utc)
+            VALUES ($id, $name, $operation, $success, $message, $appliedAt)
+            ON CONFLICT(portpro_customer_id) DO UPDATE SET
+                company_name = excluded.company_name,
+                operation = excluded.operation,
+                success = excluded.success,
+                message = excluded.message,
+                applied_at_utc = excluded.applied_at_utc;
+            """;
+        cmd.Parameters.AddWithValue("$id", portProCustomerId);
+        cmd.Parameters.AddWithValue("$name", companyName);
+        cmd.Parameters.AddWithValue("$operation", operation);
+        cmd.Parameters.AddWithValue("$success", success ? 1 : 0);
+        cmd.Parameters.AddWithValue("$message", message);
+        cmd.Parameters.AddWithValue("$appliedAt", appliedAtUtc.ToString("O"));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Every customer_refresh_status row, keyed by PortPro customer id -
+    /// loaded once per ScanForRefreshAsync (not one query per customer, up to 223
+    /// of them) so the Admin app's Customer Refresh grid can show the last known
+    /// operation/date for every candidate immediately after Extract, even before
+    /// any Run Selected happens in the current session.</summary>
+    public Dictionary<string, (string Operation, bool Success, string Message, DateTimeOffset AppliedAtUtc)> GetAllCustomerRefreshOutcomes()
+    {
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT portpro_customer_id, operation, success, message, applied_at_utc FROM customer_refresh_status;";
+
+        var results = new Dictionary<string, (string, bool, string, DateTimeOffset)>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            results[reader.GetString(0)] = (reader.GetString(1), reader.GetInt64(2) != 0, reader.GetString(3), DateTimeOffset.Parse(reader.GetString(4)));
+        }
+        return results;
     }
 
     public DateTimeOffset? GetLastChangedWatermark()

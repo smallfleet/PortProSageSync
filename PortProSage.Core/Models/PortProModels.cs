@@ -86,6 +86,14 @@ public class PortProInvoice
 
     [JsonPropertyName("referenceFields")]
     public Dictionary<string, string>? ReferenceFields { get; set; }
+
+    /// <summary>Not present on the wire at this level - lives on the enclosing
+    /// PortProLoadEnvelope ("payment_terms"/"payment_terms_method"), same as Id/
+    /// CreatedAt/UpdatedAt above - populated by PortProClient's flattening (both
+    /// GetInvoicesAsync and GetInvoiceAsync/ConsolidateChargeSets). See
+    /// PortProLoadEnvelope.PaymentTerms's doc comment for how this was confirmed.</summary>
+    public int? PaymentTermsNetDays { get; set; }
+    public string? PaymentTermsMethod { get; set; }
 }
 
 public class PortProCaller
@@ -168,6 +176,30 @@ public class PortProLoadEnvelope
 
     [JsonPropertyName("updatedAt")]
     public DateTimeOffset? UpdatedAt { get; set; }
+
+    /// <summary>Confirmed live 2026-08-21 (fetched real invoices directly against
+    /// production, both the list and single-invoice endpoints) - this invoice's
+    /// actual payment terms, e.g. 30. Lives at this envelope level (a sibling of
+    /// "invoice", not inside it), and was present on 100/100 invoices sampled -
+    /// genuinely per-invoice, not a constant (both 26 and 30 were observed in the
+    /// same sample). This is what drives the Sage 50 due-date fix - see
+    /// PortProInvoice.PaymentTermsNetDays/PaymentTermsMethod and
+    /// SyncOrchestrator.MapToSage50Invoice.</summary>
+    [JsonPropertyName("payment_terms")]
+    public int? PaymentTerms { get; set; }
+
+    /// <summary>The unit PaymentTerms is expressed in - every sample observed
+    /// live was "day", but nothing in the payload guarantees that's the only
+    /// value PortPro ever sends, so it's captured rather than assumed.</summary>
+    [JsonPropertyName("payment_terms_method")]
+    public string? PaymentTermsMethod { get; set; }
+
+    /// <summary>PortPro's own computed due date - not currently used for anything
+    /// (PaymentTerms/PaymentTermsMethod is what actually drives the Sage 50 fix),
+    /// kept only as an audit/cross-check field since it was right there in the
+    /// same confirmed-live response.</summary>
+    [JsonPropertyName("invoiceDueDate")]
+    public DateTimeOffset? InvoiceDueDate { get; set; }
 }
 
 /// <summary>
@@ -189,6 +221,124 @@ public class PortProSingleInvoiceResponse
 
     [JsonPropertyName("error")]
     public string? Error { get; set; }
+}
+
+/// <summary>Confirmed live 2026-08-21 by calling GET /v1/customer/{id} directly
+/// against production - a full, separate customer profile object PortPro keeps,
+/// distinct from the lightweight PortProCaller embedded on each invoice (which
+/// only ever carries _id/company_name/currency/externalSystemID). The list form
+/// (GET /v1/customer, no id) returns the exact same shape for every item - 94
+/// fields either way, confirmed by diffing the two - so PortProClient.
+/// GetAllCustomersAsync (used for the periodic change-detection sweep) needs no
+/// separate per-customer detail call.
+///
+/// Real values checked on 2 live customers: address1/city/state/country/zip_code
+/// are populated; billingEmail is populated (and is the genuinely useful email -
+/// the bare "email" field is a PortPro-generated proxy address like
+/// "q9ki9kdn3fjv3zf@portpro.io", not a real contact address); main_contact_name/
+/// secondary_contact_name/mobile/secondaryPhoneNo were null/empty on both
+/// customers checked (the fields exist in PortPro's data model, just unused by
+/// this account so far - mapped anyway since the point is capturing whatever's
+/// there, now or later). defaultPaymentTerms.days matched the per-invoice
+/// payment_terms seen on that customer's own invoices exactly (30), confirming
+/// it's the authoritative source, not the top-level "payment_terms" field (which
+/// was 0 on both customers checked - a different, evidently unused field).</summary>
+public class PortProCustomer
+{
+    [JsonPropertyName("_id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("company_name")]
+    public string CompanyName { get; set; } = string.Empty;
+
+    [JsonPropertyName("address1")]
+    public string? Address1 { get; set; }
+
+    [JsonPropertyName("city")]
+    public string? City { get; set; }
+
+    [JsonPropertyName("state")]
+    public string? State { get; set; }
+
+    [JsonPropertyName("country")]
+    public string? Country { get; set; }
+
+    [JsonPropertyName("zip_code")]
+    public string? ZipCode { get; set; }
+
+    [JsonPropertyName("main_contact_name")]
+    public string? MainContactName { get; set; }
+
+    [JsonPropertyName("secondary_contact_name")]
+    public string? SecondaryContactName { get; set; }
+
+    /// <summary>PortPro-generated proxy address (e.g. "q9ki9kdn3fjv3zf@portpro.io"),
+    /// NOT a real contact email - see BillingEmail for the one actually worth
+    /// mapping to Sage 50.</summary>
+    [JsonPropertyName("email")]
+    public string? Email { get; set; }
+
+    /// <summary>The real, human-entered contact email(s) - confirmed live, can be
+    /// comma-separated with multiple addresses (e.g. "a@x.com,b@x.com,"). Sage 50's
+    /// Email field can only hold one address and has its own 50-character hard
+    /// limit (confirmed live 2026-08-23 via a real SimplySDK.InvalidEntryException
+    /// that crashed two Full Customer Refresh runs before this was fixed) - see
+    /// InvoiceValidationService.BuildSage50Profile's FirstEmail helper, which takes
+    /// just the first address rather than passing this through unsplit.</summary>
+    [JsonPropertyName("billingEmail")]
+    public string? BillingEmail { get; set; }
+
+    [JsonPropertyName("mobile")]
+    public string? Mobile { get; set; }
+
+    [JsonPropertyName("secondaryPhoneNo")]
+    public string? SecondaryPhoneNo { get; set; }
+
+    [JsonPropertyName("currency")]
+    public string? Currency { get; set; }
+
+    [JsonPropertyName("defaultPaymentTerms")]
+    public PortProCustomerPaymentTerms? DefaultPaymentTerms { get; set; }
+
+    /// <summary>Drives the automatic customer-sync feature (SyncOrchestrator's
+    /// periodic CustomerSyncService) - compared against the last-synced value
+    /// recorded in SyncStateRepository's customer_sync_state table to detect a
+    /// change since this customer was last pushed into Sage 50.</summary>
+    [JsonPropertyName("updatedAt")]
+    public DateTimeOffset? UpdatedAt { get; set; }
+}
+
+public class PortProCustomerPaymentTerms
+{
+    [JsonPropertyName("paymentTermsMethod")]
+    public string? PaymentTermsMethod { get; set; }
+
+    [JsonPropertyName("days")]
+    public int? Days { get; set; }
+}
+
+/// <summary>Wraps GET /v1/customer/{id} - single-customer fetch.</summary>
+public class PortProCustomerSingleResponse
+{
+    [JsonPropertyName("data")]
+    public PortProCustomer? Data { get; set; }
+
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+}
+
+/// <summary>Wraps GET /v1/customer (no id) - the full customer list, paginated the
+/// same way as the invoice list endpoint (skip/limit). Confirmed live 2026-08-21:
+/// 223 total customers on this account - small enough that PortProClient.
+/// GetAllCustomersAsync just fetches the whole thing on every periodic sync
+/// sweep rather than needing an incremental/date-filtered query.</summary>
+public class PortProCustomerListResponse
+{
+    [JsonPropertyName("count")]
+    public int Count { get; set; }
+
+    [JsonPropertyName("data")]
+    public List<PortProCustomer> Data { get; set; } = new();
 }
 
 /// <summary>

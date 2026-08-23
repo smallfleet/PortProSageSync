@@ -80,8 +80,9 @@ if (-not (Test-Path (Join-Path $stagingRoot "Service\Sage_SA.SDK.dll"))) {
 Write-Host "`n[OK] All projects published." -ForegroundColor Green
 
 # Docs alongside the Service payload - same as Install-Production.ps1, makes
-# the Admin app's Help button work on this kind of install too.
-foreach ($doc in @("README.md", "USER_GUIDE.md", "DEPLOYMENT.md")) {
+# the Admin app's Help button work on this kind of install too (it opens
+# USER_GUIDE.html specifically; USER_GUIDE.md ships too as the plain-text source).
+foreach ($doc in @("README.md", "USER_GUIDE.md", "USER_GUIDE.html", "TECHNICAL_DESIGN.md", "TECHNICAL_DESIGN.html", "DEPLOYMENT.md")) {
     $docSource = Join-Path $repoRoot $doc
     if (Test-Path $docSource) {
         Copy-Item $docSource (Join-Path $stagingRoot "Service\$doc") -Force
