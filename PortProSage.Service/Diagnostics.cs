@@ -219,12 +219,14 @@ public static class Diagnostics
     {
         logger.LogWarning("=== CUSTOMER REFRESH SCAN: checking every PortPro customer against Sage 50 (read-only) ===");
 
+        var sage50Settings = services.GetRequiredService<Sage50Settings>();
         var result = new SyncResult
         {
             RequestId = request.RequestId,
             StartedAtUtc = DateTimeOffset.UtcNow,
             ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id,
-            WasDryRun = false
+            WasDryRun = false,
+            Sage50Path = sage50Settings.CompanyDataPath
         };
         writeResultFile(result);
 
@@ -293,7 +295,8 @@ public static class Diagnostics
             RequestId = request.RequestId,
             StartedAtUtc = startedAtUtc,
             ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id,
-            WasDryRun = sage50Settings.DryRun
+            WasDryRun = sage50Settings.DryRun,
+            Sage50Path = sage50Settings.CompanyDataPath
         };
         writeResultFile(result); // early checkpoint, same reasoning as SyncOrchestrator.RunAsync's onProgress
 

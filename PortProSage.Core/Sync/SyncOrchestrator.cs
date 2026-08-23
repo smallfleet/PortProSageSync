@@ -61,7 +61,8 @@ public class SyncOrchestrator
             RequestId = request.RequestId,
             StartedAtUtc = DateTimeOffset.UtcNow,
             ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id,
-            WasDryRun = _sage50Settings.DryRun
+            WasDryRun = _sage50Settings.DryRun,
+            Sage50Path = _sage50Settings.CompanyDataPath
         };
 
         // Pre-image of the persisted "continue from" state - captured before

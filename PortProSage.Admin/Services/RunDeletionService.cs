@@ -33,14 +33,29 @@ public static class RunDeletionService
     {
         var result = new DeleteResult();
         var deletedIds = LoadDeletedIds(triggerFolder);
-        var referenceNumbers = new List<string>();
+        // Grouped by the run's own Sage50Path (not one flat list) - a reference
+        // number is only unique WITHIN a Sage 50 path now (see
+        // ImportedInvoiceStateService.DeleteByReferenceNumbers), and a single
+        // batch of selected rows can span runs against different paths. The ""
+        // key covers runs recorded before path-tracking existed, or reconstructed
+        // from a log with no Result at all - those still delete unscoped, exactly
+        // as every entry did before this feature existed (empty string is never a
+        // real Sage50Path value, so it can't collide with one).
+        var referenceNumbersByPath = new Dictionary<string, List<string>>();
 
         foreach (var entry in entries)
         {
             if (TryDeleteFile(entry.RequestFilePath)) result.FilesDeleted++;
             if (TryDeleteFile(entry.ResultFilePath)) result.FilesDeleted++;
 
-            referenceNumbers.AddRange(GetImportedReferenceNumbers(entry, logFolder));
+            var refs = GetImportedReferenceNumbers(entry, logFolder);
+            var path = entry.Result?.Sage50Path ?? string.Empty;
+            if (!referenceNumbersByPath.TryGetValue(path, out var list))
+            {
+                list = new List<string>();
+                referenceNumbersByPath[path] = list;
+            }
+            list.AddRange(refs);
 
             if (!string.IsNullOrWhiteSpace(failedTransactionsFolder))
             {
@@ -52,9 +67,11 @@ public static class RunDeletionService
 
         SaveDeletedIds(triggerFolder, deletedIds);
 
-        if (referenceNumbers.Count > 0)
+        foreach (var (path, referenceNumbers) in referenceNumbersByPath)
         {
-            result.ImportedInvoiceRowsDeleted = ImportedInvoiceStateService.DeleteByReferenceNumbers(stateDatabasePath, referenceNumbers);
+            if (referenceNumbers.Count == 0) continue;
+            result.ImportedInvoiceRowsDeleted += ImportedInvoiceStateService.DeleteByReferenceNumbers(
+                stateDatabasePath, referenceNumbers, path.Length == 0 ? null : path);
         }
 
         return result;

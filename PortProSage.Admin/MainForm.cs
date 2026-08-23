@@ -26,7 +26,7 @@ public partial class MainForm : Form
     ///                 changes (e.g. what ships in the next production installer).
     ///   ZZ (build)  - any other new exe, including small dev-test iterations.
     /// </summary>
-    public const string AppVersion = "2.13.4";
+    public const string AppVersion = "2.13.5";
 
     private readonly ToolStripStatusLabel _sourceLabel = new() { Text = "Click any field to see where it's stored." };
     private readonly TextBox _serviceFolderBox = new() { Width = 480 };
@@ -105,9 +105,31 @@ public partial class MainForm : Form
     // Service folder selection + config load
     // ---------------------------------------------------------------------
 
+    /// <summary>Global, always-visible regardless of which tab is active -
+    /// requested explicitly 2026-08-24 so it's never ambiguous which real Sage 50
+    /// company file is currently configured to be read from/written to, without
+    /// having to go find it on the Sage 50 tab. Previously lived only on the
+    /// Customer Refresh tab; moved here since it matters for every tab that can
+    /// touch Sage 50, not just that one.</summary>
+    private readonly Label _globalTargetSage50Label = new()
+    {
+        AutoSize = true,
+        ForeColor = Color.FromArgb(150, 20, 20)
+    };
+
+    private void RefreshGlobalTargetSage50Label()
+    {
+        var path = _localSettings?.GetString("PortProSage.Sage50.CompanyDataPath")
+            ?? _appSettings?.GetString("PortProSage.Sage50.CompanyDataPath");
+
+        _globalTargetSage50Label.Text = string.IsNullOrWhiteSpace(path)
+            ? "Target Sage50: (no path specified yet - set it on the Sage 50 tab)"
+            : $"Target Sage50: {path}";
+    }
+
     private Panel BuildServiceFolderBar()
     {
-        var panel = new Panel { Dock = DockStyle.Top, Height = 64 };
+        var panel = new Panel { Dock = DockStyle.Top, Height = 90 };
 
         var label = new Label { Text = "Service folder:", AutoSize = true, Location = new Point(8, 10) };
         _serviceFolderBox.Location = new Point(100, 7);
@@ -178,6 +200,12 @@ public partial class MainForm : Form
         _headerStopButton.Location = new Point(590, 36);
         _headerStopButton.Click += (_, _) => StopWhicheverIsRunning();
 
+        // Third row: the global Target Sage50 banner - see its own doc comment.
+        _globalTargetSage50Label.Font = new Font(Font, FontStyle.Bold);
+        _globalTargetSage50Label.Location = new Point(8, 68);
+        RefreshGlobalTargetSage50Label();
+        RefreshAllTabsFromConfig += RefreshGlobalTargetSage50Label;
+
         panel.Controls.Add(label);
         panel.Controls.Add(_serviceFolderBox);
         panel.Controls.Add(browse);
@@ -189,6 +217,7 @@ public partial class MainForm : Form
         panel.Controls.Add(_headerActivityIndicator);
         panel.Controls.Add(_headerStopButton);
         panel.Controls.Add(versionLabel);
+        panel.Controls.Add(_globalTargetSage50Label);
         return panel;
     }
 

@@ -795,7 +795,9 @@ public partial class MainForm
         if (state == ServiceRunState.ManualRunning)
         {
             _manualRunButton.Enabled = false;
-            _customerRefreshScanButton.Enabled = false;
+            // Also covers _customerRefreshScanButton - see UpdateCustomerRefreshRunButtonEnabled,
+            // which now routes through UpdateCustomerRefreshScanButtonEnabled too (that one
+            // additionally factors in whether the LIVE path is selected, not just service state).
             UpdateCustomerRefreshRunButtonEnabled(false);
             _manualRunStopButton.Enabled = true;
             _manualRunProcess = process;
@@ -805,7 +807,6 @@ public partial class MainForm
             _manualRunStopButton.Enabled = false;
             _manualRunProcess = null;
             _manualRunButton.Enabled = state == ServiceRunState.NotRunning;
-            _customerRefreshScanButton.Enabled = state == ServiceRunState.NotRunning;
             UpdateCustomerRefreshRunButtonEnabled(state == ServiceRunState.NotRunning);
 
             if (_pendingRequestId is not null && state == ServiceRunState.NotRunning)

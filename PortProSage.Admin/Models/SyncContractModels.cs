@@ -79,6 +79,11 @@ public class SyncResult
     /// the run from Sage50Settings.DryRun.</summary>
     public bool WasDryRun { get; set; }
 
+    /// <summary>Mirrors Core's SyncResult.Sage50Path - which Sage 50 company file
+    /// this run actually targeted, captured once at the start of the run. Drives
+    /// the path picker on History &amp; Logs and Customer Refresh.</summary>
+    public string? Sage50Path { get; set; }
+
     /// <summary>The actual comma-separated reference-number list this run used -
     /// mirrors Core's SyncResult.ResolvedInvoiceNumberList. Populated for
     /// InvoiceNumberList and InvoiceNumberGapScan requests (a gap scan's computed

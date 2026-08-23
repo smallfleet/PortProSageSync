@@ -49,19 +49,17 @@ public partial class MainForm
         Text = "Press \"Extract All Customer\" to pull PortPro customers and their Sage 50 comparison."
     };
 
-    // Always visible on this tab (not just inside the confirmation dialogs) so
-    // the operator never loses track of which real Sage 50 company file is
-    // about to be read from/written to - requested explicitly since this tab can
-    // both create and overwrite real customer records.
-    private readonly Label _customerRefreshTargetLabel = new()
-    {
-        Dock = DockStyle.Top,
-        Height = 26,
-        TextAlign = ContentAlignment.MiddleLeft,
-        Padding = new Padding(12, 0, 12, 0),
-        ForeColor = Color.FromArgb(150, 20, 20),
-        BackColor = Color.FromArgb(255, 244, 244)
-    };
+    // Which Sage 50 path's data is currently being shown - every distinct path
+    // state.db has ever recorded anything against (Sage50PathStateService),
+    // always kept in sync with the CURRENTLY configured path (added if missing)
+    // but never force-overriding a selection the operator already made - see
+    // RefreshCustomerRefreshPathDropdown. Selecting a path other than the
+    // current one switches this tab to a read-only view of that path's past
+    // Run Selected history (customer_refresh_status) - Extract/Run Selected
+    // both require a live Sage 50 connection, only possible for the path
+    // actually configured on the Sage 50 tab right now.
+    private readonly ComboBox _customerRefreshPathDropdown = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 420 };
+    private const string NoPathDefinedPlaceholder = "(Sage50 path not defined)";
 
     // A SEPARATE, independent Dry Run - deliberately not the same field as
     // _runDryRun/_sage50DryRun (the shared PortProSage:Sage50:DryRun setting).
@@ -82,6 +80,13 @@ public partial class MainForm
     // Selected must stay disabled while something else is running, REGARDLESS
     // of how many rows are checked).
     private bool _customerRefreshServiceAvailable = true;
+
+    // Whether the path picker (below) currently has the LIVE/current Sage 50
+    // path selected, as opposed to a historical one - Extract and Run Selected
+    // both need this AND service-availability to be true; tracked separately so
+    // neither condition overwrites the other when just one of them changes (see
+    // UpdateCustomerRefreshScanButtonEnabled).
+    private bool _customerRefreshIsLivePath = true;
 
     private List<CustomerRefreshCandidate> _customerRefreshCandidates = new();
 
@@ -230,17 +235,29 @@ public partial class MainForm
         gridPanel.Controls.Add(_customerRefreshGrid);
         gridPanel.Controls.Add(_customerRefreshEmptyLabel); // added after the grid -> renders on top of it
 
-        RefreshCustomerRefreshTargetLabel();
-        RefreshAllTabsFromConfig += RefreshCustomerRefreshTargetLabel;
+        // "Viewing data for:" path picker - populated from every Sage 50 path
+        // state.db has ever recorded anything against. See
+        // RefreshCustomerRefreshPathDropdown for the exact add/preserve-selection
+        // rules (confirmed 2026-08-24).
+        var pathBar = new Panel { Dock = DockStyle.Top, Height = 32, Padding = new Padding(12, 4, 12, 4) };
+        var pathLabel = new Label { Text = "Viewing data for:", AutoSize = true, Location = new Point(0, 8) };
+        _customerRefreshPathDropdown.Location = new Point(pathLabel.Right + 10, 3);
+        _customerRefreshPathDropdown.SelectedIndexChanged += (_, _) => OnCustomerRefreshPathSelectionChanged();
+        pathBar.Controls.Add(pathLabel);
+        pathBar.Controls.Add(_customerRefreshPathDropdown);
+
+        RefreshCustomerRefreshPathDropdown();
+        RefreshAllTabsFromConfig += RefreshCustomerRefreshPathDropdown;
 
         // Also refresh on every click into this tab, not just on config load -
-        // requested explicitly so the shown path is always current at the moment
-        // it's actually looked at, even if the Sage 50 tab's path was edited
-        // (but not yet saved through a full config reload) since this tab was
-        // last visited.
+        // requested explicitly so a newly-configured path shows up in the picker
+        // at the moment the tab is actually looked at, even if the Sage 50 tab's
+        // path was edited (but not yet saved through a full config reload) since
+        // this tab was last visited. Never overrides a selection already made -
+        // see RefreshCustomerRefreshPathDropdown.
         _tabs.SelectedIndexChanged += (_, _) =>
         {
-            if (_tabs.SelectedTab == page) RefreshCustomerRefreshTargetLabel();
+            if (_tabs.SelectedTab == page) RefreshCustomerRefreshPathDropdown();
         };
 
         _customerRefreshRunButton.Click += (_, _) => StartCustomerRefreshExecute();
@@ -278,11 +295,9 @@ public partial class MainForm
         bottomBar.Controls.Add(_customerRefreshRunButton);
         bottomBar.Controls.Add(customerRefreshHelp);
 
-        _customerRefreshTargetLabel.Font = new Font(Font, FontStyle.Bold);
-
         page.Controls.Add(gridPanel);
         page.Controls.Add(bottomBar);
-        page.Controls.Add(_customerRefreshTargetLabel);
+        page.Controls.Add(pathBar);
         page.Controls.Add(scanBar);
 
         return page;
@@ -477,38 +492,155 @@ public partial class MainForm
     /// <summary>Reads the company file path directly from _localSettings/
     /// _appSettings (same fallback order as MainForm.Sage50Tab.cs's own
     /// RefreshSage50Tab) rather than from the Sage 50 tab's _sage50CompanyDataPath
-    /// TextBox - this tab's own RefreshAllTabsFromConfig subscription (registered
-    /// when this tab is built, BEFORE the Sage 50 tab exists at all, since
-    /// Customer Refresh is the 3rd tab and Sage 50 is built later) would otherwise
-    /// run before RefreshSage50Tab does on every single config load, reading a
-    /// stale/blank value out of that TextBox every time. Reading the settings
-    /// source of truth directly sidesteps that subscription-order dependency
-    /// entirely.</summary>
-    private void RefreshCustomerRefreshTargetLabel()
-    {
-        var path = _localSettings?.GetString("PortProSage.Sage50.CompanyDataPath")
+    /// TextBox - avoids a subscription-order dependency, since this tab is built
+    /// (and so subscribes to RefreshAllTabsFromConfig) before the Sage 50 tab
+    /// exists at all.</summary>
+    private string? CurrentConfiguredSage50Path =>
+        _localSettings?.GetString("PortProSage.Sage50.CompanyDataPath")
             ?? _appSettings?.GetString("PortProSage.Sage50.CompanyDataPath");
 
-        _customerRefreshTargetLabel.Text = string.IsNullOrWhiteSpace(path)
-            ? "Target Sage 50 company file: (not loaded yet - load the Service config on the Sync tab)"
-            : $"Target Sage 50 company file: {path}";
+    /// <summary>Populates the "Viewing data for:" picker from every Sage 50 path
+    /// state.db has ever recorded anything against, per the exact rules confirmed
+    /// 2026-08-24:
+    ///   - Nothing known anywhere yet -&gt; shows "(Sage50 path not defined)".
+    ///   - The currently configured path isn't in the list yet (brand new, never
+    ///     used before) -&gt; added to the list so it's pickable even before any
+    ///     data exists for it.
+    ///   - A selection already exists (the operator picked something, including a
+    ///     historical/non-current path) -&gt; left exactly as it was, never
+    ///     force-changed just because this ran again (e.g. from a config reload).
+    ///   - Nothing selected yet (first time this tab is ever shown) -&gt; defaults
+    ///     to the currently configured path.
+    /// Called on config load and on every click into this tab (see
+    /// BuildCustomerRefreshTab).</summary>
+    private void RefreshCustomerRefreshPathDropdown()
+    {
+        var knownPaths = Sage50PathStateService.GetAllKnownPaths(_syncStateDatabasePath.Text);
+        var currentPath = CurrentConfiguredSage50Path;
+
+        if (!string.IsNullOrWhiteSpace(currentPath) && !knownPaths.Contains(currentPath, StringComparer.OrdinalIgnoreCase))
+        {
+            knownPaths.Insert(0, currentPath);
+        }
+
+        var previouslySelected = _customerRefreshPathDropdown.SelectedItem as string;
+
+        _customerRefreshPathDropdown.SelectedIndexChanged -= OnCustomerRefreshPathDropdownRebuilt;
+        _customerRefreshPathDropdown.Items.Clear();
+
+        if (knownPaths.Count == 0)
+        {
+            _customerRefreshPathDropdown.Items.Add(NoPathDefinedPlaceholder);
+            _customerRefreshPathDropdown.SelectedIndex = 0;
+            _customerRefreshPathDropdown.Enabled = false;
+            _customerRefreshPathDropdown.SelectedIndexChanged += OnCustomerRefreshPathDropdownRebuilt;
+            OnCustomerRefreshPathSelectionChanged();
+            return;
+        }
+
+        _customerRefreshPathDropdown.Enabled = true;
+        foreach (var p in knownPaths) _customerRefreshPathDropdown.Items.Add(p);
+
+        if (previouslySelected is not null && _customerRefreshPathDropdown.Items.Contains(previouslySelected))
+        {
+            _customerRefreshPathDropdown.SelectedItem = previouslySelected;
+        }
+        else if (!string.IsNullOrWhiteSpace(currentPath) && _customerRefreshPathDropdown.Items.Contains(currentPath))
+        {
+            _customerRefreshPathDropdown.SelectedItem = currentPath;
+        }
+        else
+        {
+            _customerRefreshPathDropdown.SelectedIndex = 0;
+        }
+
+        _customerRefreshPathDropdown.SelectedIndexChanged += OnCustomerRefreshPathDropdownRebuilt;
+        OnCustomerRefreshPathSelectionChanged();
+    }
+
+    // Rebuilding Items above fires SelectedIndexChanged transiently as each item
+    // is added/removed - unsubscribed/resubscribed around that rebuild so only a
+    // GENUINE operator selection (or the one deliberate call at the end of
+    // RefreshCustomerRefreshPathDropdown) triggers OnCustomerRefreshPathSelectionChanged.
+    private void OnCustomerRefreshPathDropdownRebuilt(object? sender, EventArgs e) => OnCustomerRefreshPathSelectionChanged();
+
+    /// <summary>Switches this tab between LIVE mode (the selected path matches
+    /// what's actually configured on the Sage 50 tab right now - Extract/Run
+    /// Selected both fully work, exactly as before this feature existed) and
+    /// HISTORICAL mode (a different, past path is selected - read-only: shows
+    /// that path's customer_refresh_status rows, since a live PortPro/Sage 50
+    /// comparison is only possible against whichever company file is actually
+    /// connected right now).</summary>
+    private void OnCustomerRefreshPathSelectionChanged()
+    {
+        var selected = _customerRefreshPathDropdown.SelectedItem as string;
+        var isKnownPath = selected is not null && selected != NoPathDefinedPlaceholder;
+        var currentPath = CurrentConfiguredSage50Path;
+        var isLive = isKnownPath && !string.IsNullOrWhiteSpace(currentPath) &&
+                     string.Equals(selected, currentPath, StringComparison.OrdinalIgnoreCase);
+
+        _customerRefreshIsLivePath = isLive;
+        UpdateCustomerRefreshScanButtonEnabled();
+        UpdateCustomerRefreshRunButtonText();
+
+        if (isLive)
+        {
+            // Back to normal - leave whatever's currently in the grid (a live
+            // Extract's candidates) as-is; don't clear it just for flipping back.
+            return;
+        }
+
+        ClearCustomerRefreshGrid();
+        if (!isKnownPath) return;
+
+        var history = Sage50PathStateService.GetCustomerRefreshStatusForPath(_syncStateDatabasePath.Text, selected!);
+        _customerRefreshEmptyLabel.Text = history.Count == 0
+            ? $"No Customer Refresh history recorded for this path yet.\n\nThis is a HISTORICAL path, not the one currently configured on the Sage 50 tab -\nExtract and Run Selected are disabled until you switch back to the current path."
+            : "";
+        _customerRefreshEmptyLabel.Visible = history.Count == 0;
+
+        for (var i = 0; i < history.Count; i++)
+        {
+            var h = history[i];
+            var rowIndex = _customerRefreshGrid.Rows.Add(
+                false, i + 1, h.CompanyName,
+                $"(historical view - re-Extract against this path for a live comparison)",
+                h.Operation, h.Success ? "Success" : "Failed", h.AppliedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
+                "", "");
+            var row = _customerRefreshGrid.Rows[rowIndex];
+            row.Cells["Select"].ReadOnly = true; // nothing to select - this view is read-only
+            if (h.Operation == "INSERT")
+            {
+                foreach (var colName in InsertHighlightColumns) row.Cells[colName].Style.ForeColor = InsertRed;
+            }
+        }
+
+        _customerRefreshLastScannedLabel.Text = $"Showing {history.Count} historical record(s) for the selected path.";
     }
 
     /// <summary>Called from UpdateManualRunButtonStates (MainForm.RunTab.cs)
     /// whenever the overall service-availability state changes, and locally
-    /// whenever row selection changes - Run Selected must reflect BOTH "is
-    /// anything else running" and "are any rows actually checked."</summary>
+    /// whenever row selection or the path picker changes - both Extract and Run
+    /// Selected must reflect ALL of "is anything else running", "is the LIVE
+    /// (current) path selected, not a historical one", and - for Run Selected
+    /// only - "are any rows actually checked."</summary>
     private void UpdateCustomerRefreshRunButtonEnabled(bool serviceAvailable)
     {
         _customerRefreshServiceAvailable = serviceAvailable;
+        UpdateCustomerRefreshScanButtonEnabled();
         UpdateCustomerRefreshRunButtonText();
+    }
+
+    private void UpdateCustomerRefreshScanButtonEnabled()
+    {
+        _customerRefreshScanButton.Enabled = _customerRefreshServiceAvailable && _customerRefreshIsLivePath;
     }
 
     private void UpdateCustomerRefreshRunButtonText()
     {
         var count = GetSelectedCustomerRefreshCandidates().Count;
         _customerRefreshRunButton.Text = count > 0 ? $"Run Selected ({count})" : "Run Selected";
-        _customerRefreshRunButton.Enabled = _customerRefreshServiceAvailable && count > 0;
+        _customerRefreshRunButton.Enabled = _customerRefreshServiceAvailable && _customerRefreshIsLivePath && count > 0;
     }
 
     private void StartCustomerRefreshScan()

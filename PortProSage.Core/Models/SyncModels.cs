@@ -190,6 +190,18 @@ public class SyncResult
     /// indication anywhere in its own history record that it had been simulated.</summary>
     public bool WasDryRun { get; set; }
 
+    /// <summary>Captured once, at the very start of the run, from Sage50Settings.
+    /// CompanyDataPath - which Sage 50 company file this run actually targeted
+    /// (or, for FilterType.CustomerRefreshScan, read-only checked against).
+    /// Confirmed live 2026-08-24 this matters: the same state.db is shared across
+    /// however many different Sage 50 company files get configured over time
+    /// (e.g. a DEV file during testing, a PROD file for real use), and every
+    /// History &amp; Logs entry needs to say which one it actually belongs to, both
+    /// for the Admin app's path picker (MainForm.HistoryTab.cs/
+    /// MainForm.CustomerRefreshTab.cs) and so a run against one file is never
+    /// mistaken for one against another.</summary>
+    public string? Sage50Path { get; set; }
+
     /// <summary>The actual comma-separated reference-number list this run used, for
     /// FilterType.InvoiceNumberList or InvoiceNumberGapScan requests - a manually-
     /// typed list is echoed back as-is; a gap scan's computed candidate list is

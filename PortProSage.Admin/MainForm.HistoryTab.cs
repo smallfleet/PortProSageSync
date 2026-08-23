@@ -37,6 +37,13 @@ public partial class MainForm
     // by RefreshHistoryList, since a rebuilt grid's rows always start unchecked too.
     private readonly CheckBox _historySelectAllCheckbox = new() { Text = "Select all", AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
 
+    // Filters the grid to just one Sage 50 company file's runs - see
+    // RefreshHistoryPathDropdown for the populate/preserve-selection rules
+    // (same as Customer Refresh's own path picker). Entries from before this
+    // feature existed (no Sage50Path recorded at all) always show regardless of
+    // the filter - see MatchesHistoryPathFilter.
+    private readonly ComboBox _historyPathDropdown = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 380 };
+
     private TabPage BuildResultsTab()
     {
         var page = new TabPage("History && Logs");
@@ -49,6 +56,18 @@ public partial class MainForm
         var refreshBar = CreateActionButtonBar(refreshButton, DockStyle.Top, barHeight: 40);
         _historyLastRefreshedLabel.Location = new Point(refreshButton.Right + 16, (refreshBar.Height - _historyLastRefreshedLabel.Height) / 2);
         refreshBar.Controls.Add(_historyLastRefreshedLabel);
+
+        var pathLabel = new Label { Text = "Sage50 path:", AutoSize = true };
+        void RepositionPathPicker()
+        {
+            pathLabel.Location = new Point(_historyLastRefreshedLabel.Right + 24, (refreshBar.Height - pathLabel.Height) / 2);
+            _historyPathDropdown.Location = new Point(pathLabel.Right + 8, (refreshBar.Height - _historyPathDropdown.Height) / 2);
+        }
+        _historyLastRefreshedLabel.SizeChanged += (_, _) => RepositionPathPicker();
+        RepositionPathPicker();
+        _historyPathDropdown.SelectedIndexChanged += (_, _) => RefreshHistoryList();
+        refreshBar.Controls.Add(pathLabel);
+        refreshBar.Controls.Add(_historyPathDropdown);
 
         // Top-right of the grid's own bar (Anchor, not a fixed coordinate, so it
         // stays pinned to the right edge as the window is resized - same pattern
@@ -163,7 +182,89 @@ public partial class MainForm
 
         _historyGrid.SelectionChanged += (_, _) => ShowSelectedHistoryEntry();
 
+        RefreshAllTabsFromConfig += RefreshHistoryPathDropdown;
+        // Also refresh on every click into this tab - same reasoning as Customer
+        // Refresh's identical hook (MainForm.CustomerRefreshTab.cs): a newly-
+        // configured path should show up in the picker at the moment the tab is
+        // actually looked at, without overriding a selection already made.
+        _tabs.SelectedIndexChanged += (_, _) =>
+        {
+            if (_tabs.SelectedTab == page) RefreshHistoryPathDropdown();
+        };
+
         return page;
+    }
+
+    /// <summary>Populates the History &amp; Logs path filter from every Sage 50 path
+    /// state.db has ever recorded anything against - same add/preserve-selection
+    /// rules as Customer Refresh's identical picker (RefreshCustomerRefreshPathDropdown):
+    /// nothing known yet shows a placeholder; the currently configured path is
+    /// added if it's not in the list yet; an existing selection is never
+    /// force-changed; first-time-ever defaults to the current path. Unlike
+    /// Customer Refresh, selecting a non-current path here doesn't disable
+    /// anything - it's a pure display filter (RefreshHistoryList/
+    /// MatchesHistoryPathFilter), since History &amp; Logs never itself connects to
+    /// Sage 50.</summary>
+    private void RefreshHistoryPathDropdown()
+    {
+        var knownPaths = Sage50PathStateService.GetAllKnownPaths(_syncStateDatabasePath.Text);
+        var currentPath = _localSettings?.GetString("PortProSage.Sage50.CompanyDataPath")
+            ?? _appSettings?.GetString("PortProSage.Sage50.CompanyDataPath");
+
+        if (!string.IsNullOrWhiteSpace(currentPath) && !knownPaths.Contains(currentPath, StringComparer.OrdinalIgnoreCase))
+        {
+            knownPaths.Insert(0, currentPath);
+        }
+
+        var previouslySelected = _historyPathDropdown.SelectedItem as string;
+
+        _historyPathDropdown.SelectedIndexChanged -= OnHistoryPathDropdownRebuilt;
+        _historyPathDropdown.Items.Clear();
+
+        if (knownPaths.Count == 0)
+        {
+            _historyPathDropdown.Items.Add(NoPathDefinedPlaceholder);
+            _historyPathDropdown.SelectedIndex = 0;
+            _historyPathDropdown.Enabled = false;
+            _historyPathDropdown.SelectedIndexChanged += OnHistoryPathDropdownRebuilt;
+            RefreshHistoryList();
+            return;
+        }
+
+        _historyPathDropdown.Enabled = true;
+        foreach (var p in knownPaths) _historyPathDropdown.Items.Add(p);
+
+        if (previouslySelected is not null && _historyPathDropdown.Items.Contains(previouslySelected))
+        {
+            _historyPathDropdown.SelectedItem = previouslySelected;
+        }
+        else if (!string.IsNullOrWhiteSpace(currentPath) && _historyPathDropdown.Items.Contains(currentPath))
+        {
+            _historyPathDropdown.SelectedItem = currentPath;
+        }
+        else
+        {
+            _historyPathDropdown.SelectedIndex = 0;
+        }
+
+        _historyPathDropdown.SelectedIndexChanged += OnHistoryPathDropdownRebuilt;
+        RefreshHistoryList();
+    }
+
+    // See Customer Refresh's identical OnCustomerRefreshPathDropdownRebuilt for
+    // why the rebuild above unsubscribes/resubscribes around itself.
+    private void OnHistoryPathDropdownRebuilt(object? sender, EventArgs e) => RefreshHistoryList();
+
+    /// <summary>Entries that predate Sage50Path tracking (recorded before
+    /// 2026-08-24) always show regardless of the filter - hiding real history
+    /// just because it can't be attributed to a path would be a real loss, not a
+    /// cleanup.</summary>
+    private bool MatchesHistoryPathFilter(RunHistoryEntry entry)
+    {
+        var selected = _historyPathDropdown.SelectedItem as string;
+        if (string.IsNullOrEmpty(selected) || selected == NoPathDefinedPlaceholder) return true;
+        if (entry.Result?.Sage50Path is not { } path) return true;
+        return string.Equals(path, selected, StringComparison.OrdinalIgnoreCase);
     }
 
     // Pinned to known, fixed values (not left to font/DPI-dependent defaults)
@@ -396,6 +497,12 @@ public partial class MainForm
         for (var i = 0; i < _historyEntries.Count; i++)
         {
             var entry = _historyEntries[i];
+
+            // Filtered out of the GRID only - the loop still walks every entry in
+            // its real order below (i keeps its true index), so "is this cycle
+            // the single most recent thing in ALL history" liveness checks stay
+            // correct regardless of which rows are actually visible.
+            if (!MatchesHistoryPathFilter(entry)) continue;
 
             // Three flavors of "pending with no result", all needing a live-process
             // check: a Manual Run (its own dedicated --run-once process, matched by

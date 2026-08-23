@@ -271,7 +271,7 @@ public class CustomerSyncService
         if (terms?.Days is null) return described;
 
         var method = string.IsNullOrWhiteSpace(terms.PaymentTermsMethod) ? "days" : terms.PaymentTermsMethod;
-        return $"{described}, terms={terms.Days} {method} from invoice date (reference only - not written to Sage 50)";
+        return $"{described}, terms={terms.Days} {method} from invoice date (reference only - no related column found in Sage50)";
     }
 
     /// <summary>Processes EXACTLY the PortPro customer ids the operator selected in
