@@ -28,7 +28,7 @@ This is the engineering-level reference for PortProSage Sync: the environment it
 
 PortProSage Sync moves invoice and customer data one way: **PortPro (source of truth) → Sage 50 Canadian Edition (destination)**. It runs as a Windows Service that either polls PortPro on a schedule or executes a single explicit request, validates/maps each invoice against Sage 50's own master data (customers, items, GL accounts), and posts it via the Sage 50 SDK. A separate WinForms Admin application edits configuration and starts/stops/monitors runs — it never talks to PortPro or Sage 50 itself.
 
-Nothing is ever pulled back out of Sage 50 into PortPro. The one exception that touches Sage 50 without an invoice attached is the customer-profile push (incremental sync or Full Customer Refresh) — still one-directional, PortPro → Sage 50.
+Nothing is ever pulled back out of Sage 50 into PortPro. The one exception that touches Sage 50 without an invoice attached is the customer-profile push (incremental sync or Customer Refresh) — still one-directional, PortPro → Sage 50.
 
 ---
 
@@ -44,7 +44,7 @@ Nothing is ever pulled back out of Sage 50 into PortPro. The one exception that 
 | **Sage 50 multi-user mode** | The company file must be shared in multi-user mode so this service can connect (`openMultiUserMode: true`) while a human keeps a normal interactive session open under a different username. Single-user mode takes an exclusive lock for as long as this service's connection stays open (it's a long-lived DI singleton) — that would lock a human out of Sage 50 entirely for as long as the service runs. |
 | **PortPro API access** | An Access Token + Refresh Token pair issued directly by PortPro (no OAuth client id/secret flow) — obtained from PortPro's own integration/API settings screen. Outbound HTTPS access to PortPro's API host (`https://api1.app.portpro.io`, confirmed in `appsettings.json`'s `PortPro:BaseUrl`). |
 | **Local storage** | A writable folder for: the SQLite state database (`state.db`), rolling daily log files, the trigger/request folder tree (`requests/`, `requests/manual/`, `requests/auto-poll/`, `requests/processed/`), and failed-transaction CSV reports. All configurable via `Sync:*` settings; defaults live under `C:\PortProSageSync\`. |
-| **Concurrency constraint** | Exactly **one** thing may hold a Sage 50 session at a time: the Automatic Service, a Manual Run, or a Full Customer Refresh. The Admin app enforces this by scanning for a running `PortProSage.Service.exe` process (any flavor) via WMI before starting a new one; the Worker's own automatic-poll cycle additionally checks for another `PortProSage.Service.exe` process before each cycle, in case one was started outside the Admin app. |
+| **Concurrency constraint** | Exactly **one** thing may hold a Sage 50 session at a time: the Automatic Service, a Manual Run, or a Customer Refresh. The Admin app enforces this by scanning for a running `PortProSage.Service.exe` process (any flavor) via WMI before starting a new one; the Worker's own automatic-poll cycle additionally checks for another `PortProSage.Service.exe` process before each cycle, in case one was started outside the Admin app. |
 | **Email (optional)** | SMTP credentials for failed-transaction report emails — `PortProSage:Email:*`, disabled (`Enabled: false`) until configured. |
 
 ---
@@ -54,9 +54,9 @@ Nothing is ever pulled back out of Sage 50 into PortPro. The one exception that 
 | Project | Target | Role |
 |---|---|---|
 | `PortProSage.Core` | net48 | Shared library — PortPro HTTP client, Sage 50 SDK wrapper, validation/mapping, sync orchestration, local SQLite state, config models. Everything else references this. |
-| `PortProSage.Service` | net48 | The actual executable. Runs three ways: (a) as an installed **Windows Service**, polling PortPro on a schedule and watching the trigger folder; (b) as a **one-shot process** via `--run-once <request.json>`, used by every Manual Run and Full Customer Refresh; (c) via **diagnostic CLI flags** (`--diagnose portpro`, `--diagnose sage50`, `--set-anchor`, etc.) for isolated troubleshooting. |
+| `PortProSage.Service` | net48 | The actual executable. Runs three ways: (a) as an installed **Windows Service**, polling PortPro on a schedule and watching the trigger folder; (b) as a **one-shot process** via `--run-once <request.json>`, used by every Manual Run, Customer Refresh Extract, and Run Selected; (c) via **diagnostic CLI flags** (`--diagnose portpro`, `--diagnose sage50`, `--set-anchor`, etc.) for isolated troubleshooting. |
 | `PortProSage.Trigger` | net48 | A small standalone CLI for dropping a request file into the trigger folder from outside the Admin app (e.g. a scheduled task on another machine with a mapped drive). Superseded for day-to-day use by the Admin app's Manual Run tab, which does the same thing directly. |
-| `PortProSage.Admin` | net10.0-windows | WinForms configuration/control UI. Edits `appsettings.json`/`appsettings.Local.json` directly as files, and starts a run by either launching `PortProSage.Service.exe --run-once <path>` (Manual Run, Full Customer Refresh) or dropping a file for an already-running Service to notice. **Never** calls PortPro or the Sage 50 SDK itself — it duplicates just the JSON request/result *contract* (`PortProSage.Admin/Models/SyncContractModels.cs`) so it doesn't have to reference `PortProSage.Core` and drag in the net48/Sage 50 SDK dependency chain. |
+| `PortProSage.Admin` | net10.0-windows | WinForms configuration/control UI. Edits `appsettings.json`/`appsettings.Local.json` directly as files, and starts a run by either launching `PortProSage.Service.exe --run-once <path>` (Manual Run, Customer Refresh) or dropping a file for an already-running Service to notice. **Never** calls PortPro or the Sage 50 SDK itself — it duplicates just the JSON request/result *contract* (`PortProSage.Admin/Models/SyncContractModels.cs`) so it doesn't have to reference `PortProSage.Core` and drag in the net48/Sage 50 SDK dependency chain. |
 
 ### Why file-drop instead of a network/IPC API
 
@@ -71,7 +71,7 @@ The Admin app and the Service communicate purely through the filesystem: a `Sync
 ```mermaid
 flowchart TB
     subgraph Admin["PortProSage.Admin (.NET 10, WinForms)"]
-        UI[Configuration UI<br/>Manual Run / Full Customer Refresh /<br/>Automatic Sync / History & Logs]
+        UI[Configuration UI<br/>Manual Run / Customer Refresh /<br/>Automatic Sync / History & Logs]
     end
 
     subgraph FS["Filesystem (shared folder tree)"]
@@ -85,7 +85,7 @@ flowchart TB
 
     subgraph Svc["PortProSage.Service.exe (.NET Framework 4.8)"]
         Worker[Worker<br/>BackgroundService: poll loop +<br/>trigger-folder watch]
-        RunOnce["--run-once<br/>(Manual Run / Full Customer Refresh)"]
+        RunOnce["--run-once<br/>(Manual Run / Customer Refresh)"]
         Orch[SyncOrchestrator]
         Val[InvoiceValidationService]
         CustSync[CustomerSyncService]
@@ -169,6 +169,7 @@ Confirmed live to be a **separate, richer object** from the lightweight `caller`
 
 - `GET {BaseUrl}{CustomerEndpoint}/{id}` (`/customer/{id}`) — one customer's full profile, ~94 fields. `id` is the same value available as `invoice.caller._id`.
 - `GET {BaseUrl}{CustomerEndpoint}` (`/customer`), paginated `skip`/`limit` — the **entire** list, returning the exact same full-profile shape as the single fetch (confirmed live), so a full account scan (~223 customers on this account) needs no per-customer detail call at all.
+  - **Confirmed live 2026-08-23: this endpoint silently caps every response at 50 records, ignoring the requested `limit`** — direct PowerShell `Invoke-RestMethod` calls with `limit=100` each returned exactly 50 records regardless of `skip` (0/50/100 all returned 50). `/invoices` correctly honors `limit=100`; this is specific to `/customer`. `PortProClient.GetAllCustomersAsync`'s original pagination-termination check (`body.Data.Count < _settings.PageSize` ⇒ "last page", advancing `skip` by the requested page size) silently truncated a full-account scan to the first 50 customers on the very first page. **Fixed** by advancing `skip` by the *actually-returned* count and only stopping on a genuinely empty page — confirmed against this account's real 223 customers.
 
 Fields actually consumed (see `BuildSage50Profile`, §6.6):
 
@@ -275,9 +276,9 @@ A persisted `(date, last-processed-invoice-number)` pair in `state.db`'s `waterm
 | Flag | Config key | Scope |
 |---|---|---|
 | Shared Dry Run | `Sage50:DryRun` (persisted in `appsettings.Local.json`) | Every ordinary Manual Run, the Automatic Service, and the periodic customer-sync sweep. Shown/editable identically on the Manual Run tab and the Sage 50 tab — the exact same setting, saved immediately either place. |
-| Full Customer Refresh's own Dry Run | `SyncRequest.CustomerRefreshDryRun` — **never persisted**, defaults to `true` on every use | Applies **only** to that one Full Customer Refresh run. `Diagnostics.RunFullCustomerRefreshAsync` overrides `Sage50Settings.DryRun` **in-memory, for that one dedicated process only** (the same technique already used by the `--real-transfer`/`--create-test-item` diagnostic commands to force Dry Run off for a single bounded operation) — it never touches `appsettings.Local.json`, and since that process only ever performs this one operation and exits, there's no later run in the same process for the override to leak into. |
+| Customer Refresh's own Dry Run | `SyncRequest.CustomerRefreshDryRun` — **never persisted**, defaults to `false` on every use | Applies **only** to that one Run Selected execution. `Diagnostics.RunFullCustomerRefreshAsync` overrides `Sage50Settings.DryRun` **in-memory, for that one dedicated process only** (the same technique already used by the `--real-transfer`/`--create-test-item` diagnostic commands to force Dry Run off for a single bounded operation) — it never touches `appsettings.Local.json`, and since that process only ever performs this one operation and exits, there's no later run in the same process for the override to leak into. |
 
-When either flag is set, every Sage 50 *write* call (`CreateCustomerAsync`, `UpdateCustomerAsync`, `CreateServiceItemAsync`, `CreateInvoiceAsync`) short-circuits to a log line describing what it *would* do and returns a synthetic result (a `DRYRUN-` prefixed invoice number) without calling the SDK at all. `SyncStateRepository.MarkImported`/`MarkCustomerSynced` are both guarded against recording a Dry Run result as if it were real — otherwise turning Dry Run off later would make those items look "already done" forever.
+When either flag is set, every Sage 50 *write* call (`CreateCustomerAsync`, `UpdateCustomerAsync`, `CreateServiceItemAsync`, `CreateInvoiceAsync`) short-circuits to a log line describing what it *would* do and returns a synthetic result (a `DRYRUN-` prefixed invoice number) without calling the SDK at all. `SyncStateRepository.MarkImported`/`MarkCustomerSynced`/`RecordCustomerRefreshOutcome` are all guarded against recording a Dry Run result as if it were real — otherwise turning Dry Run off later would make those items look "already done" forever. Confirmed 2026-08-24: `CustomerRefreshDryRun` now **defaults to `false`** on every `SyncRequest` (the Admin UI's own checkbox also defaults unchecked, reversing the old "defaults to checked" behavior) — a real write is the default action for Run Selected, not a simulation.
 
 ### 6.6 Customer resolution, auto-create, and per-run caching
 
@@ -302,24 +303,37 @@ Every invoice used to post with an implicit Net 0 (`SetTermDiscNetDay` was never
 
 Not a mode an operator picks — an automatic follow-up run, triggered by `GapFillRunner.RunIfApplicableAsync` after **every** completed, range-based run (Manual Run, an automatic poll cycle, or a trigger-file request), regardless of source. After the original run finishes cleanly, it computes `[lowest, highest]` reference number that run actually touched, and re-runs exactly that range through the `InvoiceNumberGapScan` → `InvoiceNumberList` path — checking each candidate individually via the single-invoice endpoint, which is confirmed more reliable than the list endpoint for multi-charge-set invoices (§4.6). Recorded as its own separate History & Logs entry ("Finding the Gap (found/checked)"). Skipped if the original run didn't complete cleanly, fetched nothing, or is itself already a gap-fill sub-run (no recursion). Remains necessary as a permanent safety net even with `allInvoices=true` sent on every query, since the residual symptom is pagination instability against a live-mutating dataset (§4.6), not a fixable client-side omission.
 
-### 6.10 Customer sync — incremental sweep vs. Full Customer Refresh
+### 6.10 Customer sync — incremental sweep vs. Customer Refresh tab
 
-Both are implemented by one shared method, `CustomerSyncService.SyncCustomersAsync(forceAll, maxCustomers, ct)`, exposed as two entry points:
+`CustomerSyncService` exposes three separate public entry points (no longer one shared `forceAll`/`maxCustomers`-parameterized method):
 
-- **`SyncChangedCustomersAsync`** (`forceAll: false`) — runs once per Automatic Service cycle and once per Manual Run (after gap-fill). Gated by `Sage50:SyncCustomerUpdatesFromPortPro` (default on). For each PortPro customer with a non-blank company name and a real `updatedAt`, compares it against `customer_sync_state`'s last-synced value; unchanged customers are skipped before any Sage 50 lookup at all. A changed customer that resolves in Sage 50 gets `UpdateCustomerAsync` (same `ApplyProfile`/`BuildSage50Profile` mapping as auto-create, §6.6); one that doesn't is simply marked synced anyway (so the same "changed but not in Sage 50 yet" customer isn't re-checked every sweep) — this method **never creates** a customer.
-- **`RunFullRefreshAsync`** (`forceAll: true`) — the operator-triggered "Full Customer Refresh" (Admin app, third tab). Bypasses the changed-since-last-sync check entirely, refreshing every matching customer unconditionally. Deliberately **not** gated by `SyncCustomerUpdatesFromPortPro` — that setting only controls the automatic incidental sweep; this is an explicit, one-off action with its own multi-step confirmation UI, and must run even if the automatic sweep is disabled. Honors an optional `maxCustomers` cap (§6.4) and its own independent Dry Run (§6.5).
+- **`SyncChangedCustomersAsync`** — runs once per Automatic Service cycle and once per Manual Run (after gap-fill). Gated by `Sage50:SyncCustomerUpdatesFromPortPro` (default on). For each PortPro customer with a non-blank company name and a real `updatedAt`, compares it against `customer_sync_state`'s last-synced value; unchanged customers are skipped before any Sage 50 lookup at all. A changed customer that resolves in Sage 50 gets `UpdateCustomerAsync` (same `ApplyProfile`/`BuildSage50Profile` mapping as auto-create, §6.6); one that doesn't is simply marked synced anyway (so the same "changed but not in Sage 50 yet" customer isn't re-checked every sweep) — this method **never creates** a customer.
+- **`ScanForRefreshAsync`** (`FilterType.CustomerRefreshScan`, the Admin app's **Customer Refresh** tab, "Extract All Customer") — a **read-only** comparison, not a write. Fetches every PortPro customer (§4.4, now genuinely the full account since the pagination-cap fix) and checks each by name against Sage 50, classifying it `INSERT` (no match) or `UPDATE` (match found) without touching Sage 50 at all. Bypasses the changed-since-last-sync check entirely — every customer is compared every time, unconditionally. Also loads `_state.GetAllCustomerRefreshOutcomes()` once up front and stamps each `CustomerRefreshCandidate.LastOperationSuccess`/`LastAppliedAtUtc` from the persisted `customer_refresh_status` table (§8), so the Admin grid can pre-fill Applied/Date columns from a previous session's real run without needing to re-run anything.
+- **`ExecuteSelectedRefreshAsync`** (`FilterType.FullCustomerRefresh`) — the actual write step ("Run Selected"), scoped to exactly the PortPro customer IDs the operator checked in the grid (`SyncRequest.CustomerRefreshSelectedPortProIds`), not "every customer" — a deliberate change from the old design, which refreshed the whole account unconditionally with an optional cap. No `maxCustomers` cap exists here; the selected-IDs list *is* the scope. For each selected customer: `INSERT` creates it in Sage 50 (gated by `Sage50:AutoCreateCustomers`, same as invoice-time auto-create), `UPDATE` overwrites the existing Sage 50 record from PortPro's current profile. A local `RecordOutcome(operation, success, message)` closure appends every result to `CustomerRefreshResult.Outcomes` (threaded back to the Admin app so it can update grid rows in place instead of clearing them) and — **guarded by `if (!_settings.DryRun)`** — calls `_state.RecordCustomerRefreshOutcome(...)`, persisting to `customer_refresh_status` (§8). A Dry Run's outcome is therefore visible in that run's own result/grid update, but never becomes part of the persisted "last real outcome" history.
 
-Both paths still update `customer_sync_state` on success (unless Dry Run), so a Full Customer Refresh also resets the incremental sweep's "last synced" watermark for every customer it touches.
+Both `SyncChangedCustomersAsync` and `ExecuteSelectedRefreshAsync` still update `customer_sync_state` on a successful non-Dry-Run write, so a real Customer Refresh Run Selected also resets the incremental sweep's "last synced" watermark for every customer it touches.
 
 ### 6.11 History & Logs / audit trail
 
-Every run — automatic poll cycle, Manual Run, trigger-file request, or Full Customer Refresh — produces a `SyncRequest`/`SyncResult` JSON pair on disk (checkpointed live, not just at the end), reconstructed into the History & Logs grid by `RunHistoryService.ListRuns` from four sources: the processed-trigger archive, the live trigger folder (pending), the Manual Run subfolder, and the auto-poll subfolder — plus a log-line-reconstruction fallback for entries that predate one of these folders existing at all. Deleting a run (`RunDeletionService`) removes its request/result files, any failed-transaction CSV it produced, and its rows in `imported_invoice`, and records the deletion permanently in a `deleted-history-ids.json` exclusion list so it can never silently reappear via the log-reconstruction fallback.
+Every run — automatic poll cycle, Manual Run, trigger-file request, or Customer Refresh — produces a `SyncRequest`/`SyncResult` JSON pair on disk (checkpointed live, not just at the end), reconstructed into the History & Logs grid by `RunHistoryService.ListRuns` from four sources: the processed-trigger archive, the live trigger folder (pending), the Manual Run subfolder, and the auto-poll subfolder — plus a log-line-reconstruction fallback for entries that predate one of these folders existing at all. Deleting a run (`RunDeletionService`) removes its request/result files, any failed-transaction CSV it produced, and its rows in `imported_invoice` **scoped to that run's own `Sage50Path`** (§6.12 — grouped per distinct path across a multi-run batch delete, since a reference number is only unique *within* one path now, not globally), and records the deletion permanently in a `deleted-history-ids.json` exclusion list so it can never silently reappear via the log-reconstruction fallback.
+
+### 6.12 Per-Sage50-path scoping
+
+**Problem confirmed live 2026-08-10 and again 2026-08-23**: before this feature, every table in `state.db` was a single flat, unscoped bucket — switching `Sage50:CompanyDataPath` between two different `.SAI` files (e.g. a DEV company file and the real PROD one) meant an invoice tracked as "already imported" while pointed at one file was silently treated as already-imported when later pointed at a completely different one, even though the second file never actually received it (documented at the time as the reason the Settings tab's "Clear All Imported-Invoice Records" manual workaround exists at all). The same cross-contamination applied to the watermark, `customer_sync_state`, and (once it existed) `customer_refresh_status`.
+
+**Fix**: every state-carrying table now includes a `sage50_path TEXT NOT NULL COLLATE NOCASE` column as part of a composite primary key, and every read/write in `SyncStateRepository` is scoped by a `CurrentSage50Path` property (`Sage50Settings.CompanyDataPath`, injected via DI — `Sage50Settings` is already a registered singleton in `Program.cs`, so this required no new wiring beyond adding it as a constructor parameter). `COLLATE NOCASE` avoids needing to manually normalize path casing (Windows paths are case-insensitive) while keeping the *displayed* value's original casing intact for the path-picker dropdowns.
+
+**Schema migration** (`SyncStateRepository.Initialize`, `MigrateTableForSage50Path` local function): SQLite can't `ALTER TABLE` a primary key, so each table is migrated via `PRAGMA table_info` (detects whether `sage50_path` is already present) → if not: rename the existing table → create it fresh with the new schema → copy every row across, backfilling `sage50_path` with whichever path is *currently* configured at the moment the migration runs → drop the renamed-aside old table, all inside one transaction. This is a **one-time, best-effort backfill, not a true historical reconstruction** — a table that predates this feature has no record of which path was actually active when each of its rows was written, so every pre-existing row is stamped with "whatever's configured right now," which is only correct if that happens to be the path that was actually in use for most/all of that history. **Confirmed as a real, non-hypothetical gap 2026-08-23**: cross-referencing `imported_invoice`'s `imported_at_utc` timestamps against the Service's own historical `logs/*.log` "Sage50 company file: …" startup lines showed all 3,664 pre-existing rows were genuinely created while pointed at one path, while the migration (which ran later, after the configured path had since changed) had backfilled them to a *different* one — corrected by hand via a one-off, precisely-timestamp-matched `UPDATE` once identified, not by any code path (there is no in-app "re-key path" tool). A future occurrence of the same gap is only preventable by not changing `CompanyDataPath` while unmigrated legacy data still exists, which by now it does not.
+
+**`GetAllKnownSage50Paths()`** — unions distinct `sage50_path` across all four tables; backs both Admin-side path-picker dropdowns via a parallel, Admin-side-only `Sage50PathStateService` (`PortProSage.Admin/Services/`), which reads `state.db` directly with its own `Microsoft.Data.Sqlite` connection rather than going through the Service process — the same "Admin can't reference Core" constraint (§3) that already applies to `ImportedInvoiceStateService`.
+
+**Admin UI behavior** (Customer Refresh and History & Logs, mirrored identically): the path dropdown always includes the currently-configured path (added if `GetAllKnownSage50Paths()` doesn't yet have it) but **never overrides an operator's existing selection** — it only defaults to the current path the first time a tab is ever visited in a session. Refreshed both on full config reload (`RefreshAllTabsFromConfig`) and on every tab click (`_tabs.SelectedIndexChanged`), so a path just saved on the Sage 50 tab shows up the moment the operator actually looks at either tab, without requiring a full app restart. Selecting the current path keeps Customer Refresh fully live (Extract/Run Selected enabled); selecting any other path switches it to a read-only view of that path's persisted `customer_refresh_status` rows, since a live PortPro-vs-Sage50 comparison is only meaningful against whichever company file is actually connected. History & Logs' path filter (`MatchesHistoryPathFilter`) is purely a display filter — an entry with `Result.Sage50Path == null` (recorded before this feature existed, or written by a Service binary built before the field was added — see §13 item 13) **always shows regardless of the selected filter**, so older history is never silently hidden by a feature it predates.
 
 ---
 
 ## 7. Process flows
 
-### 7.1 Manual Run / Full Customer Refresh — end to end
+### 7.1 Manual Run / Customer Refresh — end to end
 
 ```mermaid
 sequenceDiagram
@@ -331,16 +345,16 @@ sequenceDiagram
     participant S50 as Sage 50 SDK
 
     Op->>Admin: Fill form, click Run/Refresh
-    Admin->>Admin: Validate inputs, confirm dialogs<br/>(write mode, ALERT for Full Customer Refresh)
+    Admin->>Admin: Validate inputs, confirm dialogs<br/>(write mode, ALERT for Customer Refresh)
     Admin->>FS: Write <id>.request.json
     Admin->>Svc: Process.Start(--run-once <path>)
     Admin->>FS: Poll for <id>.result.json every 2s
 
     Svc->>FS: Read request.json
-    alt FullCustomerRefresh
+    alt FullCustomerRefresh (Run Selected)
         Svc->>Svc: Override DryRun in-memory from request
         Svc->>PP: GET /customer (paginated, full profiles)
-        loop each customer (up to maxCustomers updated)
+        loop each selected PortPro customer id
             Svc->>S50: LoadByName / Save (or DRY RUN log)
         end
     else Invoice sync
@@ -397,21 +411,31 @@ flowchart TD
     H --> Z
 ```
 
-### 7.4 Full Customer Refresh
+### 7.4 Customer Refresh tab — Extract, then Run Selected
+
+Reworked 2026-08-24 into an explicit two-step flow (was previously one unconditional "Refresh FULL Customer" action over the whole account) — nothing loads or writes until the operator deliberately triggers each step:
 
 ```mermaid
 flowchart TD
-    A[Operator checks confirm gate + Dry Run/Max customers,<br/>clicks Refresh FULL Customer] --> B[ALERT..!! confirmation dialog]
-    B -- Yes --> C[Write request, launch Service --run-once]
-    C --> D[Override Sage50Settings.DryRun in-memory<br/>from request.CustomerRefreshDryRun]
-    D --> E[GET /customer - every PortPro customer]
-    E --> F{For each customer,<br/>up to Max customers updated}
-    F --> G{Found in Sage 50<br/>by name?}
-    G -- no --> G1[Skip - never created here]
-    G -- yes --> H[UpdateCustomerAsync<br/>overwrite from PortPro profile]
-    H --> I[Mark synced in customer_sync_state<br/>unless Dry Run]
-    F --> J[Write result.json<br/>Mode: FULL Customer refresh]
-    J --> K[Admin: ALERT..!! completion pop-up,<br/>Dry Run/Max customers reset to defaults]
+    A[Operator clicks Extract All Customer] --> A1[FilterType.CustomerRefreshScan<br/>-run-once, read-only]
+    A1 --> A2[GET /customer - every PortPro customer<br/>full account, pagination-cap fix applied]
+    A2 --> A3{For each customer,<br/>found in Sage 50 by name?}
+    A3 -- no --> A4[Candidate: INSERT]
+    A3 -- yes --> A5[Candidate: UPDATE]
+    A4 --> A6[Stamp LastOperationSuccess/LastAppliedAtUtc<br/>from persisted customer_refresh_status]
+    A5 --> A6
+    A6 --> A7[Admin grid: one row per candidate,<br/>INSERT rows in red, Applied/Date pre-filled]
+
+    A7 --> B[Operator ticks rows, sets Dry Run,<br/>clicks Run Selected]
+    B --> C["*** DRY RUN *** / *** REAL WRITE ***"<br/>confirmation dialog]
+    C -- Yes --> D[FilterType.FullCustomerRefresh<br/>CustomerRefreshSelectedPortProIds = ticked rows]
+    D --> E{For each selected customer}
+    E -- INSERT --> E1[CreateCustomerAsync<br/>gated by AutoCreateCustomers]
+    E -- UPDATE --> E2[UpdateCustomerAsync<br/>overwrite from PortPro profile]
+    E1 --> F[RecordOutcome: append to Outcomes;<br/>if not DryRun, persist to customer_refresh_status]
+    E2 --> F
+    F --> G[Write result.json<br/>Mode: Customer Refresh, Sage50Path recorded]
+    G --> H[Admin: update existing grid rows in place<br/>Select all row IDs matched by PortProCustomerId<br/>grid is NOT cleared]
 ```
 
 ### 7.5 Gap-fill sweep
@@ -435,31 +459,52 @@ flowchart TD
 
 ## 8. Local data model (state.db)
 
-A single SQLite file (`Sync:StateDatabasePath`), created/migrated automatically on first use.
+A single SQLite file (`Sync:StateDatabasePath`), created/migrated automatically on first use. **Every table is scoped by `sage50_path`** (§6.12) — one shared file holds every Sage 50 company file's tracking, distinguished by this column as part of each table's primary key.
 
 ```sql
 CREATE TABLE watermark (
-    key   TEXT PRIMARY KEY,   -- 'last_changed_date' / 'last_processed_invoice_number'
-    value TEXT NOT NULL
+    key         TEXT NOT NULL,   -- 'last_changed_date' / 'last_processed_invoice_number'
+    sage50_path TEXT NOT NULL COLLATE NOCASE,
+    value       TEXT NOT NULL,
+    PRIMARY KEY (key, sage50_path)
 );
 
 CREATE TABLE imported_invoice (
-    portpro_invoice_id   TEXT PRIMARY KEY,   -- PortPro's own invoice id - the real dedup key
-    reference_number     TEXT NOT NULL,      -- human-readable, e.g. RSRE_000284
+    portpro_invoice_id    TEXT NOT NULL,   -- PortPro's own invoice id - the real dedup key
+    sage50_path           TEXT NOT NULL COLLATE NOCASE,
+    reference_number      TEXT NOT NULL,   -- human-readable, e.g. RSRE_000284
     sage50_invoice_number TEXT NOT NULL,
-    imported_at_utc      TEXT NOT NULL
+    imported_at_utc       TEXT NOT NULL,
+    PRIMARY KEY (portpro_invoice_id, sage50_path)
 );
 
 CREATE TABLE customer_sync_state (
-    portpro_customer_id TEXT PRIMARY KEY,
+    portpro_customer_id TEXT NOT NULL,
+    sage50_path         TEXT NOT NULL COLLATE NOCASE,
     company_name        TEXT NOT NULL,
-    portpro_updated_at  TEXT NOT NULL,       -- the PortPro updatedAt this customer was last synced AS OF
-    synced_at_utc        TEXT NOT NULL
+    portpro_updated_at  TEXT NOT NULL,     -- the PortPro updatedAt this customer was last synced AS OF
+    synced_at_utc        TEXT NOT NULL,
+    PRIMARY KEY (portpro_customer_id, sage50_path)
+);
+
+-- New table (2026-08-24) - the persisted "last real Run Selected outcome" per
+-- customer, powering Customer Refresh's Applied/Date grid columns across app
+-- restarts and re-Extracts. Never written for a Dry Run outcome - see §6.5/6.10.
+CREATE TABLE customer_refresh_status (
+    portpro_customer_id TEXT NOT NULL,
+    sage50_path         TEXT NOT NULL COLLATE NOCASE,
+    company_name        TEXT NOT NULL,
+    operation            TEXT NOT NULL,    -- 'INSERT' / 'UPDATE'
+    success               INTEGER NOT NULL,
+    message               TEXT NOT NULL,
+    applied_at_utc        TEXT NOT NULL,
+    PRIMARY KEY (portpro_customer_id, sage50_path)
 );
 ```
 
-- **Dedup key is PortPro's invoice id**, not the reference number — a reference number is used for display/lookups, but the actual "already imported" check (`IsAlreadyImported`) is keyed on the id, so a reference-number reuse can never falsely suppress a genuinely different invoice.
+- **Dedup key is PortPro's invoice id** (plus `sage50_path`), not the reference number — a reference number is used for display/lookups, but the actual "already imported" check (`IsAlreadyImported`) is keyed on the id (scoped to the current path), so a reference-number reuse can never falsely suppress a genuinely different invoice, and the same reference number legitimately existing under two different paths (§6.12) is not a collision.
 - `imported_invoice` rows are written **immediately per invoice** as soon as a real write succeeds (not batched at the end of a run) — this is what lets a killed process resume cleanly: everything already recorded stays recorded, nothing already-done gets reprocessed, and the watermark/last-processed-number tracking (which only advances once, at the very end of a run's per-invoice loop) simply never advances for a run that died mid-way, so nothing genuinely unprocessed is silently skipped by a later run either.
+- `customer_refresh_status` is always overwritten (not appended) on a later real Run Selected for the same customer + path — it tracks the single most recent outcome, not a full history.
 - A separate `deleted-history-ids.json` file (not a DB table — lives in the trigger folder) is a permanent exclusion list maintained by `RunDeletionService`, so a deleted run's history entry can't reappear via the log-reconstruction fallback path.
 
 ---
@@ -526,3 +571,6 @@ A consolidated list of things that were *tested and confirmed live*, not assumed
 9. **A version-skew mismatch between the Admin app and the Service exe processing its request can silently mean "process everything"** if an unrecognized `FilterType` falls through to no filter at all — confirmed to have actually happened once, importing the entire production account before being manually stopped. → the fail-loud guard in `BuildQueryString`'s default case.
 10. **Rapid sequential single-invoice PortPro lookups can trigger 429 rate limiting** on a large `InvoiceNumberList`/gap-fill run — unhandled, this failed the entire run, not just one lookup. → retry-with-backoff plus a deliberate 150ms pace between calls.
 11. **Concurrent writes to the same `result.json`** (a Manual Run checkpointing while the Admin app polls it) can hit a file-sharing conflict on a long, busy run — both the writer (retry-with-backoff) and every reader use `FileShare.ReadWrite` to avoid this.
+12. **PortPro's `/customer` list endpoint silently caps every response at 50 records**, ignoring the requested `limit` — confirmed live via direct calls with `limit=100` each returning exactly 50 at `skip=0/50/100`; `/invoices` correctly honors `limit=100`. → §4.4; `PortProClient.GetAllCustomersAsync` now advances `skip` by the actual returned count and stops only on a genuinely empty page, instead of comparing against the requested page size.
+13. **A stale Service binary silently omits a newly-added `SyncResult` field from its written `result.json`** — not written as `null`, genuinely absent from the JSON — if the Core DLL it's linked against predates that field. Confirmed live 2026-08-24: the actively-running `PortProSage.Service.exe` had not been rebuilt after `SyncResult.Sage50Path` was added, so every result it wrote that day lacked the field entirely, which (by the deliberate "unknown path always shows" rule, §6.12) made those History & Logs rows appear under *every* path filter instead of just the one they actually ran against. This is a distinct symptom from the version-skew guard in item 9 (that guard catches an unrecognized `FilterType`; this is a *missing* field on an otherwise-valid result) — there is no code-level guard against it. → Service/Trigger must be rebuilt (and, if running as a live process rather than freshly launched per-request, restarted) after any `PortProSage.Core` model change, not just after a `PortProSage.Service`-specific change.
+14. **Switching `Sage50:CompanyDataPath` without per-path state scoping cross-contaminated tracking between company files** — an invoice/customer/watermark state recorded while pointed at one `.SAI` file was silently treated as applying to a completely different one after switching, confirmed as the original motivation for the Settings tab's "Clear All Imported-Invoice Records" manual workaround. → Fixed by scoping every `state.db` table by `sage50_path` (§6.12); the one-time migration that backfills pre-existing rows to "whatever's currently configured" is itself a known, documented limitation of that fix, not a complete historical reconstruction (§6.12).

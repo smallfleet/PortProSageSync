@@ -352,7 +352,7 @@
         <div class="brand-tagline">PortPro → Sage 50 sync, by SmallArc Inc.</div>
       </div>
     </div>
-    <div class="version-pill"><span class="dot"></span>Version 2.12.23</div>
+    <div class="version-pill"><span class="dot"></span>Version 2.13.6</div>
 
     <nav class="toc" aria-label="Table of contents">
       <div class="toc-label">Contents</div>
@@ -361,17 +361,19 @@
       <a href="#top-bar"><span class="num">03</span>The top bar</a>
       <a href="#manual-run"><span class="num">04</span>Manual Run tab</a>
       <a href="#automatic-sync"><span class="num">05</span>Automatic Sync tab</a>
-      <a href="#watermark"><span class="num">06</span>Watermark tab</a>
-      <a href="#history-logs"><span class="num">07</span>History &amp; Logs tab</a>
-      <a href="#portpro-tab"><span class="num">08</span>PortPro tab</a>
-      <a href="#sage50-tab"><span class="num">09</span>Sage 50 tab</a>
-      <a href="#settings-tab"><span class="num">10</span>Settings tab</a>
-      <a href="#about-tab"><span class="num">11</span>About tab</a>
-      <a href="#licensing-about-tab"><span class="num">12</span>Licensing &amp; About tab</a>
-      <a href="#gap-fill"><span class="num">13</span>Understanding gap-fill</a>
-      <a href="#walkthroughs"><span class="num">14</span>Walkthroughs</a>
-      <a href="#faq"><span class="num">15</span>Troubleshooting / FAQ</a>
-      <a href="#glossary"><span class="num">16</span>Glossary</a>
+      <a href="#customer-refresh"><span class="num">06</span>Customer Refresh tab</a>
+      <a href="#watermark"><span class="num">07</span>Watermark tab</a>
+      <a href="#history-logs"><span class="num">08</span>History &amp; Logs tab</a>
+      <a href="#portpro-tab"><span class="num">09</span>PortPro tab</a>
+      <a href="#sage50-tab"><span class="num">10</span>Sage 50 tab</a>
+      <a href="#settings-tab"><span class="num">11</span>Settings tab</a>
+      <a href="#about-tab"><span class="num">12</span>About tab</a>
+      <a href="#licensing-about-tab"><span class="num">13</span>Licensing &amp; About tab</a>
+      <a href="#gap-fill"><span class="num">14</span>Understanding gap-fill</a>
+      <a href="#path-scoping"><span class="num">15</span>More than one Sage 50 file</a>
+      <a href="#walkthroughs"><span class="num">16</span>Walkthroughs</a>
+      <a href="#faq"><span class="num">17</span>Troubleshooting / FAQ</a>
+      <a href="#glossary"><span class="num">18</span>Glossary</a>
     </nav>
 
     <div class="sidebar-footer">
@@ -414,7 +416,7 @@
           </tbody>
         </table>
       </div>
-      <p><strong>Why they can't run together:</strong> both would try to open the same Sage 50 company file under the same Sage 50 username at the same time. Sage 50 rejects a second simultaneous session under one username — so the app disables whichever button would create a conflict, and the top bar's <strong>Process:</strong> status line always tells you which one (if either) is currently active.</p>
+      <p><strong>Why they can't run together:</strong> both would try to open the same Sage 50 company file under the same Sage 50 username at the same time. Sage 50 rejects a second simultaneous session under one username — so the app disables whichever button would create a conflict, and the top bar's <strong>Process:</strong> status line always tells you which one (if either) is currently active. The <strong>Customer Refresh</strong> tab (<a href="#customer-refresh">section 6</a>) shares this same restriction — it's disabled whenever anything else is running, for the same reason.</p>
       <p>If you need to run something manually while the Automatic Service is on, stop the Automatic Service first (top bar <strong>Stop</strong> button, or the Stop button on the Automatic Sync tab), do your manual run, then start it again.</p>
     </section>
 
@@ -428,8 +430,9 @@
             <li><strong>Reload</strong> — re-read settings from whatever folder is currently typed in the box, without opening the picker. Use this if you edited the settings files by hand outside the app.</li>
           </ul>
         </li>
+        <li><strong>Target Sage50: <code>&lt;path&gt;</code></strong> — always visible, shown below the Service folder row on every tab. The exact Sage 50 company file every write in the app will go to <em>right now</em>. Reads "Target Sage50: (no path specified yet - set it on the Sage 50 tab)" until a path has ever been configured. See <a href="#path-scoping">section 15</a> for why this matters beyond just "which file."</li>
         <li><strong>Help</strong> — opens this User Guide in your default browser.</li>
-        <li><strong>v2.12.25</strong> (top-right, gray) — the exact build number of the Admin app you're currently running. Useful when confirming "did the new build actually install" — compare this against what you were told to expect.</li>
+        <li><strong>v2.13.6</strong> (top-right, gray) — the exact build number of the Admin app you're currently running. Useful when confirming "did the new build actually install" — compare this against what you were told to expect.</li>
         <li><strong>Process:</strong> — always shows the real, current state:
           <ul>
             <li><strong>Not running</strong> (red) — nothing is active; either button is free to use.</li>
@@ -455,7 +458,7 @@
             <tr><td>Continue</td><td>The saved watermark — automatically resumes right after the last invoice this app successfully processed</td><td>Routine day-to-day catch-up runs. No dates or numbers to fill in at all.</td></tr>
             <tr><td>Last changed date</td><td>PortPro's "last updated" timestamp, within your From/To window</td><td>Chasing "what changed recently" specifically. <strong>Caution:</strong> can pull in an invoice dated well outside your window if it was merely edited — which has caused real failures before (an old invoice rejected by Sage 50's own cutoff rule, killing the whole run). Prefer Invoice date unless you specifically need this.</td></tr>
             <tr><td>Invoice number range</td><td>Reference numbers between a Start and an End (both ends included)</td><td>You know the numeric range of what's missing, e.g. "everything between RSRE_000090 and RSRE_000095."</td></tr>
-            <tr><td>Invoice number list</td><td>An explicit, exact list of reference numbers you type in</td><td>You know precisely which invoice(s) you need. Looks each one up individually rather than paging through PortPro's list — also why it's more reliable at finding an invoice the list view sometimes misses (see <a href="#gap-fill">section 13</a>).</td></tr>
+            <tr><td>Invoice number list</td><td>An explicit, exact list of reference numbers you type in</td><td>You know precisely which invoice(s) you need. Looks each one up individually rather than paging through PortPro's list — also why it's more reliable at finding an invoice the list view sometimes misses (see <a href="#gap-fill">section 14</a>).</td></tr>
           </tbody>
         </table>
       </div>
@@ -525,29 +528,66 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
         <p><strong>Settings changes need a restart.</strong> If the Automatic Service is already running and you change/Save a setting anywhere in the app, the running process keeps using the old values until you stop and restart it.</p>
       </div>
+    </section>
 
-      <h3>Full Customer Refresh tab</h3>
-      <p>The third tab, right after Automatic Sync, for one specific job: pushing <strong>every</strong> PortPro customer's full profile (address, city, province, country, postal code, phone, email, contact, currency) onto its matching Sage 50 customer, on demand, right now — as opposed to the automatic "Update Customer with latest changes in PortPro" sweep (Sage 50 tab), which only ever touches a customer whose PortPro profile has changed since it was last synced. This tab ignores that changed-since-last-sync check entirely and refreshes every matching customer unconditionally.</p>
+    <section class="doc-section" id="customer-refresh">
+      <h2>6. Customer Refresh tab</h2>
+      <p>Its own top-level tab, right after Automatic Sync, for one specific job: comparing <strong>every</strong> PortPro customer against Sage 50 side by side, and optionally pushing chosen ones (new customer creations, or full-profile overwrites of existing ones) into Sage 50 — on demand, only for the rows you actually pick.</p>
+      <p>This is different from the automatic "Update Customer with latest changes in PortPro" sweep (Sage 50 tab), which only ever touches a customer whose PortPro profile has changed since it was last synced, in the background, and never creates a new customer. This tab ignores that changed-since-last-sync check entirely, compares <em>every</em> customer every time you extract, and <strong>can create a brand-new Sage 50 customer</strong> for a customer with no match (gated by the same "Auto-create missing customers" setting used when a new customer shows up on an invoice).</p>
       <div class="callout callout--warning">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.29 3.86l-8.02 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3l-8.02-14a2 2 0 0 0-3.42 0z"/></svg>
-        <p><strong>This will overwrite Sage 50 customer data.</strong> Whatever PortPro currently has on file replaces whatever's in Sage 50 for that customer — any change made directly in Sage 50 to a customer's address, phone, email, etc. is lost. It only updates customers that <strong>already exist</strong> in Sage 50 by name; it never creates a new one (a missing customer is still only ever created automatically, the normal way, the first time an invoice needs it).</p>
+        <p><strong>Running an UPDATE overwrites Sage 50 customer data.</strong> Whatever PortPro currently has on file replaces whatever's in Sage 50 for that customer — any change made directly in Sage 50 to a customer's address, phone, email, etc. is lost for any row you check and run.</p>
       </div>
+
+      <h3>The two-step workflow</h3>
+      <p>Nothing loads automatically — the grid starts <strong>empty every time the app opens</strong>, showing a placeholder message ("Press "Extract All Customer" to pull PortPro customers and their Sage 50 comparison.") until you deliberately pull data.</p>
+      <ol>
+        <li><strong>Extract All Customer</strong> — fetches every PortPro customer (the full account, not a partial page — see the note below) and checks each one against Sage 50 by name. Entirely read-only; nothing is written. Fills the grid with one row per customer, each marked <strong>INSERT</strong> (no match found in Sage 50) or <strong>UPDATE</strong> (a match exists), showing PortPro's incoming profile and, for an UPDATE row, Sage 50's current profile side by side. Pressing it again re-extracts and replaces the whole list. A label above the grid shows when it was last extracted and a running total, e.g. <em>"Last extracted: 14:22:10 - 223 customer(s) total (6 to insert, 217 to update)."</em></li>
+        <li><strong>Run Selected</strong> — tick the rows you actually want processed (or use <strong>Select all</strong>, or press the <strong>spacebar</strong> while a row has focus to toggle just that row — works from any column, not only the checkbox itself), then click this button. This is the only step that writes anything, and only for the rows you checked.</li>
+      </ol>
+      <div class="callout callout--note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <p><strong>The 50-record pagination bug is fixed.</strong> PortPro's <code>/customer</code> endpoint used to silently cap every response at 50 records no matter what page size was requested, so earlier builds of this feature only ever saw the first 50 customers. This is now fixed — Extract All Customer genuinely pulls every customer on the account (confirmed against a live account with 223 real customers).</p>
+      </div>
+
+      <h3>The grid</h3>
+      <p>Columns, left to right: <strong>Select</strong> (checkbox) · <strong># (Seq)</strong> — the row's position in the extract, so "223 customers total" and "row 223" line up · <strong>CustomerName</strong> · <strong>PortProDetails</strong> · <strong>Operation</strong> (INSERT/UPDATE) · <strong>Applied</strong> · <strong>Date</strong> · <strong>SageCustomerName</strong> · <strong>SageDetails</strong>.</p>
       <ul>
-        <li><strong>"FULL Customer profile refresh" checkbox</strong> — a confirmation gate, not a setting. Must be checked to enable the button below, and is <strong>never saved anywhere</strong> — always starts unchecked, and resets itself back to unchecked immediately after every click of the button, whatever the outcome.</li>
-        <li><strong>Dry run (Simulated - Default 10 Customers and no real Sage 50 Changes)</strong> — a <strong>separate, independent Dry Run</strong> entirely its own - NOT the same setting as Manual Run / Sage 50 tab's Dry run, and toggling one never affects the other. <strong>Always defaults to checked</strong> when the app opens, and <strong>resets itself back to checked</strong> the moment a refresh finishes - succeeded, finished with errors, or interrupted.
-          <ul>
-            <li>Checking it sets Max customers to process to 10 automatically; unchecking it resets Max customers back to 0 (no limit).</li>
-          </ul>
-        </li>
-        <li><strong>Max customers to process (0 = no limit)</strong> — caps how many customers this refresh actually <em>updates</em> in Sage 50 (a customer not found in Sage 50 does not count against the cap). Never saved anywhere; resets to 10 the moment a refresh finishes.</li>
-        <li><strong>Refresh FULL Customer button</strong> — shows a confirmation dialog titled <strong>"ALERT..!! (FULL Customer refresh)"</strong> summarizing write mode, max customers, and the company file, then starts the refresh in its own dedicated process, the same way Manual Run does. Disabled while the Automatic Service or a Manual Run is active (all three connect to Sage 50 under the same account).</li>
-        <li>Runs independently of Manual Run and the Automatic Service — it doesn't select invoices by date or number at all — but still registers its own row in History &amp; Logs once finished, with <strong>Mode: "FULL Customer refresh"</strong> and <strong>Source: "Full Customer Refresh"</strong>. The completion pop-up is also titled <strong>"ALERT..!! (FULL Customer refresh)"</strong>.</li>
+        <li><strong>An INSERT row is shown in red font</strong>, from the Operation column through the last column, so a genuinely-new customer is impossible to miss while scanning a long list.</li>
+        <li><strong>Applied / Date</strong> show the result of the <em>last time this customer was actually run</em> through Run Selected — a success/fail flag plus the exact date/time — and they're pre-filled from a persisted record the moment you extract, even across app restarts or a brand-new Extract. <strong>The grid does not clear or reset after Run Selected finishes</strong> — it updates the rows you ran in place with their fresh Applied/Date result, so you can see exactly what just happened without losing the rest of the list. A Dry Run's result is deliberately <strong>never</strong> persisted here (see below), so Applied/Date only ever reflects real writes.</li>
+        <li><strong>Wrapped Details</strong> checkbox — toggles word-wrap on the PortProDetails/SageDetails columns. Unchecked (the default) keeps every row a single compact line; checked wraps long text and grows each row to fit it.</li>
+        <li><strong>Search box</strong> (top-right) — type a PortPro customer name to scroll to and highlight the first match. This does not filter or hide any row, just jumps to and selects the match.</li>
       </ul>
+
+      <h3>Dry run (Simulated - no real Sage 50 Changes)</h3>
+      <p>A <strong>separate, independent</strong> Dry Run — this is <strong>not</strong> the same setting as the Dry run checkbox on Manual Run / Sage 50 tab, and toggling one never affects the other.</p>
+      <ul>
+        <li><strong>Defaults to unchecked every time the app opens</strong> — a real write is the default action here, unlike Manual Run's own Dry Run. Resets itself back to unchecked after every Run Selected, success or failure, so a test toggle can't silently carry forward into a later real run.</li>
+        <li>There is no Max-customers cap tied to it (unlike the old design) — Run Selected always processes exactly the rows you checked, nothing more.</li>
+        <li><strong>A Dry Run result is never saved to the Applied/Date columns' persisted history</strong> — it's a pure simulation that leaves no trace in the tracked "last real outcome" for that customer.</li>
+        <li>The confirmation dialog and its title both lead with the write mode in capital letters — <strong>"*** DRY RUN - simulated only, nothing will actually be written to Sage 50. ***"</strong> or <strong>"*** REAL WRITE - this will make real changes to Sage 50. ***"</strong> — so which one is about to happen is the very first thing you see.</li>
+      </ul>
+
+      <h3>Viewing data for: (path picker)</h3>
+      <p>A dropdown at the top of the tab lists every Sage 50 company-file path this app has ever recorded Customer Refresh results against.</p>
+      <ul>
+        <li>Selecting the <strong>currently-configured</strong> path (matching the "Target Sage50" banner in the top bar) is <strong>live mode</strong> — Extract and Run Selected work exactly as described above.</li>
+        <li>Selecting <strong>any other, past</strong> path switches the tab to a <strong>read-only historical view</strong> of that path's last-known results — Extract and Run Selected are both disabled, since a real PortPro-vs-Sage50 comparison is only possible against whichever company file is actually connected right now.</li>
+      </ul>
+      <p>See <a href="#path-scoping">section 15</a> for the full explanation of why this dropdown exists and how it splits data between company files.</p>
+
+      <h3>No pre-flight "Sage 50 already open" warning</h3>
+      <p>Unlike Manual Run and Automatic Sync, this tab does <strong>not</strong> show a "Sage 50 might already be open under this username, continue anyway?" warning before starting. If Sage 50 genuinely is already open under the same username, the run simply fails immediately with a clear error explaining why — there's no extra confirmation step to click through first.</p>
+      <p>Both Extract and Run Selected are disabled while the Automatic Service or a Manual Run is active (all of them connect to Sage 50 under the same account, and Sage 50 rejects a second simultaneous session), and each one registers its own row in History &amp; Logs once finished ("Customer Refresh (scan)" for an Extract, "Customer Refresh" for a Run Selected) — check there for exactly what was found, created, updated, or failed.</p>
     </section>
 
     <section class="doc-section" id="watermark">
-      <h2>6. Watermark tab</h2>
+      <h2>7. Watermark tab</h2>
       <p>The "watermark" is the saved bookmark — a date plus an invoice number — that Continue mode and the Automatic Service's own polling both use to know where they left off. This tab lets you view it, and, if truly necessary, override it by hand.</p>
+      <div class="callout callout--note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <p>The watermark is one of the things scoped per Sage 50 path (see <a href="#path-scoping">section 15</a>) — what you see and change here always applies to whichever company file the "Target Sage50" banner currently shows, not to any other path.</p>
+      </div>
       <h3>Current Watermark (read-only)</h3>
       <p>Shows the watermark date and invoice number currently saved, with a <strong>Refresh</strong> button. Reads <code>(none - no run has ever completed)</code> if nothing has ever synced successfully yet.</p>
       <h3>Reset / Change Watermark</h3>
@@ -565,19 +605,22 @@
     </section>
 
     <section class="doc-section" id="history-logs">
-      <h2>7. History &amp; Logs tab</h2>
-      <p>Your record of every run that's ever happened — automatic, manual, or from a trigger file — with full drill-down detail.</p>
+      <h2>8. History &amp; Logs tab</h2>
+      <p>Your record of every run that's ever happened — automatic, manual, Customer Refresh, or from a trigger file — with full drill-down detail.</p>
+
+      <h3>Viewing data for: (path picker)</h3>
+      <p>Right below the Refresh button, a <strong>Sage50 path</strong> dropdown lists every Sage 50 company-file path this app has ever recorded a run against. Selecting a path filters the grid to just that path's runs. Entries recorded <strong>before</strong> this feature existed (or before a run's own result was written by a version of the Service that included it) don't have a known path — those always keep showing, regardless of which path is selected, so older history is never silently hidden. See <a href="#path-scoping">section 15</a> for the full picture.</p>
 
       <h3>The grid</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
           <tbody>
-            <tr><td>Select</td><td>Checkbox for multi-row delete — see <a href="#deleting-a-run">Deleting a run</a>. Always starts unchecked.</td></tr>
+            <tr><td>Select</td><td>Checkbox for multi-row delete — see <a href="#deleting-a-run">Deleting a run</a>. Always starts unchecked. Press the <strong>spacebar</strong> while any cell in a row has focus to toggle that row's checkbox without needing to click the narrow checkbox column itself.</td></tr>
             <tr><td>#</td><td>A short, stable reference number for the run, assigned in the order it happened; never renumbers.</td></tr>
             <tr><td>Request ID</td><td>The full internal ID for this run.</td></tr>
-            <tr><td>Source</td><td>"Automatic Service", "Manual Run", or "Trigger file".</td></tr>
-            <tr><td>Mode</td><td>Selection mode used (see <a href="#manual-run">section 4</a>); a gap-fill run shows "Finding the Gap (found/checked)" once finished (see <a href="#gap-fill">section 13</a>); an override run shows "(Override)" appended; a Dry Run shows "(Dry Run)" appended.</td></tr>
+            <tr><td>Source</td><td>"Automatic Service", "Manual Run", "Customer Refresh", or "Trigger file".</td></tr>
+            <tr><td>Mode</td><td>Selection mode used (see <a href="#manual-run">section 4</a>); a gap-fill run shows "Finding the Gap (found/checked)" once finished (see <a href="#gap-fill">section 14</a>); an override run shows "(Override)" appended; a Dry Run shows "(Dry Run)" appended.</td></tr>
             <tr><td>Process Start / End</td><td>When the run's process actually started and finished.</td></tr>
             <tr><td>Inv Start / End Date</td><td>The actual invoice-date window this run covered.</td></tr>
             <tr><td>Fetched</td><td>How many invoices PortPro returned (shown as <code>found/checked</code> for a gap-fill row).</td></tr>
@@ -599,10 +642,10 @@
       <p>Two ways to delete, both requiring confirmation first:</p>
       <ul>
         <li><strong>One row</strong> — click that row's <strong>Delete</strong> button.</li>
-        <li><strong>Several rows at once</strong> — tick <strong>Select</strong> on each row you want gone (or click <strong>Select all</strong>, top-right), then click <strong>Delete Selected</strong> (also top-right, in red).</li>
+        <li><strong>Several rows at once</strong> — tick <strong>Select</strong> on each row you want gone (Select all, individual checkboxes, or spacebar), then click <strong>Delete Selected</strong> (also top-right, in red).</li>
       </ul>
       <p>A run that's <strong>still actively in progress can't be deleted</strong> — you'll see a warning telling you to stop it first.</p>
-      <p>Deleting a run is permanent and removes everything it produced: its own request/result files, any failed-transaction CSV report, and its rows in the local tracking database — so those invoices are treated as brand new again the next time a real run touches them.</p>
+      <p>Deleting a run is permanent and removes everything it produced: its own request/result files, any failed-transaction CSV report, and its rows in the local tracking database — so those invoices are treated as brand new again the next time a real run touches them. <strong>This is scoped to the exact Sage 50 path that run actually used</strong> — deleting a run against one company file never removes tracking rows that genuinely belong to a different path, even if they happen to share the same invoice reference number.</p>
 
       <h3>The detail tabs</h3>
       <ul>
@@ -615,15 +658,15 @@
       </ul>
 
       <h3>Reading a gap-fill row</h3>
-      <p>A "Finding the Gap" row is automatically created after almost every other run (see <a href="#gap-fill">section 13</a>). If you see one with "Fetched: 0/79" and "Not found: 79", that means it checked 79 candidates individually and genuinely didn't find any of them — a normal, healthy result, not an error.</p>
+      <p>A "Finding the Gap" row is automatically created after almost every other run (see <a href="#gap-fill">section 14</a>). If you see one with "Fetched: 0/79" and "Not found: 79", that means it checked 79 candidates individually and genuinely didn't find any of them — a normal, healthy result, not an error.</p>
     </section>
 
     <section class="doc-section" id="portpro-tab">
-      <h2>8. PortPro tab</h2>
+      <h2>9. PortPro tab</h2>
       <p>Connection settings for PortPro's API. You'll rarely need to touch most of these after initial setup:</p>
       <ul>
         <li><strong>Base URL / Invoice endpoint</strong> — where PortPro's API lives and where invoice data comes from.</li>
-        <li><strong>Customer endpoint</strong> — the path used to fetch PortPro's <em>full</em> customer profile (address, billing email, contact, payment terms) — a separate, richer object than the lightweight caller info embedded on each invoice. Used when auto-creating a new Sage 50 customer, and by the periodic customer-update sync (see the Sage 50 tab).</li>
+        <li><strong>Customer endpoint</strong> — the path used to fetch PortPro's <em>full</em> customer profile (address, billing email, contact, payment terms) — a separate, richer object than the lightweight caller info embedded on each invoice. Used when auto-creating a new Sage 50 customer, by the periodic customer-update sync (see the Sage 50 tab), and by the Customer Refresh tab's Extract All Customer.</li>
         <li><strong>Access token endpoint</strong> — reference/legacy; the real login flow uses New token endpoint instead.</li>
         <li><strong>New token endpoint</strong> — where a fresh access token is requested using the Refresh token, automatically, whenever the current one expires.</li>
         <li><strong>Page size</strong> — how many invoices PortPro returns per page (the app pages through everything automatically).</li>
@@ -634,11 +677,11 @@
     </section>
 
     <section class="doc-section" id="sage50-tab">
-      <h2>9. Sage 50 tab</h2>
+      <h2>10. Sage 50 tab</h2>
       <p>Connection credentials and the account-mapping rules that decide exactly where each invoice line posts in Sage 50. This is the most consequential tab in the app — take the Dry run switch seriously.</p>
       <ul>
         <li><strong>App name / App ID</strong> — how this app identifies itself to the Sage 50 SDK.</li>
-        <li><strong>Company data path</strong> — the full path to your <code>.SAI</code> company file. Use <strong>Test Connection</strong> to confirm it opens.</li>
+        <li><strong>Company data path</strong> — the full path to your <code>.SAI</code> company file. Use <strong>Test Connection</strong> to confirm it opens. <strong>Changing this and saving effectively switches the app to a different Sage 50 file</strong> — see <a href="#path-scoping">section 15</a> for exactly what does and doesn't carry over when you do.</li>
         <li><strong>Sage50 User Name / Password</strong> — must be a <strong>dedicated account</strong>, never one a person also logs into interactively.</li>
         <li><strong>Expected SDK version</strong> — optional startup version check; leave blank to skip.</li>
         <li><strong>Default revenue account</strong> — the GL account used for a charge with no specific mapping below. If also blank, an unmapped charge fails outright.</li>
@@ -646,14 +689,14 @@
         <li><strong>Default receivable account</strong> — currently has <strong>no effect</strong>. Sage 50's customer object has no per-customer receivable-account property to write it to — Simply Accounting/Sage 50 posts every customer to one global AR control account, configured once in Sage 50 itself (Setup ▸ Settings ▸ Customers &amp; Sales ▸ Linked Accounts). Kept in case a future SDK version adds support.</li>
         <li><strong>Default net payment terms (days)</strong> — the fallback "Net N days" term applied to an invoice when PortPro's own real per-invoice terms can't be used. PortPro normally supplies real terms directly, so this is a safety net, not the primary source. Example: 30.</li>
         <li><strong>Accounts To Trust</strong> — workaround for a known Sage 50 SDK quirk where a real, existing account is sometimes wrongly reported as missing. Only add an account here after confirming it's genuinely real in Sage 50.</li>
-        <li><strong>Auto-create missing customers / items</strong> — checked: an unrecognized PortPro customer or charge item is created automatically before posting.</li>
+        <li><strong>Auto-create missing customers / items</strong> — checked: an unrecognized PortPro customer or charge item is created automatically before posting. Also gates whether an INSERT row on the Customer Refresh tab is actually allowed to create a new customer.</li>
         <li><strong>Update Customer with latest changes in PortPro</strong> — default checked. Once per Automatic Service cycle and once per Manual Run, checks every PortPro customer for a profile change since it was last synced, and pushes any change into the matching <em>existing</em> Sage 50 customer automatically. Does not affect creating brand new customers, which always happens with the full PortPro profile regardless of this setting.
           <div class="callout callout--warning" style="margin-top: 10px;">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
             <p><strong>PortPro always wins.</strong> A manual correction made directly in Sage 50 (address, email, etc.) is overwritten the next time that customer's PortPro record changes.</p>
           </div>
         </li>
-        <li><strong>Dry run</strong> — <strong>the most important switch on this screen.</strong> Checked: nothing is actually written to Sage 50, the run just logs what it would do. Always test something unfamiliar with this checked first. Also editable directly from the Manual Run tab (see <a href="#manual-run">section 4</a>) - the exact same setting, in effect immediately either place.</li>
+        <li><strong>Dry run</strong> — <strong>the most important switch on this screen.</strong> Checked: nothing is actually written to Sage 50, the run just logs what it would do. Always test something unfamiliar with this checked first. Also editable directly from the Manual Run tab (see <a href="#manual-run">section 4</a>) - the exact same setting, in effect immediately either place. (This is <strong>not</strong> the same flag as the Customer Refresh tab's own Dry Run — see <a href="#customer-refresh">section 6</a>.)</li>
         <li><strong>Tax codes</strong> grid — maps a Canadian tax abbreviation (HST/GST/PST/QST) to the matching Sage 50 tax code.</li>
         <li><strong>Charge account map</strong> grid — maps each PortPro charge name to the Sage 50 GL account it should post to. Only <strong>Sage 50 Account Number</strong> actually affects posting.</li>
       </ul>
@@ -661,7 +704,7 @@
     </section>
 
     <section class="doc-section" id="settings-tab">
-      <h2>10. Settings tab</h2>
+      <h2>11. Settings tab</h2>
       <p>Everything else: email notifications, where files live, log cleanup, and a destructive reset utility.</p>
       <h3>Email (failed-transaction reports)</h3>
       <ul>
@@ -674,7 +717,7 @@
       <ul>
         <li><strong>Trigger folder</strong> — where new requests are dropped for the Service to pick up. Also holds <code>deleted-history-ids.json</code>.</li>
         <li><strong>Processed trigger folder</strong> — where a request moves once handled; History &amp; Logs reads from here.</li>
-        <li><strong>State database path</strong> — tracks already-imported invoices and the watermark. Never point two client installs at the same file.</li>
+        <li><strong>State database path</strong> — the single file tracking already-imported invoices, customer sync state, Customer Refresh results, and the watermark <strong>for every Sage 50 path you've ever used</strong> (see <a href="#path-scoping">section 15</a>) — it's one shared file, not one per path. Never point two client installs at the same file.</li>
         <li><strong>Log folder</strong> — daily rolling log files.</li>
         <li><strong>Failed transactions folder</strong> — CSV reports, one per run with a failure.</li>
         <li><strong>Minimum log level</strong> — Information is normal; Debug only while actively troubleshooting.</li>
@@ -682,24 +725,24 @@
       </ul>
       <h3>Reset Imported-Invoice Tracking</h3>
       <ul>
-        <li><strong>Currently tracked as already imported</strong> — a live count. Reflects the old company file until reset, if you've switched.</li>
+        <li><strong>Currently tracked as already imported</strong> — a live count for <strong>the currently-configured Sage 50 path specifically</strong>. Switching to a different company file on the Sage 50 tab shows that path's own separate count, not a leftover from whichever file was configured before.</li>
         <li><strong>Clear All Imported-Invoice Records</strong> — irreversible; see below.</li>
       </ul>
       <div class="callout callout--warning">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
-        <p><strong>Clear All Imported-Invoice Records is irreversible.</strong> Wipes this app's entire memory of what's already been imported (does not touch Sage 50 itself). Only safe if you're certain the current Sage 50 company file genuinely doesn't already contain those invoices — otherwise they will be posted again as duplicates.</p>
+        <p><strong>Clear All Imported-Invoice Records is irreversible.</strong> Wipes this app's entire memory of what's already been imported <strong>for the currently-configured path only</strong> — it does not touch any other Sage 50 path's tracking, and does not touch Sage 50 itself. Only safe if you're certain the current Sage 50 company file genuinely doesn't already contain those invoices — otherwise they will be posted again as duplicates.</p>
         <p>If you only need to clear tracking for <strong>one specific run</strong>, deleting that run from History &amp; Logs does that instead, without wiping everything else.</p>
       </div>
       <p>Click <strong>Save Settings</strong> to persist the non-secret fields above.</p>
     </section>
 
     <section class="doc-section" id="about-tab">
-      <h2>11. About tab</h2>
+      <h2>12. About tab</h2>
       <p>Static reference info: app version, SmallArc Inc. contact details, and a note about SmallArc's other product, Fixyee (<code>www.fixyee.com</code>). No functional controls here — just company/licensing information.</p>
     </section>
 
     <section class="doc-section" id="licensing-about-tab">
-      <h2>12. Licensing &amp; About tab</h2>
+      <h2>13. Licensing &amp; About tab</h2>
       <p>A newer, more detailed license-and-contact screen, kept as its own separate tab alongside the classic About tab rather than replacing it. Shows a License Information card, Company and Support side by side, an Other Products section, and the same Authorized Use notice as the About tab.</p>
       <div class="callout callout--note">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
@@ -708,7 +751,7 @@
     </section>
 
     <section class="doc-section" id="gap-fill">
-      <h2>13. Understanding automatic gap-fill ("Finding the Gap")</h2>
+      <h2>14. Understanding automatic gap-fill ("Finding the Gap")</h2>
       <p>This is the one behavior in the app that isn't a button you click — it just happens, automatically, after almost every run.</p>
       <h3>Why it exists</h3>
       <p>PortPro's normal invoice list — the one every date-range or number-range run uses — can, under certain conditions, silently leave out real invoices that genuinely exist. Looking that invoice up <em>individually</em>, by its exact reference number, finds it fine; it's specifically the bulk list view that can miss it. The app doesn't rely on you to remember to check — it checks automatically, every time.</p>
@@ -724,8 +767,40 @@
       </div>
     </section>
 
+    <section class="doc-section" id="path-scoping">
+      <h2>15. Working with more than one Sage 50 company file</h2>
+      <p>If you only ever point this app at one Sage 50 company file, you can skip this section — everything just works the way the rest of this guide describes. This section matters the moment you switch between two or more <code>.SAI</code> files (e.g. a DEV/test company file and your real PROD one), because a lot of what the app remembers is now kept <strong>separately for each one</strong>.</p>
+
+      <h3>What's scoped per path</h3>
+      <p>Every one of these is tracked independently for each distinct Sage 50 company-file path (the exact value of <strong>Company data path</strong> on the Sage 50 tab):</p>
+      <ul>
+        <li><strong>Already-imported invoice tracking</strong> — the "don't post this again" memory used by every sync mode. Switching to a different path starts this fresh for that path; switching back to a path you used before brings its own tracking back exactly as you left it.</li>
+        <li><strong>The watermark</strong> (<a href="#watermark">section 7</a>) — Continue mode resumes from whichever path's own watermark is currently active.</li>
+        <li><strong>Customer Refresh results</strong> (<a href="#customer-refresh">section 6</a>) — the persisted Applied/Date history shown in the grid, and what the path picker shows in historical mode.</li>
+        <li><strong>History &amp; Logs' path filter</strong> (<a href="#history-logs">section 8</a>) — which runs a given path's dropdown selection shows.</li>
+      </ul>
+
+      <h3>What this means in practice</h3>
+      <p>Say you're actively testing against a DEV company file, then switch <strong>Company data path</strong> on the Sage 50 tab to your real PROD file and save:</p>
+      <ul>
+        <li>The <strong>Target Sage50</strong> banner (top bar, <a href="#top-bar">section 3</a>) immediately reflects the new path.</li>
+        <li>History &amp; Logs and Customer Refresh's path dropdowns will show PROD as a new (or already-known, if you've used it before) option — selecting it shows PROD's own history, not DEV's.</li>
+        <li>The <strong>skip logic</strong> (already-imported invoices, customer sync state) automatically starts following PROD's own tracking. If PROD is genuinely new to this app, everything on it looks fresh; if you've synced to PROD before, its own prior tracking picks back up right where it left off — DEV's test data never leaks into it, and vice versa.</li>
+        <li><strong>Interestingly, this also means the skip logic you exercised while testing on DEV doesn't apply to PROD at all</strong> — a DEV test run doesn't make PROD think anything's already imported. Each path's memory is entirely its own.</li>
+      </ul>
+
+      <h3>The path picker dropdowns</h3>
+      <p>Both Customer Refresh and History &amp; Logs show a <strong>"Viewing data for:"</strong> / <strong>"Sage50 path"</strong> dropdown, listing every path the state database has ever recorded anything against.</p>
+      <ul>
+        <li>It's a live list — a brand-new path shows up the moment you save it on the Sage 50 tab and revisit either tab, without needing to already have data for it.</li>
+        <li>Selecting the path that matches the current "Target Sage50" banner keeps a tab fully live (Extract/Run Selected work normally on Customer Refresh; History &amp; Logs just filters to that path).</li>
+        <li>Selecting a different, past path switches Customer Refresh to a read-only historical view (see <a href="#customer-refresh">section 6</a>) and filters History &amp; Logs to that path's own runs.</li>
+        <li>Before any path has ever been configured, both dropdowns show <strong>"(Sage50 path not defined)"</strong>.</li>
+      </ul>
+    </section>
+
     <section class="doc-section" id="walkthroughs">
-      <h2>14. Walkthroughs: common tasks step by step</h2>
+      <h2>16. Walkthroughs: common tasks step by step</h2>
 
       <h3>Run a normal catch-up sync manually, right now</h3>
       <ol>
@@ -779,10 +854,20 @@
         <li>Use <strong>Full log</strong> and its search box for raw context.</li>
       </ol>
 
+      <h3>Compare PortPro customers against Sage 50 and push a handful of changes</h3>
+      <ol>
+        <li>Go to <strong>Customer Refresh</strong>. Confirm the "Viewing data for:" dropdown matches the current Target Sage50 path (it will, unless you'd previously selected a different one).</li>
+        <li>Click <strong>Extract All Customer</strong> and wait for it to finish — the grid fills with every PortPro customer, INSERT rows shown in red.</li>
+        <li>Use the search box to jump to specific customers if needed, or just scan the list.</li>
+        <li>Tick the rows you want to process (Select all, individual checkboxes, or spacebar).</li>
+        <li>Leave <strong>Dry run</strong> unchecked for a real write, or check it first to preview safely (the confirmation dialog will say so clearly either way).</li>
+        <li>Click <strong>Run Selected</strong>, confirm. The Applied/Date columns update in place for the rows you ran; the rest of the grid stays exactly as it was.</li>
+      </ol>
+
       <h3>Clean up an old test run from History &amp; Logs</h3>
       <ol>
         <li>Go to <strong>History &amp; Logs</strong>.</li>
-        <li>For one run: click <strong>Delete</strong>. For several: tick <strong>Select</strong> (or <strong>Select all</strong>), then <strong>Delete Selected</strong>.</li>
+        <li>For one run: click <strong>Delete</strong>. For several: tick <strong>Select</strong> (or <strong>Select all</strong>, or spacebar), then <strong>Delete Selected</strong>.</li>
         <li>Confirm — permanently removes that run's files, reports, and tracking rows.</li>
       </ol>
 
@@ -806,10 +891,18 @@
         <li>Look at the <strong>Process:</strong> line in the top bar.</li>
         <li>Use the top bar's <strong>Stop</strong> button if something genuinely needs stopping.</li>
       </ol>
+
+      <h3>Switching from a DEV/test Sage 50 file to the real PROD file</h3>
+      <ol>
+        <li>Go to <strong>Sage 50</strong> tab, update <strong>Company data path</strong> to the PROD <code>.SAI</code> file, click <strong>Test Connection</strong> to confirm it opens.</li>
+        <li>Click <strong>Save Sage 50 settings</strong>. The top bar's <strong>Target Sage50</strong> banner updates immediately.</li>
+        <li>Check <strong>History &amp; Logs</strong> and <strong>Customer Refresh</strong> — their path dropdowns now offer PROD (fresh, or with its own prior history if you've used it before); DEV's own history is still there under its own dropdown entry, untouched.</li>
+        <li>Run normally from here — the skip logic automatically follows PROD's own tracking, not DEV's. See <a href="#path-scoping">section 15</a> for the full picture.</li>
+      </ol>
     </section>
 
     <section class="doc-section" id="faq">
-      <h2>15. Troubleshooting / FAQ</h2>
+      <h2>17. Troubleshooting / FAQ</h2>
 
       <h3>I changed a setting and nothing seems different.</h3>
       <p>Did you click that tab's Save button? And if the Automatic Service was already running, did you restart it afterward?</p>
@@ -821,13 +914,16 @@
       <p>The process stopped before finishing cleanly. Nothing already successfully imported is lost or will be double-imported; re-running the same range/Continue picks up exactly where it left off. Check <strong>Full log</strong>.</p>
 
       <h3>A "Finding the Gap" row found 0 invoices — is that a problem?</h3>
-      <p>No — see <a href="#gap-fill">section 13</a>. That's the normal, healthy result most of the time.</p>
+      <p>No — see <a href="#gap-fill">section 14</a>. That's the normal, healthy result most of the time.</p>
 
       <h3>An invoice was imported twice.</h3>
       <p>Shouldn't happen under normal operation. Check <strong>Validate Invoice Extracted</strong> for that invoice's Request ID(s), and see the Settings tab's Reset Imported-Invoice Tracking section (and whether "Override Already Imported check" was used).</p>
 
       <h3>I deleted a run from History &amp; Logs by mistake — can I get it back?</h3>
       <p>No — deleting a run is permanent, by design. If the invoices it imported are still correctly in Sage 50, Sage 50 itself is unaffected — only this app's own history and bookkeeping.</p>
+
+      <h3>I switched Sage 50 paths and now History &amp; Logs / Customer Refresh looks empty.</h3>
+      <p>That's expected the first time you point the app at a genuinely new company file — its tracking starts fresh. Use the path dropdown on either tab to switch back and confirm your old path's data is still there. See <a href="#path-scoping">section 15</a>.</p>
 
       <h3>Sage 50 says an account "doesn't exist" but I can see it in the chart of accounts.</h3>
       <p>A known Sage 50 SDK quirk — see <strong>Accounts To Trust</strong> on the Sage 50 tab.</p>
@@ -837,17 +933,18 @@
     </section>
 
     <section class="doc-section" id="glossary">
-      <h2>16. Glossary</h2>
+      <h2>18. Glossary</h2>
       <ul>
-        <li><strong>Watermark</strong> — the saved bookmark (a date + invoice number) that Continue mode and the Automatic Service use to know where they left off.</li>
+        <li><strong>Watermark</strong> — the saved bookmark (a date + invoice number) that Continue mode and the Automatic Service use to know where they left off. Scoped per Sage 50 path — see <a href="#path-scoping">section 15</a>.</li>
         <li><strong>Continue mode</strong> — the Mode option that resumes from the watermark automatically.</li>
-        <li><strong>Gap-fill / "Finding the Gap"</strong> — the automatic follow-up sweep double-checking for invoices the bulk list view might have missed. See <a href="#gap-fill">section 13</a>.</li>
+        <li><strong>Gap-fill / "Finding the Gap"</strong> — the automatic follow-up sweep double-checking for invoices the bulk list view might have missed. See <a href="#gap-fill">section 14</a>.</li>
         <li><strong>Override Already Imported check</strong> — a Manual Run checkbox that lets a previously-imported invoice be re-processed for one run only. Never persisted; see <a href="#manual-run">section 4</a>.</li>
-        <li><strong>Dry run</strong> — a Sage 50 tab checkbox that simulates a run without writing anything real to Sage 50.</li>
+        <li><strong>Dry run</strong> — a mode that simulates a run without writing anything real to Sage 50. There are two independent Dry Run flags in the app: the shared one (Sage 50 tab / Manual Run tab) and Customer Refresh's own — see <a href="#customer-refresh">section 6</a>.</li>
         <li><strong>Trigger folder</strong> — the folder the running Service watches for new manual/trigger requests.</li>
         <li><strong>Request ID</strong> — the unique internal ID assigned to a single run, with a shorter "#" number for easier reference.</li>
         <li><strong>Cutoff (Lower) Invoice Date</strong> — the hard floor date below which no invoice is ever processed.</li>
         <li><strong>Processing Delay (Days)</strong> — how many of the most recent days are held back from automatic/Continue processing.</li>
+        <li><strong>Sage 50 path scoping</strong> — the app tracks already-imported invoices, the watermark, and Customer Refresh results separately for each distinct Sage 50 company-file path, so switching between company files (e.g. DEV vs PROD) never mixes up their tracking. See <a href="#path-scoping">section 15</a>.</li>
       </ul>
     </section>
 
@@ -857,7 +954,7 @@
         <p>This software is licensed and authorized by SmallArc Inc. for use exclusively at the licensed location and under the terms of the applicable licensing agreement. Unauthorized use, reproduction, distribution, or deployment without the express written consent of SmallArc Inc. is prohibited.</p>
       </div>
       <div class="footer-meta">
-        <span>© 2026 SmallArc Inc. · PortProSage Sync v2.12.25</span>
+        <span>© 2026 SmallArc Inc. · PortProSage Sync v2.13.6</span>
         <a href="mailto:contact@smallarc.com">contact@smallarc.com</a>
       </div>
     </footer>
