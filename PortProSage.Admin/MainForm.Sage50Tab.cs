@@ -103,16 +103,25 @@ public partial class MainForm
             "Example: 4100  ->  a 'PICK UP & DELIVERY' charge with no map entry posts to account 4100.",
             fieldPercent);
         AddCheckRow(grid, _sage50IgnoreAccountMismatchUseDefault, f, "PortProSage:Sage50:IgnoreAccountMismatchUseDefault",
-            "Checked: if a charge's specific account (from the Charge account map below) can't be confirmed as a " +
-            "real Sage 50 account, the run does NOT stop - it just posts to the Default revenue account above " +
-            "instead, and makes a note of it (not an error, just a warning you can review later).\n\n" +
-            "Unchecked (the normal setting): a charge's mapped account must match a real Sage 50 account exactly. " +
-            "If it doesn't, that invoice fails right there and the run stops on it.\n\n" +
-            "Either way, if the Default revenue account itself can't be confirmed, that always stops the run - " +
-            "there's nothing left to fall back to at that point.\n\n" +
-            "Turn this on if you keep seeing an account rejected that you've personally checked and confirmed is " +
-            "really there in Sage 50 - rather than tracking down each one individually, this just tells the sync " +
-            "\"when in doubt, use my default account instead of stopping everything.\"");
+            "Controls what happens when a charge's resolved account (from the Charge account map below, or the " +
+            "Default revenue account if the charge has no map entry) can't be confirmed to exist in Sage 50.\n\n" +
+            "1) Unchecked (the normal setting): the resolved account must be confirmed as a real Sage 50 account. " +
+            "If it can't be, that invoice fails right there and the run stops on it - nothing gets posted.\n" +
+            "Example: charge 'STORAGE' is mapped to account 4020 below, but 4020 doesn't exist in this company's " +
+            "chart of accounts -> the invoice fails with an error naming account 4020.\n\n" +
+            "2) Checked: same check, but on failure the run does NOT stop - it falls back once to the Default " +
+            "revenue account above and posts there instead, leaving a warning to review later.\n" +
+            "Example: same 'STORAGE' -> 4020 mapping, box checked, Default revenue account is 4100 -> the invoice " +
+            "posts to 4100 instead of failing, with a warning: \"Charge 'STORAGE' was mapped to account '4020', " +
+            "which could not be confirmed in Sage 50 - used the Default revenue account '4100' instead.\"\n\n" +
+            "Either way, the Charge account map below is the hard, authoritative source for which account a charge " +
+            "is supposed to use - this checkbox never changes that mapping, it only decides what happens at posting " +
+            "time if Sage 50 can't confirm the mapped (or default) account still exists. And either way, if the " +
+            "Default revenue account itself can't be confirmed, that always stops the run - there's nothing left " +
+            "to fall back to at that point.\n\n" +
+            "Checked effectively runs the sync with a safety net: every charge is guaranteed to post somewhere " +
+            "(its own mapped account if valid, otherwise the Default revenue account) rather than blocking on a " +
+            "bad or stale account mapping.");
         AddPercentRow(grid, "Default receivable account", _sage50DefaultReceivableAccount, f, "PortProSage:Sage50:DefaultReceivableAccount",
             "Confirmed live 2026-08-21 (checked directly against the Sage 50 SDK): this currently has NO EFFECT - " +
             "Sage 50's customer object has no per-customer receivable-account property to write it to. Simply " +

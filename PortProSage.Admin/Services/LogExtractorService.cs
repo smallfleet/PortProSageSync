@@ -65,20 +65,29 @@ public static class LogExtractorService
     // name can genuinely contain spaces) and is optional in the pattern - a log
     // line from before 2026-08-24 won't have it, so a historical run's log still
     // parses instead of silently matching nothing; same reasoning as DueDate/
-    // CustomerAction below.
+    // CustomerAction below. The space before "Sage50Number=" lives INSIDE the
+    // lookahead, not as a separate token after it - confirmed live 2026-08-25 that
+    // writing it as ".*? (?=Sage50Number=)" then " Sage50Number=" right after
+    // requires the same single space to be consumed twice, which can never
+    // succeed, so every Customer-bearing TRANSFER line (i.e. every one since this
+    // field was added) silently failed to match at all and Invoice Transferred
+    // showed nothing for any run.
     private static readonly Regex TransferLinePattern = new(
-        @"TRANSFER: Ref=(?<ref>\S+)(?: Customer=(?<customer>.*?) (?=Sage50Number=))? Sage50Number=(?<sage>\S+) PortProDate=(?<pdate>\S+) Sage50Date=(?<sdate>\S+)(?: DueDate=(?<due>\S+))? TotalAmount=(?<total>-?[\d.]+) TaxCharged=(?<tax>-?[\d.]+)(?: CustomerAction=(?<caction>\S+))?",
+        @"TRANSFER: Ref=(?<ref>\S+)(?: Customer=(?<customer>.*?)(?= Sage50Number=))? Sage50Number=(?<sage>\S+) PortProDate=(?<pdate>\S+) Sage50Date=(?<sdate>\S+)(?: DueDate=(?<due>\S+))? TotalAmount=(?<total>-?[\d.]+) TaxCharged=(?<tax>-?[\d.]+)(?: CustomerAction=(?<caction>\S+))?",
         RegexOptions.Compiled);
 
     // Mirrors the exact structured-logging call in SyncOrchestrator.RunAsync -
-    // "OUTCOME: Ref=RSRE_000823 Customer=ACME INC PortProDate=2026-08-01 Success=False Sage50Number=(none) Messages=[IMPORT ERROR: ...]".
+    // "OUTCOME: Ref=RSRE_000823 Customer=ACME INC PortProDate=2026-08-01 Success=false Sage50Number=(none) Messages=[IMPORT ERROR: ...]".
     // Customer is optional/lazily-captured for the same reason as TransferLinePattern
-    // above. Messages is captured greedily to the LAST "]" on the line, not the
+    // above - same "space belongs inside the lookahead" fix applies here too.
+    // Messages is captured greedily to the LAST "]" on the line, not the
     // first, since the message text itself can legitimately contain "]" (e.g. an
-    // exception message).
+    // exception message). IgnoreCase because the actual logged value is lowercase
+    // "true"/"false" (bool's default interpolation) - confirmed live 2026-08-25
+    // this alternation's literal "True|False" never matched any real line at all.
     private static readonly Regex OutcomeLinePattern = new(
-        @"OUTCOME: Ref=(?<ref>\S+)(?: Customer=(?<customer>.*?) (?=PortProDate=))? PortProDate=(?<pdate>\S+) Success=(?<success>True|False) Sage50Number=(?<sage>\S+) Messages=\[(?<messages>.*)\]\s*$",
-        RegexOptions.Compiled);
+        @"OUTCOME: Ref=(?<ref>\S+)(?: Customer=(?<customer>.*?)(?= PortProDate=))? PortProDate=(?<pdate>\S+) Success=(?<success>True|False) Sage50Number=(?<sage>\S+) Messages=\[(?<messages>.*)\]\s*$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>Parses "Invoice Transferred" rows out of an already-extracted set of log
     /// lines for one run (see ExtractForWindow) - built from the log, not from
@@ -134,7 +143,8 @@ public static class LogExtractorService
         return rows;
     }
 
-    public static List<string> ExtractForWindow(string logFolder, DateTimeOffset startedAtUtc, DateTimeOffset finishedAtUtc)
+    public static List<string> ExtractForWindow(string logFolder, DateTimeOffset startedAtUtc, DateTimeOffset finishedAtUtc,
+        DateTimeOffset? hardLowerBound = null, DateTimeOffset? hardUpperBound = null)
     {
         var result = new List<string>();
         if (!Directory.Exists(logFolder)) return result;
@@ -146,6 +156,18 @@ public static class LogExtractorService
         var localStart = startedAtUtc.ToLocalTime().Date.AddDays(-1);
         var localEnd = finishedAtUtc.ToLocalTime().Date.AddDays(1);
 
+        // The +-1s slack below exists for genuine clock/logging jitter, but two
+        // back-to-back runs (e.g. an automatic gap-fill sweep starting right after
+        // its parent sync finishes) can be closer together than that - confirmed
+        // live 2026-08-25, a run 47ms after its parent showed one of the parent's
+        // own transferred invoices in its Invoice Transferred tab. hardLowerBound/
+        // hardUpperBound (the adjacent runs' own boundaries, when known) keep the
+        // slack from ever crossing into a neighboring run's log lines.
+        var fudgedStart = startedAtUtc.AddSeconds(-1);
+        if (hardLowerBound is { } lb && fudgedStart < lb) fudgedStart = lb;
+        var fudgedEnd = finishedAtUtc.AddSeconds(1);
+        if (hardUpperBound is { } ub && fudgedEnd > ub) fudgedEnd = ub;
+
         for (var day = localStart; day <= localEnd; day = day.AddDays(1))
         {
             var path = Path.Combine(logFolder, $"portpro-sage-sync-{day:yyyyMMdd}.log");
@@ -153,7 +175,7 @@ public static class LogExtractorService
 
             foreach (var line in ReadLinesSafely(path))
             {
-                if (TryGetLineTimestamp(line, out var ts) && ts >= startedAtUtc.AddSeconds(-1) && ts <= finishedAtUtc.AddSeconds(1))
+                if (TryGetLineTimestamp(line, out var ts) && ts >= fudgedStart && ts <= fudgedEnd)
                 {
                     result.Add(line);
                 }

@@ -352,7 +352,7 @@
         <div class="brand-tagline">PortPro → Sage 50 sync, by SmallArc Inc.</div>
       </div>
     </div>
-    <div class="version-pill"><span class="dot"></span>Version 2.15.0</div>
+    <div class="version-pill"><span class="dot"></span>Version 2.15.1</div>
 
     <nav class="toc" aria-label="Table of contents">
       <div class="toc-label">Contents</div>
@@ -432,7 +432,7 @@
         </li>
         <li><strong>Target Sage50: <code>&lt;path&gt;</code></strong> — always visible, shown below the Service folder row on every tab. The exact Sage 50 company file every write in the app will go to <em>right now</em>. Reads "Target Sage50: (no path specified yet - set it on the Sage 50 tab)" until a path has ever been configured. See <a href="#path-scoping">section 15</a> for why this matters beyond just "which file."</li>
         <li><strong>Help</strong> — opens this User Guide in your default browser.</li>
-        <li><strong>v2.13.6</strong> (top-right, gray) — the exact build number of the Admin app you're currently running. Useful when confirming "did the new build actually install" — compare this against what you were told to expect.</li>
+        <li><strong>v2.15.1</strong> (top-right, gray) — the exact build number of the Admin app you're currently running. Useful when confirming "did the new build actually install" — compare this against what you were told to expect.</li>
         <li><strong>Process:</strong> — always shows the real, current state:
           <ul>
             <li><strong>Not running</strong> (red) — nothing is active; either button is free to use.</li>
@@ -656,7 +656,7 @@
       <ul>
         <li><strong>Summary</strong> — full plain-text readout: request details, exact range/list used, every count, duration, watermark before/after. Shows <strong>Customers created in Sage 50</strong> / <strong>Customers updated in Sage 50</strong> counts when this run touched any (omitted when both are zero).</li>
         <li><strong>Validate Invoice Extracted</strong> — one row per invoice this run touched: <strong>PortPro Customer Name</strong>, invoice #, PortPro date, success/fail, resulting Sage 50 invoice number, messages (wrapped automatically if too long). A gap-fill candidate not found in PortPro reads "RSRE_003947 (Invoice from identified GAP, not found in PortPro)"; a manually-typed invoice number list that wasn't found reads "(not found in PortPro)" instead.</li>
-        <li><strong>Invoice Transferred</strong> — one row per invoice actually written to Sage 50: <strong>PortPro Customer Name</strong>, PortPro #/date, Sage 50 #/date, due date, total amount, tax charged, and <strong>Sage50 Customer</strong> ("CREATED" if that invoice's customer was just auto-created, "UPDATED" if it already existed and "Update Customer with latest changes in PortPro" is on, blank otherwise — "UPDATED" means kept in sync by that setting, not necessarily changed at that exact instant).</li>
+        <li><strong>Invoice Transferred</strong> — one row per invoice actually written to Sage 50: <strong>PortPro Customer Name</strong>, PortPro #/date, <strong>Sage50 Customer</strong>, Sage 50 #/date, due date, total amount, tax charged. Sage50 Customer reads "CREATED" if that invoice's customer was just auto-created, "UPDATED" if it already existed and "Update Customer with latest changes in PortPro" is on, blank otherwise — "UPDATED" means kept in sync by that setting, not necessarily changed at that exact instant.</li>
         <li><strong>Warnings / Validation</strong> — just the warning/validation lines from this run's log.</li>
         <li><strong>Failed Transactions</strong> — just the error/failure lines.</li>
         <li><strong>Full log</strong> — the complete raw log text for this run, with a live search box.</li>
@@ -690,7 +690,7 @@
         <li><strong>Sage50 User Name / Password</strong> — must be a <strong>dedicated account</strong>, never one a person also logs into interactively.</li>
         <li><strong>Expected SDK version</strong> — optional startup version check; leave blank to skip.</li>
         <li><strong>Default revenue account</strong> — the GL account used for a charge with no specific mapping below. If also blank, an unmapped charge fails outright.</li>
-        <li><strong>Ignore account 1-on-1 match and apply default</strong> — checked: an unconfirmed mapped account just falls back to the default with a warning, instead of stopping the run.</li>
+        <li><strong>Ignore account 1-on-1 match and apply default</strong> — controls what happens when a charge's resolved account (from the Charge account map, or Default revenue account if unmapped) can't be confirmed to exist in Sage 50. Unchecked (normal): that invoice fails right there and the run stops on it. Checked: falls back once to the Default revenue account instead and posts there, with a warning to review later. Either way the Charge account map is the hard, authoritative source for which account a charge is supposed to use — this checkbox never changes that mapping, only what happens if Sage 50 can't confirm it still exists; and if the Default account itself can't be confirmed, that always stops the run regardless of this setting.</li>
         <li><strong>Default receivable account</strong> — currently has <strong>no effect</strong>. Sage 50's customer object has no per-customer receivable-account property to write it to — Simply Accounting/Sage 50 posts every customer to one global AR control account, configured once in Sage 50 itself (Setup ▸ Settings ▸ Customers &amp; Sales ▸ Linked Accounts). Kept in case a future SDK version adds support.</li>
         <li><strong>Default net payment terms (days)</strong> — the fallback "Net N days" term applied to an invoice when PortPro's own real per-invoice terms can't be used. PortPro normally supplies real terms directly, so this is a safety net, not the primary source. Example: 30.</li>
         <li><strong>Accounts To Trust</strong> — workaround for a known Sage 50 SDK quirk where a real, existing account is sometimes wrongly reported as missing. Only add an account here after confirming it's genuinely real in Sage 50.</li>
@@ -959,7 +959,7 @@
         <p>This software is licensed and authorized by SmallArc Inc. for use exclusively at the licensed location and under the terms of the applicable licensing agreement. Unauthorized use, reproduction, distribution, or deployment without the express written consent of SmallArc Inc. is prohibited.</p>
       </div>
       <div class="footer-meta">
-        <span>© 2026 SmallArc Inc. · PortProSage Sync v2.15.0</span>
+        <span>© 2026 SmallArc Inc. · PortProSage Sync v2.15.1</span>
         <a href="mailto:contact@smallarc.com">contact@smallarc.com</a>
       </div>
     </footer>

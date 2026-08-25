@@ -394,20 +394,21 @@ public partial class MainForm
         // already set on the grid itself (see field declaration above), so these sum
         // to 100 and read directly as percentages of the available width. Reference/
         // PortProDate halved and SageNumber cut by a quarter from their original
-        // weights (16/14/15) to make room for the new CustomerName column; Messages
-        // absorbs whatever's left over.
+        // weights (16/14/15) to make room for the new CustomerName column. Success
+        // halved again (15->7, confirmed live 2026-08-25) now that it's left-aligned
+        // rather than centered - the freed 8 goes to Messages, which absorbs whatever's
+        // left over regardless.
         _historyOutcomesGrid.Columns["CustomerName"].FillWeight = 22;
         _historyOutcomesGrid.Columns["Reference"].FillWeight = 8;
         _historyOutcomesGrid.Columns["PortProDate"].FillWeight = 7;
-        _historyOutcomesGrid.Columns["Success"].FillWeight = 15;
+        _historyOutcomesGrid.Columns["Success"].FillWeight = 7;
         _historyOutcomesGrid.Columns["SageNumber"].FillWeight = 11;
-        _historyOutcomesGrid.Columns["Messages"].FillWeight = 37;
+        _historyOutcomesGrid.Columns["Messages"].FillWeight = 45;
 
-        // Success only ever holds "Yes"/"No" - centered to match its own header
-        // rather than the grid's default left alignment, which looked misaligned
-        // against a short, header-width value.
-        _historyOutcomesGrid.Columns["Success"].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
-        _historyOutcomesGrid.Columns["Success"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        // Success only ever holds "Yes"/"No" - left-aligned (confirmed live
+        // 2026-08-25) to match the grid's default alignment for every other column.
+        _historyOutcomesGrid.Columns["Success"].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleLeft;
+        _historyOutcomesGrid.Columns["Success"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
 
         // Messages wraps instead of clipping/truncating when it doesn't fit its
         // column width - AutoSizeRowsMode grows the row to fit the wrapped text.
@@ -426,18 +427,20 @@ public partial class MainForm
         _historyTransferredGrid.Columns.Add("CustomerName", "PortPro Customer Name");
         _historyTransferredGrid.Columns.Add("PortProRef", "PortPro Invoice #");
         _historyTransferredGrid.Columns.Add("PortProDate", "PortPro Date");
-        _historyTransferredGrid.Columns.Add("Sage50Number", "Sage 50 Invoice #");
-        _historyTransferredGrid.Columns.Add("Sage50Date", "Sage 50 Date");
-        _historyTransferredGrid.Columns.Add("DueDate", "Due Date");
-        _historyTransferredGrid.Columns.Add("TotalAmount", "Total Amount");
-        _historyTransferredGrid.Columns.Add("TaxCharged", "Tax Charged");
         // CREATED (customer didn't exist, auto-created by this invoice) or
         // UPDATED (customer already existed and "Update Customer with latest
         // changes in PortPro" is on, so it's kept in sync by the trailing
         // incremental sweep - not necessarily updated at this exact instant,
         // that sweep runs once per whole run) - see Core's InvoiceProcessingOutcome.
         // Sage50CustomerAction for full semantics. Blank if neither applies.
+        // Placed right before Sage50Number (confirmed live 2026-08-25) so the
+        // customer outcome reads next to the invoice it applies to.
         _historyTransferredGrid.Columns.Add("CustomerAction", "Sage50 Customer");
+        _historyTransferredGrid.Columns.Add("Sage50Number", "Sage 50 Invoice #");
+        _historyTransferredGrid.Columns.Add("Sage50Date", "Sage 50 Date");
+        _historyTransferredGrid.Columns.Add("DueDate", "Due Date");
+        _historyTransferredGrid.Columns.Add("TotalAmount", "Total Amount");
+        _historyTransferredGrid.Columns.Add("TaxCharged", "Tax Charged");
 
         // Proportional widths (FillWeight, not pixels) - read directly as
         // percentages of the available width. PortProRef cut 60% (22->9),
@@ -446,12 +449,12 @@ public partial class MainForm
         _historyTransferredGrid.Columns["CustomerName"].FillWeight = 25;
         _historyTransferredGrid.Columns["PortProRef"].FillWeight = 9;
         _historyTransferredGrid.Columns["PortProDate"].FillWeight = 7;
+        _historyTransferredGrid.Columns["CustomerAction"].FillWeight = 10;
         _historyTransferredGrid.Columns["Sage50Number"].FillWeight = 11;
         _historyTransferredGrid.Columns["Sage50Date"].FillWeight = 13;
         _historyTransferredGrid.Columns["DueDate"].FillWeight = 10;
         _historyTransferredGrid.Columns["TotalAmount"].FillWeight = 10;
         _historyTransferredGrid.Columns["TaxCharged"].FillWeight = 10;
-        _historyTransferredGrid.Columns["CustomerAction"].FillWeight = 10;
 
         _historyTransferredGrid.Columns["TotalAmount"].DefaultCellStyle.Format = "N2";
         _historyTransferredGrid.Columns["TaxCharged"].DefaultCellStyle.Format = "N2";
@@ -576,10 +579,11 @@ public partial class MainForm
                 // forever with a blank Finished column.
                 if (!entry.IsLiveProcess && entry.Result is null && !string.IsNullOrWhiteSpace(_logFolder))
                 {
-                    var window = GetLogWindow(entry, i);
+                    var window = GetLogWindow(entry);
                     if (window is not null)
                     {
-                        var lines = LogExtractorService.ExtractForWindow(_logFolder, window.Value.Start, window.Value.End);
+                        var lines = LogExtractorService.ExtractForWindow(_logFolder, window.Value.Start, window.Value.End,
+                            window.Value.HardLowerBound, window.Value.HardUpperBound);
                         entry.LastLogActivityUtc = LogExtractorService.GetLastTimestamp(lines);
                     }
                 }
@@ -827,16 +831,42 @@ public partial class MainForm
     /// or the next chronological entry's start (the Worker's loop is single-
     /// threaded, so nothing else could have logged in between) as the end. Null if
     /// there isn't even a start to work with.</summary>
-    private (DateTimeOffset Start, DateTimeOffset End)? GetLogWindow(RunHistoryEntry entry, int index)
+    private (DateTimeOffset Start, DateTimeOffset End, DateTimeOffset? HardLowerBound, DateTimeOffset? HardUpperBound)? GetLogWindow(RunHistoryEntry entry)
     {
         var start = entry.Result?.StartedAtUtc ?? entry.Request?.RequestedAtUtc;
         if (start is null) return null;
-        if (entry.Result?.FinishedAtUtc is { } finished) return (start.Value, finished);
-        if (entry.IsLiveProcess) return (start.Value, DateTimeOffset.UtcNow);
 
-        var nextEntry = index > 0 ? _historyEntries[index - 1] : null;
-        var end = nextEntry?.Result?.StartedAtUtc ?? nextEntry?.Request?.RequestedAtUtc ?? DateTimeOffset.UtcNow;
-        return (start.Value, end);
+        // Always the entry's true position in the full, unfiltered _historyEntries
+        // list - NOT a grid row index. Confirmed live 2026-08-25: the History path
+        // filter hides entries from other Sage50 paths (RefreshHistoryList's
+        // MatchesHistoryPathFilter skips them when building grid rows but keeps
+        // walking _historyEntries in its real order), so a grid row index and this
+        // list's index diverge the moment anything above the selected row is
+        // filtered out - previously fed straight into the neighbor lookups below
+        // and silently produced a garbage (sometimes empty) window.
+        var index = _historyEntries.IndexOf(entry);
+
+        DateTimeOffset end;
+        if (entry.Result?.FinishedAtUtc is { } finished) end = finished;
+        else if (entry.IsLiveProcess) end = DateTimeOffset.UtcNow;
+        else
+        {
+            var nextEntry = index > 0 ? _historyEntries[index - 1] : null;
+            end = nextEntry?.Result?.StartedAtUtc ?? nextEntry?.Request?.RequestedAtUtc ?? DateTimeOffset.UtcNow;
+        }
+
+        // _historyEntries is newest-first, so the run right before this one
+        // chronologically sits at index+1 and the one right after sits at
+        // index-1 - these become hard boundaries so ExtractForWindow's own
+        // +-1s slack can never bleed into a neighboring run's log lines (see
+        // its doc comment for the confirmed live case this fixes).
+        var olderEntry = index + 1 < _historyEntries.Count ? _historyEntries[index + 1] : null;
+        var hardLowerBound = olderEntry?.Result?.FinishedAtUtc ?? olderEntry?.Result?.StartedAtUtc ?? olderEntry?.Request?.RequestedAtUtc;
+
+        var newerEntry = index > 0 ? _historyEntries[index - 1] : null;
+        var hardUpperBound = newerEntry?.Result?.StartedAtUtc ?? newerEntry?.Request?.RequestedAtUtc;
+
+        return (start.Value, end, hardLowerBound, hardUpperBound);
     }
 
     private void ResultPollTimer_Tick(object? sender, EventArgs e)
@@ -1074,11 +1104,11 @@ public partial class MainForm
         // fallback source when result.json's own Outcomes list is missing/empty -
         // true for every automatic-poll entry (Outcomes is never populated for those,
         // only the summary counts) and for any run whose checkpoint file was lost.
-        var selectedIndex = _historyGrid.SelectedRows[0].Index;
-        var window = GetLogWindow(entry, selectedIndex);
+        var window = GetLogWindow(entry);
         if (window is not null && !string.IsNullOrWhiteSpace(_logFolder))
         {
-            _selectedRunLogLines = LogExtractorService.ExtractForWindow(_logFolder, window.Value.Start, window.Value.End);
+            _selectedRunLogLines = LogExtractorService.ExtractForWindow(_logFolder, window.Value.Start, window.Value.End,
+                window.Value.HardLowerBound, window.Value.HardUpperBound);
         }
 
         _historySummaryText.Text = BuildSummaryText(entry, _selectedRunLogLines);
@@ -1126,9 +1156,9 @@ public partial class MainForm
         foreach (var row in LogExtractorService.ExtractTransferredInvoices(_selectedRunLogLines))
         {
             _historyTransferredGrid.Rows.Add(
-                row.PortProCustomerName, row.PortProReference, row.PortProDate, row.Sage50InvoiceNumber, row.Sage50Date,
+                row.PortProCustomerName, row.PortProReference, row.PortProDate, row.Sage50CustomerAction, row.Sage50InvoiceNumber, row.Sage50Date,
                 string.IsNullOrEmpty(row.DueDate) ? "(n/a - pre-2026-08-22 run)" : row.DueDate,
-                row.TotalAmount, row.TaxCharged, row.Sage50CustomerAction);
+                row.TotalAmount, row.TaxCharged);
         }
 
         ApplyLogSearchFilter();
