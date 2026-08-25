@@ -1117,13 +1117,22 @@ public partial class MainForm
         {
             foreach (var outcome in outcomes)
             {
-                _historyOutcomesGrid.Rows.Add(
+                var rowIndex = _historyOutcomesGrid.Rows.Add(
                     outcome.PortProCustomerName ?? "",
                     outcome.ReferenceNumber,
                     outcome.PortProInvoiceDate?.ToString("yyyy-MM-dd") ?? "",
                     outcome.Success ? "Yes" : "No",
                     outcome.Sage50InvoiceNumber ?? "",
                     string.Join(" | ", outcome.Messages));
+
+                // Same red-for-a-brand-new-customer treatment as Invoice
+                // Transferred - only available here (not in the log-fallback
+                // branch below) since "OUTCOME:" log lines never carried
+                // CustomerAction, only "TRANSFER:" ones did.
+                if (outcome.Sage50CustomerAction == "CREATED")
+                {
+                    _historyOutcomesGrid.Rows[rowIndex].Cells["SageNumber"].Style.ForeColor = Color.Red;
+                }
             }
         }
         else
@@ -1155,10 +1164,22 @@ public partial class MainForm
 
         foreach (var row in LogExtractorService.ExtractTransferredInvoices(_selectedRunLogLines))
         {
-            _historyTransferredGrid.Rows.Add(
+            var rowIndex = _historyTransferredGrid.Rows.Add(
                 row.PortProCustomerName, row.PortProReference, row.PortProDate, row.Sage50CustomerAction, row.Sage50InvoiceNumber, row.Sage50Date,
                 string.IsNullOrEmpty(row.DueDate) ? "(n/a - pre-2026-08-22 run)" : row.DueDate,
                 row.TotalAmount, row.TaxCharged);
+
+            // A brand-new Sage 50 customer (an insert, not just an update to one
+            // that already existed) flagged red across every Sage50-labeled
+            // column, so a CREATED row stands out from an UPDATED one at a
+            // glance - confirmed live 2026-08-25.
+            if (row.Sage50CustomerAction == "CREATED")
+            {
+                var gridRow = _historyTransferredGrid.Rows[rowIndex];
+                gridRow.Cells["CustomerAction"].Style.ForeColor = Color.Red;
+                gridRow.Cells["Sage50Number"].Style.ForeColor = Color.Red;
+                gridRow.Cells["Sage50Date"].Style.ForeColor = Color.Red;
+            }
         }
 
         ApplyLogSearchFilter();

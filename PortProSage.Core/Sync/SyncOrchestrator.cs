@@ -18,7 +18,14 @@ public class SyncOrchestrator
     private readonly EmailService _email;
     private readonly SyncSettings _syncSettings;
     private readonly Sage50Settings _sage50Settings;
+    private readonly CustomerSyncService _customerSync;
     private readonly ILogger<SyncOrchestrator> _logger;
+
+    // Populated once per RunAsync call (see its start) and read by
+    // ProcessOneInvoiceAsync - see CustomerSyncService.GetChangedCustomerNamesAsync's
+    // doc comment for why this exists. Reset every call, not just constructed once,
+    // since this instance is a DI singleton reused across every poll cycle/run.
+    private HashSet<string> _changedCustomerNamesThisRun = new(StringComparer.OrdinalIgnoreCase);
 
     public SyncOrchestrator(
         PortProClient portPro,
@@ -28,6 +35,7 @@ public class SyncOrchestrator
         EmailService email,
         SyncSettings syncSettings,
         Sage50Settings sage50Settings,
+        CustomerSyncService customerSync,
         ILogger<SyncOrchestrator> logger)
     {
         _portPro = portPro;
@@ -37,6 +45,7 @@ public class SyncOrchestrator
         _email = email;
         _syncSettings = syncSettings;
         _sage50Settings = sage50Settings;
+        _customerSync = customerSync;
         _logger = logger;
     }
 
@@ -55,6 +64,13 @@ public class SyncOrchestrator
         // of every run, or a customer renamed/deleted between two separate runs
         // would keep resolving to a run-old answer indefinitely.
         _validator.ResetPerRunCache();
+
+        // See CustomerSyncService.GetChangedCustomerNamesAsync's doc comment - a
+        // cheap, read-only preview of the trailing customer-sync sweep's own
+        // "changed since last sync" comparison, done up front so this run's
+        // per-invoice Sage50CustomerAction can say UPDATED only for a customer
+        // that sweep is actually about to push, instead of every existing one.
+        _changedCustomerNamesThisRun = await _customerSync.GetChangedCustomerNamesAsync(ct);
 
         // Captured before the InvoiceNumberGapScan rewrite below overwrites
         // request.FilterType to InvoiceNumberList - the only way left, once that
@@ -596,11 +612,18 @@ public class SyncOrchestrator
         var validation = await _validator.ValidateAsync(invoice, ct);
         outcome.Messages.AddRange(validation.Warnings);
         outcome.CustomerAutoCreated = validation.CustomerAutoCreated;
+        // "UPDATED" only for a customer _changedCustomerNamesThisRun actually
+        // flagged (i.e. one the trailing sweep, still unchanged, is genuinely
+        // about to push) - "NO CHANGE" for every other existing customer the
+        // sync-updates setting is merely eligible to touch. See
+        // CustomerSyncService.GetChangedCustomerNamesAsync's doc comment.
         outcome.Sage50CustomerAction = validation.ResolvedSage50CustomerCode is null
             ? null
             : validation.CustomerAutoCreated
                 ? "CREATED"
-                : (_sage50Settings.SyncCustomerUpdatesFromPortPro ? "UPDATED" : null);
+                : (_sage50Settings.SyncCustomerUpdatesFromPortPro
+                    ? (_changedCustomerNamesThisRun.Contains(outcome.PortProCustomerName ?? "") ? "UPDATED" : "NO CHANGE")
+                    : null);
 
         if (!validation.IsValid)
         {
@@ -642,7 +665,11 @@ public class SyncOrchestrator
             _state.MarkImported(invoice.Id, invoice.ReferenceNumber, invoice.ReferenceNumber);
             outcome.Success = true;
             outcome.Sage50InvoiceNumber = invoice.ReferenceNumber;
-            outcome.Messages.Add($"SKIPPED - already existed in Sage 50 under this invoice number: {ex.Message}");
+            outcome.Messages.Add(
+                $"SKIPPED - Invoice '{invoice.ReferenceNumber}' already existed in Sage 50, but this app's own " +
+                "tracking has no record of importing it (posted in an earlier run before tracking existed, " +
+                "entered directly in Sage 50, or the tracking was since reset) - marked as imported now; nothing " +
+                "was overwritten.");
         }
         catch (CustomerNotFoundException ex)
         {

@@ -503,8 +503,17 @@ public partial class MainForm : Form
             }
             else
             {
+                // Unchecked (no cutoff saved yet) previously left the picker's
+                // underlying Value at DateTimePicker's own default (today), so
+                // simply checking the box for the first time started from
+                // "today" instead of a sensible starting point - confirmed live
+                // 2026-08-25 the operator wants it to start 6 months back instead,
+                // both on first-ever load and any time the cutoff gets cleared.
+                var sixMonthsBack = DateTime.Today.AddMonths(-6);
                 _syncCutoffInvoiceDate.Checked = false;
+                _syncCutoffInvoiceDate.Value = sixMonthsBack;
                 _runCutoffInvoiceDate.Checked = false;
+                _runCutoffInvoiceDate.Value = sixMonthsBack;
             }
         }
         finally

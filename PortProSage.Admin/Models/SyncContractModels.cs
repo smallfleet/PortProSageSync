@@ -186,6 +186,7 @@ public class InvoiceProcessingOutcome
     public string? PortProCustomerName { get; set; }
     public bool Success { get; set; }
     public string? Sage50InvoiceNumber { get; set; }
+    public string? Sage50CustomerAction { get; set; }
     public List<string> Messages { get; set; } = new();
 
     public DateTimeOffset? PortProInvoiceDate { get; set; }

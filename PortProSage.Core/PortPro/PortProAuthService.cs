@@ -8,6 +8,25 @@ using PortProSage.Core.Models;
 
 namespace PortProSage.Core.PortPro;
 
+/// <summary>Shared, genuinely-singleton holder for "PortPro's refresh token has
+/// been confirmed rejected" - deliberately a separate tiny class, registered with
+/// its own AddSingleton, rather than a private field on PortProAuthService itself.
+/// PortProAuthService is registered via AddHttpClient (transient client instance
+/// per resolution, by design, so each consumer gets its own properly-pooled
+/// HttpClient) - SyncOrchestrator and CustomerSyncService are separate singletons
+/// that each inject their own PortProClient/PortProAuthService, so a plain
+/// instance field on PortProAuthService would NOT be shared between them.
+/// Confirmed live 2026-08-25: within one Manual Run, three independent
+/// operations (the customer-change preview, the gap-fill sweep, the trailing
+/// customer sync sweep) each separately hit PortPro's real 401-on-refresh (the
+/// refresh token itself rejected, not just the access token) and each logged a
+/// full duplicate multi-frame stack trace for what was already a known-dead
+/// credential by the time the second and third ran.</summary>
+public class PortProAuthCircuitState
+{
+    public Exception? RefreshTokenConfirmedDead { get; set; }
+}
+
 /// <summary>
 /// Handles PortPro token refresh.
 ///
@@ -28,6 +47,7 @@ public class PortProAuthService
 {
     private readonly HttpClient _http;
     private readonly PortProSettings _settings;
+    private readonly PortProAuthCircuitState _circuitState;
     private readonly ILogger<PortProAuthService> _logger;
 
     private string? _cachedAccessToken;
@@ -35,10 +55,11 @@ public class PortProAuthService
     private DateTimeOffset _cachedTokenExpiresAt = DateTimeOffset.MinValue;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public PortProAuthService(HttpClient http, PortProSettings settings, ILogger<PortProAuthService> logger)
+    public PortProAuthService(HttpClient http, PortProSettings settings, PortProAuthCircuitState circuitState, ILogger<PortProAuthService> logger)
     {
         _http = http;
         _settings = settings;
+        _circuitState = circuitState;
         _logger = logger;
 
         _cachedAccessToken = string.IsNullOrWhiteSpace(settings.AccessToken) ? null : settings.AccessToken;
@@ -73,6 +94,19 @@ public class PortProAuthService
         await _lock.WaitAsync(ct);
         try
         {
+            // Fail fast, not fail-again - see PortProAuthCircuitState's doc
+            // comment. The first rejection (below) is still logged in full for
+            // diagnosis; everything after that in this process just re-throws
+            // this same cached failure instead of repeating the doomed round-trip.
+            if (_circuitState.RefreshTokenConfirmedDead is { } dead)
+            {
+                throw new InvalidOperationException(
+                    "PortPro's refresh token was already confirmed rejected earlier in this run - not retrying " +
+                    "the same doomed refresh call again. A new PortPro:AccessToken/RefreshToken pair is needed " +
+                    "(from PortPro's integration/API settings), then restart the Service or start a new Manual Run.",
+                    dead);
+            }
+
             if (string.IsNullOrWhiteSpace(_cachedRefreshToken))
             {
                 if (!string.IsNullOrWhiteSpace(_cachedAccessToken))
@@ -97,6 +131,20 @@ public class PortProAuthService
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _cachedRefreshToken);
 
             using var response = await _http.SendAsync(request, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                // The refresh token itself was rejected, not just the access
+                // token - nothing left to retry with. Latch this (shared via
+                // PortProAuthCircuitState) so every later call in this process,
+                // from any consumer, fails fast instead of repeating the same
+                // doomed round-trip and logging another duplicate stack trace.
+                var deadEx = new InvalidOperationException(
+                    $"PortPro rejected the refresh token itself (401 on {_settings.NewTokenEndpoint}) - the " +
+                    "configured PortPro:RefreshToken is expired or invalid. A new token pair is needed from " +
+                    "PortPro's integration/API settings.");
+                _circuitState.RefreshTokenConfirmedDead = deadEx;
+                throw deadEx;
+            }
             response.EnsureSuccessStatusCode();
 
             var envelope = await response.Content.ReadFromJsonAsync<PortProTokenEnvelope>(cancellationToken: ct);

@@ -70,7 +70,7 @@ public partial class MainForm
     {
         if (_appSettings is null) return;
         _syncPollingIntervalMinutes.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.PollingIntervalMinutes", 15), _syncPollingIntervalMinutes.Minimum, _syncPollingIntervalMinutes.Maximum);
-        _syncProcessingDelayDays.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.ProcessingDelayDays", 7), _syncProcessingDelayDays.Minimum, _syncProcessingDelayDays.Maximum);
+        _syncProcessingDelayDays.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.ProcessingDelayDays", 4), _syncProcessingDelayDays.Minimum, _syncProcessingDelayDays.Maximum);
     }
 
     private void SaveSyncTab()

@@ -72,8 +72,12 @@ public static class LogExtractorService
     // succeed, so every Customer-bearing TRANSFER line (i.e. every one since this
     // field was added) silently failed to match at all and Invoice Transferred
     // showed nothing for any run.
+    // CustomerAction's value is captured with .* (not \S+) since it can now be
+    // "NO CHANGE" (a space-containing value, added 2026-08-25 alongside
+    // SyncOrchestrator's real vs. merely-eligible update distinction) - safe
+    // because it's always the last field on the line, nothing ever follows it.
     private static readonly Regex TransferLinePattern = new(
-        @"TRANSFER: Ref=(?<ref>\S+)(?: Customer=(?<customer>.*?)(?= Sage50Number=))? Sage50Number=(?<sage>\S+) PortProDate=(?<pdate>\S+) Sage50Date=(?<sdate>\S+)(?: DueDate=(?<due>\S+))? TotalAmount=(?<total>-?[\d.]+) TaxCharged=(?<tax>-?[\d.]+)(?: CustomerAction=(?<caction>\S+))?",
+        @"TRANSFER: Ref=(?<ref>\S+)(?: Customer=(?<customer>.*?)(?= Sage50Number=))? Sage50Number=(?<sage>\S+) PortProDate=(?<pdate>\S+) Sage50Date=(?<sdate>\S+)(?: DueDate=(?<due>\S+))? TotalAmount=(?<total>-?[\d.]+) TaxCharged=(?<tax>-?[\d.]+)(?: CustomerAction=(?<caction>.*))?",
         RegexOptions.Compiled);
 
     // Mirrors the exact structured-logging call in SyncOrchestrator.RunAsync -
@@ -111,8 +115,8 @@ public static class LogExtractorService
                 DueDate = match.Groups["due"].Success ? match.Groups["due"].Value : "",
                 TotalAmount = decimal.TryParse(match.Groups["total"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var total) ? total : 0m,
                 TaxCharged = decimal.TryParse(match.Groups["tax"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var tax) ? tax : 0m,
-                Sage50CustomerAction = match.Groups["caction"].Success && match.Groups["caction"].Value != "(none)"
-                    ? match.Groups["caction"].Value : ""
+                Sage50CustomerAction = match.Groups["caction"].Success && match.Groups["caction"].Value.Trim() != "(none)"
+                    ? match.Groups["caction"].Value.Trim() : ""
             });
         }
         return rows;

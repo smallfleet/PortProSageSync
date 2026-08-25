@@ -74,6 +74,11 @@ builder.Services.AddSerilog((services, loggerConfig) =>
         .WriteTo.Console();
 });
 
+// Genuinely singleton (not per-consumer like PortProAuthService itself, which
+// AddHttpClient deliberately gives a fresh transient instance per resolution) -
+// see PortProAuthCircuitState's doc comment for why a shared "refresh token is
+// confirmed dead" latch needs its own registration, separate from the client.
+builder.Services.AddSingleton<PortProAuthCircuitState>();
 builder.Services.AddHttpClient<PortProAuthService>();
 builder.Services.AddHttpClient<PortProClient>();
 builder.Services.AddHttpClient<FixyeeClient>(); // placeholder - not called anywhere yet

@@ -222,6 +222,47 @@ public class CustomerSyncService
         return result;
     }
 
+    /// <summary>Read-only preview of which PortPro customers have changed since
+    /// this app last synced them - the exact same "changed since last sync"
+    /// comparison SyncChangedCustomersAsync's own loop uses (PortPro's updatedAt
+    /// vs customer_sync_state), but with no Sage 50 lookup or write at all, so
+    /// it's cheap enough for SyncOrchestrator to call once per run BEFORE its
+    /// invoice loop starts. Lets each invoice's Sage50CustomerAction say
+    /// "UPDATED" only for a customer that the trailing sweep (still unchanged,
+    /// still runs once after every invoice - see SyncChangedCustomersAsync) is
+    /// actually about to push, instead of every existing customer whenever the
+    /// sync-updates setting merely happens to be on - confirmed live 2026-08-25
+    /// that conflating "eligible" with "actually changed" made the per-invoice
+    /// label and the Summary's real count (from the trailing sweep) disagree by
+    /// a wide margin (dozens of invoices labeled UPDATED vs. a true count of 3).</summary>
+    public async Task<HashSet<string>> GetChangedCustomerNamesAsync(CancellationToken ct)
+    {
+        var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!_settings.SyncCustomerUpdatesFromPortPro) return changed;
+
+        List<PortProCustomer> customers;
+        try
+        {
+            customers = await _portPro.GetAllCustomersAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not preview changed customers (PortPro customer list fetch failed) - " +
+                "per-invoice Sage50CustomerAction will read as NO CHANGE for this run; the trailing sweep may still " +
+                "succeed independently.");
+            return changed;
+        }
+
+        foreach (var customer in customers)
+        {
+            if (string.IsNullOrWhiteSpace(customer.CompanyName) || customer.UpdatedAt is null) continue;
+            var lastSynced = _state.GetCustomerLastSyncedUpdatedAt(customer.Id);
+            if (lastSynced is not null && customer.UpdatedAt <= lastSynced) continue; // unchanged since last sync
+            changed.Add(customer.CompanyName);
+        }
+        return changed;
+    }
+
     /// <summary>Read-only preview for the Admin app's Customer Refresh grid - see
     /// FilterType.CustomerRefreshScan's doc comment. No Sage 50 writes at all;
     /// only LoadByName lookups and field reads.</summary>
