@@ -111,7 +111,7 @@ public class PortProClient
             .ToList();
 
         var found = new List<PortProInvoice>();
-        var notFoundCount = 0;
+        var notFound = new List<string>();
         var isFirst = true;
         foreach (var referenceNumber in referenceNumbers)
         {
@@ -130,7 +130,7 @@ public class PortProClient
             if (invoice is null)
             {
                 _logger.LogWarning("Invoice '{Ref}' was not found by PortPro's single-invoice endpoint - skipped.", referenceNumber);
-                notFoundCount++;
+                notFound.Add(referenceNumber);
                 continue;
             }
             found.Add(invoice);
@@ -138,8 +138,8 @@ public class PortProClient
 
         _logger.LogInformation(
             "Fetched {Count} of {Requested} requested invoice(s) from PortPro (InvoiceNumberList) - {NotFound} not found",
-            found.Count, referenceNumbers.Count, notFoundCount);
-        return new PortProFetchResult { Invoices = found, NotFoundCount = notFoundCount };
+            found.Count, referenceNumbers.Count, notFound.Count);
+        return new PortProFetchResult { Invoices = found, NotFoundCount = notFound.Count, NotFoundReferenceNumbers = notFound };
     }
 
     private static bool IsInInvoiceNumberRange(string referenceNumber, string? start, string? end)

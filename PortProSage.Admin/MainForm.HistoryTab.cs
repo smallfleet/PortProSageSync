@@ -196,7 +196,7 @@ public partial class MainForm
 
         _historyGrid.SelectionChanged += (_, _) => ShowSelectedHistoryEntry();
 
-        RefreshAllTabsFromConfig += RefreshHistoryPathDropdown;
+        RefreshAllTabsFromConfig += () => RefreshHistoryPathDropdown();
         // Also refresh on every click into this tab - same reasoning as Customer
         // Refresh's identical hook (MainForm.CustomerRefreshTab.cs): a newly-
         // configured path should show up in the picker at the moment the tab is
@@ -219,7 +219,7 @@ public partial class MainForm
     /// anything - it's a pure display filter (RefreshHistoryList/
     /// MatchesHistoryPathFilter), since History &amp; Logs never itself connects to
     /// Sage 50.</summary>
-    private void RefreshHistoryPathDropdown()
+    private void RefreshHistoryPathDropdown(bool forceFollowCurrent = false)
     {
         var knownPaths = Sage50PathStateService.GetAllKnownPaths(_syncStateDatabasePath.Text);
         var currentPath = _localSettings?.GetString("PortProSage.Sage50.CompanyDataPath")
@@ -230,7 +230,7 @@ public partial class MainForm
             knownPaths.Insert(0, currentPath);
         }
 
-        var previouslySelected = _historyPathDropdown.SelectedItem as string;
+        var previouslySelected = forceFollowCurrent ? null : _historyPathDropdown.SelectedItem as string;
 
         _historyPathDropdown.SelectedIndexChanged -= OnHistoryPathDropdownRebuilt;
         _historyPathDropdown.Items.Clear();
@@ -381,6 +381,9 @@ public partial class MainForm
 
     private void SetupOutcomesGrid()
     {
+        // CustomerName leads (confirmed live 2026-08-24) - every other column
+        // shifted one position right from the original layout.
+        _historyOutcomesGrid.Columns.Add("CustomerName", "PortPro Customer Name");
         _historyOutcomesGrid.Columns.Add("Reference", "Invoice #");
         _historyOutcomesGrid.Columns.Add("PortProDate", "PortPro Date");
         _historyOutcomesGrid.Columns.Add("Success", "Success");
@@ -389,12 +392,27 @@ public partial class MainForm
 
         // Proportional widths (FillWeight, not pixels) - AutoSizeColumnsMode.Fill is
         // already set on the grid itself (see field declaration above), so these sum
-        // to 100 and read directly as percentages of the available width.
-        _historyOutcomesGrid.Columns["Reference"].FillWeight = 16;
-        _historyOutcomesGrid.Columns["PortProDate"].FillWeight = 14;
+        // to 100 and read directly as percentages of the available width. Reference/
+        // PortProDate halved and SageNumber cut by a quarter from their original
+        // weights (16/14/15) to make room for the new CustomerName column; Messages
+        // absorbs whatever's left over.
+        _historyOutcomesGrid.Columns["CustomerName"].FillWeight = 22;
+        _historyOutcomesGrid.Columns["Reference"].FillWeight = 8;
+        _historyOutcomesGrid.Columns["PortProDate"].FillWeight = 7;
         _historyOutcomesGrid.Columns["Success"].FillWeight = 15;
-        _historyOutcomesGrid.Columns["SageNumber"].FillWeight = 15;
-        _historyOutcomesGrid.Columns["Messages"].FillWeight = 40;
+        _historyOutcomesGrid.Columns["SageNumber"].FillWeight = 11;
+        _historyOutcomesGrid.Columns["Messages"].FillWeight = 37;
+
+        // Success only ever holds "Yes"/"No" - centered to match its own header
+        // rather than the grid's default left alignment, which looked misaligned
+        // against a short, header-width value.
+        _historyOutcomesGrid.Columns["Success"].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        _historyOutcomesGrid.Columns["Success"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+
+        // Messages wraps instead of clipping/truncating when it doesn't fit its
+        // column width - AutoSizeRowsMode grows the row to fit the wrapped text.
+        _historyOutcomesGrid.Columns["Messages"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+        _historyOutcomesGrid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
     }
 
     private void SetupTransferredGrid()
@@ -403,6 +421,9 @@ public partial class MainForm
         // not from result.json's Outcomes - the automatic poll never writes a result.json,
         // so the log is the only record that exists for those runs.
         _historyTransferredGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        // CustomerName leads (confirmed live 2026-08-24), same as Validate Invoice
+        // Extracted's identical column.
+        _historyTransferredGrid.Columns.Add("CustomerName", "PortPro Customer Name");
         _historyTransferredGrid.Columns.Add("PortProRef", "PortPro Invoice #");
         _historyTransferredGrid.Columns.Add("PortProDate", "PortPro Date");
         _historyTransferredGrid.Columns.Add("Sage50Number", "Sage 50 Invoice #");
@@ -410,16 +431,27 @@ public partial class MainForm
         _historyTransferredGrid.Columns.Add("DueDate", "Due Date");
         _historyTransferredGrid.Columns.Add("TotalAmount", "Total Amount");
         _historyTransferredGrid.Columns.Add("TaxCharged", "Tax Charged");
+        // CREATED (customer didn't exist, auto-created by this invoice) or
+        // UPDATED (customer already existed and "Update Customer with latest
+        // changes in PortPro" is on, so it's kept in sync by the trailing
+        // incremental sweep - not necessarily updated at this exact instant,
+        // that sweep runs once per whole run) - see Core's InvoiceProcessingOutcome.
+        // Sage50CustomerAction for full semantics. Blank if neither applies.
+        _historyTransferredGrid.Columns.Add("CustomerAction", "Sage50 Customer");
 
-        // Proportional widths (FillWeight, not pixels) - sums to 100, so these read
-        // directly as percentages of the available width.
-        _historyTransferredGrid.Columns["PortProRef"].FillWeight = 22;
-        _historyTransferredGrid.Columns["PortProDate"].FillWeight = 13;
-        _historyTransferredGrid.Columns["Sage50Number"].FillWeight = 22;
+        // Proportional widths (FillWeight, not pixels) - read directly as
+        // percentages of the available width. PortProRef cut 60% (22->9),
+        // PortProDate and Sage50Number both halved (13->7, 22->11) from their
+        // original weights to make room for the new CustomerName column.
+        _historyTransferredGrid.Columns["CustomerName"].FillWeight = 25;
+        _historyTransferredGrid.Columns["PortProRef"].FillWeight = 9;
+        _historyTransferredGrid.Columns["PortProDate"].FillWeight = 7;
+        _historyTransferredGrid.Columns["Sage50Number"].FillWeight = 11;
         _historyTransferredGrid.Columns["Sage50Date"].FillWeight = 13;
         _historyTransferredGrid.Columns["DueDate"].FillWeight = 10;
         _historyTransferredGrid.Columns["TotalAmount"].FillWeight = 10;
         _historyTransferredGrid.Columns["TaxCharged"].FillWeight = 10;
+        _historyTransferredGrid.Columns["CustomerAction"].FillWeight = 10;
 
         _historyTransferredGrid.Columns["TotalAmount"].DefaultCellStyle.Format = "N2";
         _historyTransferredGrid.Columns["TaxCharged"].DefaultCellStyle.Format = "N2";
@@ -829,13 +861,33 @@ public partial class MainForm
             RefreshHistoryList();
             // Both called unconditionally (not just whichever tab was actually
             // used) - see ResetCustomerRefreshFormToDefaults' doc comment for why
-            // that's simpler and just as correct.
-            ResetRunFormToDefaults();
+            // that's simpler and just as correct. result is passed through so
+            // ResetRunFormToDefaults can clear a successfully-completed Invoice
+            // number list - see its own doc comment.
+            ResetRunFormToDefaults(result);
             ResetCustomerRefreshFormToDefaults();
             switch (kind)
             {
                 case PendingRunKind.CustomerRefreshScan:
-                    PopulateCustomerRefreshGrid(result.CustomerRefreshCandidates ?? new List<CustomerRefreshCandidate>());
+                    // A clean FATAL failure (e.g. Sage 50 login rejected) now finishes
+                    // with IsFinal=true and Skipped=true instead of crashing the process
+                    // (see Diagnostics.RunCustomerRefreshScanAsync) - confirmed live
+                    // 2026-08-23 that without this check, that result fell straight into
+                    // PopulateCustomerRefreshGrid with an empty candidate list, silently
+                    // showing "0 customer(s) total" exactly as if the scan had genuinely
+                    // found nothing, instead of surfacing the real reason it failed.
+                    if (result.Skipped)
+                    {
+                        ClearCustomerRefreshGrid();
+                        MessageBox.Show(this,
+                            $"Extract failed:\n\n{result.SkipReason ?? "(no reason recorded)"}\n\n" +
+                            "Check the Full Log tab (below, in History & Logs) for full detail.",
+                            "Extract All Customer - failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                    else
+                    {
+                        PopulateCustomerRefreshGrid(result.CustomerRefreshCandidates ?? new List<CustomerRefreshCandidate>());
+                    }
                     break;
                 case PendingRunKind.CustomerRefreshExecute:
                     ShowCustomerRefreshCompletionMessage(result);
@@ -921,7 +973,15 @@ public partial class MainForm
             return;
         }
 
-        var hasFailures = result.InvoicesFailedValidation > 0 || result.InvoicesFailedImport > 0;
+        // Outcomes.Any(!Success) catches a whole-run failure that isn't reflected in
+        // either counter - e.g. a Sage 50 connection failure (SyncOrchestrator.
+        // RunAsync's own catch block) or the trailing customer-sync sweep's failure
+        // (Diagnostics.RunOnceAsync) - both only ever add a Success=false Outcome,
+        // never touch InvoicesFailedValidation/InvoicesFailedImport. Confirmed live
+        // 2026-08-24 this mattered: without it, a run where Sage 50 login failed
+        // outright showed "Run completed successfully" with all-zero counts.
+        var hasFailures = result.InvoicesFailedValidation > 0 || result.InvoicesFailedImport > 0 ||
+                           result.Outcomes.Any(o => !o.Success);
 
         // Confirmed live 2026-08-22: a completed Dry Run's popup looked identical
         // to a real run's, with no indication anywhere that nothing was actually
@@ -950,10 +1010,24 @@ public partial class MainForm
 
         if (hasFailures)
         {
+            // A whole-run failure (Sage 50 connection failure, or the trailing
+            // customer-sync sweep's failure) shows up as a Success=false Outcome
+            // with no ReferenceNumber - surfaced here directly, since otherwise the
+            // dialog would say "WITH ERRORS" while every count below reads 0,
+            // which looks contradictory rather than explaining what actually failed.
+            var wholeRunFailures = result.Outcomes
+                .Where(o => !o.Success && string.IsNullOrEmpty(o.ReferenceNumber))
+                .SelectMany(o => o.Messages)
+                .ToList();
+            var wholeRunFailureText = wholeRunFailures.Count > 0
+                ? "\n" + string.Join("\n", wholeRunFailures) + "\n"
+                : "";
+
             MessageBox.Show(this,
                 dryRunBanner +
-                "Run finished WITH ERRORS.\n\n" +
-                $"{importedLabel}: {result.InvoicesImported}\n" +
+                "Run finished WITH ERRORS.\n" +
+                wholeRunFailureText +
+                $"\n{importedLabel}: {result.InvoicesImported}\n" +
                 $"Already imported (skipped): {result.InvoicesSkippedAlreadyImported}\n" +
                 $"Not found: {result.InvoicesNotFound}\n" +
                 $"Failed validation: {result.InvoicesFailedValidation}\n" +
@@ -1014,6 +1088,7 @@ public partial class MainForm
             foreach (var outcome in outcomes)
             {
                 _historyOutcomesGrid.Rows.Add(
+                    outcome.PortProCustomerName ?? "",
                     outcome.ReferenceNumber,
                     outcome.PortProInvoiceDate?.ToString("yyyy-MM-dd") ?? "",
                     outcome.Success ? "Yes" : "No",
@@ -1030,7 +1105,7 @@ public partial class MainForm
             // RunAsync), same recovery path "Invoice Transferred" already had.
             foreach (var row in LogExtractorService.ExtractOutcomes(_selectedRunLogLines))
             {
-                _historyOutcomesGrid.Rows.Add(row.ReferenceNumber, row.PortProDate, row.Success ? "Yes" : "No", row.Sage50InvoiceNumber, row.Messages);
+                _historyOutcomesGrid.Rows.Add(row.PortProCustomerName, row.ReferenceNumber, row.PortProDate, row.Success ? "Yes" : "No", row.Sage50InvoiceNumber, row.Messages);
             }
         }
 
@@ -1051,9 +1126,9 @@ public partial class MainForm
         foreach (var row in LogExtractorService.ExtractTransferredInvoices(_selectedRunLogLines))
         {
             _historyTransferredGrid.Rows.Add(
-                row.PortProReference, row.PortProDate, row.Sage50InvoiceNumber, row.Sage50Date,
+                row.PortProCustomerName, row.PortProReference, row.PortProDate, row.Sage50InvoiceNumber, row.Sage50Date,
                 string.IsNullOrEmpty(row.DueDate) ? "(n/a - pre-2026-08-22 run)" : row.DueDate,
-                row.TotalAmount, row.TaxCharged);
+                row.TotalAmount, row.TaxCharged, row.Sage50CustomerAction);
         }
 
         ApplyLogSearchFilter();
@@ -1210,6 +1285,21 @@ public partial class MainForm
             lines.Add($"Before cutoff invoice date (skipped): {entry.Result.InvoicesSkippedBeforeCutoff}");
             lines.Add($"Failed validation: {entry.Result.InvoicesFailedValidation}");
             lines.Add($"Failed write: {entry.Result.InvoicesFailedImport}");
+
+            // Incidental to this being an invoice-sync run, not its main job -
+            // shown only when something actually happened, so an ordinary run
+            // that touched no customers doesn't get two more zero-lines added to
+            // every single summary. Created comes from an invoice needing a
+            // customer that didn't exist yet; Updated comes from this run's own
+            // trailing incremental customer-sync sweep (CustomerSyncService.
+            // SyncChangedCustomersAsync, which never creates, only updates).
+            if (entry.Result.CustomersCreated > 0 || entry.Result.CustomersUpdated > 0)
+            {
+                lines.Add("");
+                lines.Add($"Customers created in Sage 50: {entry.Result.CustomersCreated}");
+                lines.Add($"Customers updated in Sage 50: {entry.Result.CustomersUpdated}");
+            }
+
             lines.Add("");
 
             // Pre/post snapshot of the persisted "continue from" DATE - Start == End

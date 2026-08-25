@@ -56,6 +56,14 @@ public class SyncOrchestrator
         // would keep resolving to a run-old answer indefinitely.
         _validator.ResetPerRunCache();
 
+        // Captured before the InvoiceNumberGapScan rewrite below overwrites
+        // request.FilterType to InvoiceNumberList - the only way left, once that
+        // rewrite has happened, to tell "this InvoiceNumberList is a gap-fill
+        // sweep's own computed candidates" apart from "the operator typed this
+        // list by hand". Used only to word a not-found outcome's message
+        // differently for the two cases - see the batch loop below.
+        var isGapFillSweep = request.FilterType == FilterType.InvoiceNumberGapScan;
+
         var result = new SyncResult
         {
             RequestId = request.RequestId,
@@ -232,6 +240,24 @@ public class SyncOrchestrator
                 var batchFetched = invoices.Count;
                 result.InvoicesFetched += batchFetched;
 
+                // One Outcome per not-found candidate, not just the bare count above -
+                // confirmed live 2026-08-24 this was needed so "Validate Invoice
+                // Extracted" actually shows WHICH candidates weren't found, not just a
+                // number. Worded differently for a gap-fill sweep's own computed
+                // candidates (isGapFillSweep) vs an operator-typed Invoice number list -
+                // "identified GAP" is only accurate for the former.
+                foreach (var notFoundRef in fetchResult.NotFoundReferenceNumbers)
+                {
+                    result.Outcomes.Add(new InvoiceProcessingOutcome
+                    {
+                        ReferenceNumber = notFoundRef,
+                        Success = false,
+                        Messages = { isGapFillSweep
+                            ? $"{notFoundRef} (Invoice from identified GAP, not found in PortPro)"
+                            : $"{notFoundRef} (not found in PortPro)" }
+                    });
+                }
+
                 // Only invoices with a positive total are eligible for import - a
                 // zero/negative-amount invoice has nothing to post and is silently
                 // skipped (not an error, not counted as imported).
@@ -291,6 +317,7 @@ public class SyncOrchestrator
                     ct.ThrowIfCancellationRequested();
                     var outcome = await ProcessOneInvoiceAsync(invoice, request.OverrideAlreadyImportedCheck, ct);
                     result.Outcomes.Add(outcome);
+                    if (outcome.CustomerAutoCreated) result.CustomersCreated++;
 
                     // Every outcome (success, failure, skip - not just genuine transfers,
                     // see TRANSFER below) gets its own durable, immediate log line, not
@@ -304,8 +331,8 @@ public class SyncOrchestrator
                     // ExtractOutcomes) whenever result.json comes back null or empty, the
                     // same recovery path "Invoice Transferred" (TRANSFER: below) already had.
                     _logger.LogInformation(
-                        "OUTCOME: Ref={Ref} PortProDate={PortProDate} Success={Success} Sage50Number={SageNo} Messages=[{Messages}]",
-                        outcome.ReferenceNumber, outcome.PortProInvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
+                        "OUTCOME: Ref={Ref} Customer={Customer} PortProDate={PortProDate} Success={Success} Sage50Number={SageNo} Messages=[{Messages}]",
+                        outcome.ReferenceNumber, outcome.PortProCustomerName ?? "(none)", outcome.PortProInvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
                         outcome.Success, outcome.Sage50InvoiceNumber ?? "(none)", string.Join(" | ", outcome.Messages));
 
                     // A single, consistently-formatted line per genuinely-transferred invoice
@@ -321,12 +348,12 @@ public class SyncOrchestrator
                         !outcome.Sage50InvoiceNumber.StartsWith("DRYRUN-", StringComparison.Ordinal))
                     {
                         _logger.LogInformation(
-                            "TRANSFER: Ref={Ref} Sage50Number={SageNo} PortProDate={PortProDate} Sage50Date={Sage50Date} DueDate={DueDate} TotalAmount={TotalAmount} TaxCharged={TaxCharged}",
-                            outcome.ReferenceNumber, outcome.Sage50InvoiceNumber,
+                            "TRANSFER: Ref={Ref} Customer={Customer} Sage50Number={SageNo} PortProDate={PortProDate} Sage50Date={Sage50Date} DueDate={DueDate} TotalAmount={TotalAmount} TaxCharged={TaxCharged} CustomerAction={CustomerAction}",
+                            outcome.ReferenceNumber, outcome.PortProCustomerName ?? "(none)", outcome.Sage50InvoiceNumber,
                             outcome.PortProInvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
                             outcome.Sage50InvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
                             outcome.Sage50DueDate?.ToString("yyyy-MM-dd") ?? "(none)",
-                            outcome.TotalAmount, outcome.TaxCharged);
+                            outcome.TotalAmount, outcome.TaxCharged, outcome.Sage50CustomerAction ?? "(none)");
                     }
 
                     if (outcome.Success)
@@ -548,6 +575,7 @@ public class SyncOrchestrator
         {
             PortProInvoiceId = invoice.Id,
             ReferenceNumber = invoice.ReferenceNumber,
+            PortProCustomerName = invoice.Caller?.CompanyName ?? invoice.CallerName,
             PortProInvoiceDate = invoice.BillingDate ?? invoice.CompletedDate,
             TotalAmount = invoice.TotalAmount,
             TaxCharged = invoice.Pricing
@@ -567,6 +595,12 @@ public class SyncOrchestrator
 
         var validation = await _validator.ValidateAsync(invoice, ct);
         outcome.Messages.AddRange(validation.Warnings);
+        outcome.CustomerAutoCreated = validation.CustomerAutoCreated;
+        outcome.Sage50CustomerAction = validation.ResolvedSage50CustomerCode is null
+            ? null
+            : validation.CustomerAutoCreated
+                ? "CREATED"
+                : (_sage50Settings.SyncCustomerUpdatesFromPortPro ? "UPDATED" : null);
 
         if (!validation.IsValid)
         {

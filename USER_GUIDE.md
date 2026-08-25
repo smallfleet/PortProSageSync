@@ -72,7 +72,7 @@ Visible above every tab, at all times:
   - **Reload** — re-read settings from whatever folder is currently typed in the box, without opening the picker. Use this if you edited the settings files by hand outside the app.
 - **Target Sage50: `<path>`** — always visible, shown in bold below the Service folder row on every tab. This is the exact Sage 50 company file every write in the app will go to *right now*, using whatever's currently saved on the Sage 50 tab — not something you need to switch tabs to check. Reads **"Target Sage50: (no path specified yet - set it on the Sage 50 tab)"** until a path has ever been configured. See [section 15](#15-working-with-more-than-one-sage-50-company-file) for why this matters beyond just "which file" — it's also what splits Customer Refresh and History & Logs data apart per company file.
 - **Help** — opens this User Guide (the `USER_GUIDE.html` version) in your default web browser. This file (`USER_GUIDE.md`) is the same content in plain text, kept as the editable source.
-- **v2.13.6** (top-right, gray) — the exact build number of the Admin app you're currently running. Useful when confirming "did the new build actually install" — compare this against what you were told to expect.
+- **v2.15.0** (top-right, gray) — the exact build number of the Admin app you're currently running. Useful when confirming "did the new build actually install" — compare this against what you were told to expect.
 - **Process:** — always shows the real, current state:
   - **Not running** (red) — nothing is active; either button is free to use.
   - **Automatic Service running - PID 1234, since 9:03 AM** (green).
@@ -125,6 +125,10 @@ Every mode except Continue is a **one-time override** for this run only — none
 ### Previous Run (read-only)
 
 A snapshot of the most recently completed run — whether it was started from here, from Automatic Sync, or from a trigger file — so you can always see at a glance what actually happened last, without digging into History & Logs. Shows Mode (with "(Override)" appended if that run used the override checkbox above), date/invoice range, Max invoices, the first and last invoice actually processed, a SUCCESS / FINISHED WITH ERRORS / INTERRUPTED result line, and (for an Invoice number list or gap-fill run) the exact invoice list that was used.
+
+Every field here has its own **Copy** button (always available, even if the field is empty) — click it to copy that exact value to the clipboard. The most useful one is **Invoice List Used**: copy it and paste straight into the **Invoice number list** field above to re-run the same set.
+
+**A successfully-completed Invoice number list clears itself automatically.** If every invoice in the list was found and processed with no failures at all, the Invoice number list field is emptied once the run finishes — so a list you've already dealt with can't be accidentally re-submitted later. If anything in the list wasn't found or failed, the list is left as-is so you can see and fix it.
 
 ### Buttons
 
@@ -290,9 +294,9 @@ A confirmation dialog appears afterward too, listing exactly how many files, fai
 
 ### The detail tabs (for whichever row you've selected)
 
-- **Summary** — a full plain-text readout of everything about the run: request details (including a clear note if "Override Already Imported" was on), the exact range/list used, every count (including the same "found/checked" framing as the grid), duration, and the watermark before/after.
-- **Validate Invoice Extracted** — one row per invoice this run touched: invoice #, PortPro date, success/fail, the resulting Sage 50 invoice number, and any messages (e.g. why it failed).
-- **Invoice Transferred** — one row per invoice that was actually written to Sage 50: PortPro #/date, Sage 50 #/date, due date, total amount, tax charged.
+- **Summary** — a full plain-text readout of everything about the run: request details (including a clear note if "Override Already Imported" was on), the exact range/list used, every count (including the same "found/checked" framing as the grid), duration, and the watermark before/after. If this run created or updated any customers in Sage 50 (either a customer auto-created because an invoice needed one, or an existing one kept in sync by the "Update Customer with latest changes in PortPro" setting), a **Customers created in Sage 50** / **Customers updated in Sage 50** line shows the counts — omitted entirely when both are zero, so an ordinary run that touched no customers doesn't get extra clutter.
+- **Validate Invoice Extracted** — one row per invoice this run touched: **PortPro Customer Name**, invoice #, PortPro date, success/fail, the resulting Sage 50 invoice number, and any messages (e.g. why it failed) — wrapped automatically if a message is too long to fit. A gap-fill candidate PortPro confirmed doesn't exist shows `Success: No` with a message like `RSRE_003947 (Invoice from identified GAP, not found in PortPro)`; an invoice you typed into Invoice number list yourself that wasn't found reads `(not found in PortPro)` instead, without the "identified GAP" wording.
+- **Invoice Transferred** — one row per invoice that was actually written to Sage 50: **PortPro Customer Name**, PortPro #/date, Sage 50 #/date, due date, total amount, tax charged, and **Sage50 Customer** — reads `CREATED` if that invoice's customer didn't exist in Sage 50 and was just auto-created, `UPDATED` if the customer already existed and "Update Customer with latest changes in PortPro" (Sage 50 tab) is on, or blank otherwise. `UPDATED` means "kept in sync by that setting," not necessarily "changed at the exact moment this invoice posted" — the actual profile sync runs once per whole run, not once per invoice.
 - **Warnings / Validation** — just the warning/validation lines from this run's log, filtered out of the noise.
 - **Failed Transactions** — just the error/failure lines.
 - **Full log** — the complete raw log text for this run's time window, with a search box that filters as you type.
@@ -324,7 +328,8 @@ Click **Save PortPro settings** to persist changes.
 Connection credentials and the account-mapping rules that decide exactly where each invoice line posts in Sage 50. This is the most consequential tab in the app — take the Dry run switch seriously.
 
 - **App name** / **App ID** — how this app identifies itself to the Sage 50 SDK. Set once during setup, rarely changed.
-- **Company data path** — the full path to your `.SAI` company file. Use **Test Connection** to confirm the app can actually open it. **Changing this and saving effectively switches the app to a different Sage 50 file** — see [section 15](#15-working-with-more-than-one-sage-50-company-file) for exactly what does and doesn't carry over when you do.
+- **Company data path** — the full path to your `.SAI` company file. An editable dropdown: type or paste a path directly, pick one you've used before from the list, or click **Browse...** to find the `.SAI` file on disk. The dropdown lists every path you've ever saved here, plus every path this app has real activity against in its own tracking, so a path never goes missing from the list just because it predates this feature. Use **Test Connection** to confirm the app can actually open it (see below). **Changing this and saving effectively switches the app to a different Sage 50 file** — see [section 15](#15-working-with-more-than-one-sage-50-company-file) for exactly what does and doesn't carry over when you do.
+  - **Picking a different path from the dropdown restores that path's own saved configuration** — username, password, App name/ID, account defaults, tax codes, and the charge account map all switch to whatever was last saved for that specific path, since a different company file can genuinely need different Sage 50 credentials or a completely different chart of accounts. Typing a brand-new path leaves everything else exactly as it is. The top bar's **Target Sage50** banner updates the instant you pick a path, even before you click Save — it's just showing what you selected, not yet what's actually active until you save.
 - **Sage50 User Name** / **Password** — must be a **dedicated account**, never one a person also logs into interactively, since Sage 50 rejects a second simultaneous session under the same username.
 - **Expected SDK version** — optional; if set, logs a warning if the installed SDK's version doesn't match. Leave blank to skip the check.
 - **Default revenue account** — the GL account used for a charge that has no specific mapping below (see Charge account map). If this is also blank, an unmapped charge causes that invoice to fail outright rather than posting somewhere undefined.
@@ -339,7 +344,7 @@ Connection credentials and the account-mapping rules that decide exactly where e
 - **Tax codes** grid — maps a Canadian tax abbreviation found in a PortPro charge name (HST/GST/PST/QST) to the matching Sage 50 tax code (from Sage 50's own Setup ▸ Settings ▸ Company ▸ Sales Taxes ▸ Tax Codes screen). A recognized tax charge is **not** posted as its own line — Sage 50 applies the tax code directly to the revenue lines instead.
 - **Charge account map** grid — maps each PortPro charge name (e.g. "PICK UP & DELIVERY", "FUEL SURCHARGE 1") to the Sage 50 GL account it should post to. Matched case-insensitively against each invoice line. Only the **Sage 50 Account Number** column actually affects posting — the glCode and account name columns are reference/audit only. A charge with a blank account number here falls back to Default revenue account.
 
-Click **Save Sage 50 settings** to persist changes.
+Click **Save Sage 50 settings** to persist changes. **Test Connection saves this tab automatically first**, then attempts a real connect using exactly what's currently in the fields — you don't need to click Save separately before testing.
 
 ---
 

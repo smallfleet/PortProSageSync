@@ -370,28 +370,22 @@ public partial class MainForm
         grid.Controls.Add(subHeading, 0, subHeadingRow);
         grid.SetColumnSpan(subHeading, 3);
 
-        AddRow(grid, "Previous Run: Mode", modeBox, "(history - most recent completed run)", "RunHistoryEntry.Request.FilterType / UseWatermark",
-            stretchInput: false);
-        AddRow(grid, "Previous Run: Inv Start Date", fromBox, "(history)", "RunHistoryEntry.Result.EffectiveFromUtc",
+        AddPreviousRunRowWithCopy(grid, "Previous Run: Mode", modeBox, "RunHistoryEntry.Request.FilterType / UseWatermark");
+        AddPreviousRunRowWithCopy(grid, "Previous Run: Inv Start Date", fromBox, "RunHistoryEntry.Result.EffectiveFromUtc",
             "The actual invoice-date window's start, as resolved and used by that run - not the persisted " +
             "watermark, which only ever moves for a Continue run and is otherwise unrelated to what an explicit " +
             "Invoice date/Last changed date run actually processed. Blank for Invoice number range mode, which has " +
-            "no date window at all.",
-            stretchInput: false);
-        AddRow(grid, "Previous Run: Inv End Date", toBox, "(history)", "RunHistoryEntry.Result.EffectiveToUtc",
-            "The actual invoice-date window's end, as resolved and used by that run.",
-            stretchInput: false);
-        AddRow(grid, "Previous Run: Max invoices to process", maxInvoicesBox, "(history)", "RunHistoryEntry.Request.MaxInvoicesToProcess",
-            stretchInput: false);
-        AddRow(grid, "Previous Run: First Invoice Processed", firstInvoiceBox, "(history)", "Parsed from the run's log (TRANSFER lines)",
+            "no date window at all.");
+        AddPreviousRunRowWithCopy(grid, "Previous Run: Inv End Date", toBox, "RunHistoryEntry.Result.EffectiveToUtc",
+            "The actual invoice-date window's end, as resolved and used by that run.");
+        AddPreviousRunRowWithCopy(grid, "Previous Run: Max invoices to process", maxInvoicesBox, "RunHistoryEntry.Request.MaxInvoicesToProcess");
+        AddPreviousRunRowWithCopy(grid, "Previous Run: First Invoice Processed", firstInvoiceBox, "Parsed from the run's log (TRANSFER lines)",
             "The lowest-numbered invoice actually transferred to Sage 50 during the previous run - same data as the " +
             "History tab's \"Invoice Transferred\" list, parsed from the log rather than result.json so this works " +
-            "for automatic-poll runs too (they never write a result.json).",
-            stretchInput: false);
-        AddRow(grid, "Previous Run: Last Invoice Processed", lastInvoiceBox, "(history)", "Parsed from the run's log (TRANSFER lines)",
-            "The highest-numbered invoice actually transferred to Sage 50 during the previous run.",
-            stretchInput: false);
-        AddRow(grid, "Previous Run: Result", resultBox, "(history)", "RunHistoryEntry.Result (Invoices* counts, IsFinal)",
+            "for automatic-poll runs too (they never write a result.json).");
+        AddPreviousRunRowWithCopy(grid, "Previous Run: Last Invoice Processed", lastInvoiceBox, "Parsed from the run's log (TRANSFER lines)",
+            "The highest-numbered invoice actually transferred to Sage 50 during the previous run.");
+        AddPreviousRunRowWithCopy(grid, "Previous Run: Result", resultBox, "RunHistoryEntry.Result (Invoices* counts, IsFinal)",
             "A clear pass/fail summary of the previous run, with counts - the same information shown in the pop-up " +
             "when a Manual Run finishes, but kept here too since it applies just as much to the Automatic Service's " +
             "own poll cycles, which run unattended with no pop-up to show.\n\n" +
@@ -399,11 +393,49 @@ public partial class MainForm
             "invoice failed validation or failed to write - check the Failed Transactions tab or Full Log. " +
             "INTERRUPTED means the process stopped before finishing (crashed, was force-stopped, or hit a fatal " +
             "Sage 50 write error) - the counts shown are as of its last checkpoint, not final.");
-        AddRow(grid, "Previous Run: Invoice List Used", invoiceListUsedBox, "(history)", "RunHistoryEntry.Result.ResolvedInvoiceNumberList",
+        AddPreviousRunRowWithCopy(grid, "Previous Run: Invoice List Used", invoiceListUsedBox, "RunHistoryEntry.Result.ResolvedInvoiceNumberList",
             "The actual comma-separated reference-number list this run used - only populated for Invoice number " +
             "list mode or Find missing invoices in range (gap scan). For a gap scan, this is the REAL computed " +
             "candidate list (everything in the scanned range not already recorded as imported) - the only place " +
-            "that list is visible, not just documented in the log. Blank for every other mode.");
+            "that list is visible, not just documented in the log. Blank for every other mode. Copy this to paste " +
+            "straight into the Invoice number list field above for a Manual Run.");
+    }
+
+    /// <summary>Like AddRow(stretchInput: false), but with a "Copy" button
+    /// (always enabled, regardless of whether the field is currently empty)
+    /// right after the field - confirmed live 2026-08-24 the operator wants to
+    /// copy a Previous Run value (most often the resolved Invoice List Used) out
+    /// to paste elsewhere, e.g. back into the Invoice number list field above to
+    /// re-run it, without needing to manually select the read-only text first.</summary>
+    private void AddPreviousRunRowWithCopy(TableLayoutPanel grid, string labelText, TextBox input, string jsonPath, string helpText = "")
+    {
+        var row = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var label = new Label { Text = labelText, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 8, 3, 3) };
+        input.Anchor = AnchorStyles.Left;
+        input.Margin = new Padding(3, 4, 3, 4);
+
+        var copyButton = new Button { Text = "Copy", AutoSize = true, Height = 23, Margin = new Padding(4, 4, 0, 3) };
+        copyButton.Click += (_, _) =>
+        {
+            // Clipboard.SetText throws on an empty string - silently do nothing
+            // rather than a jarring error for a field that just happens to be
+            // blank for this particular previous run (e.g. Invoice List Used on
+            // a date-range run).
+            if (!string.IsNullOrEmpty(input.Text)) Clipboard.SetText(input.Text);
+        };
+
+        var wrap = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, AutoSize = true };
+        wrap.Controls.Add(input);
+        wrap.Controls.Add(copyButton);
+        if (!string.IsNullOrEmpty(helpText))
+        {
+            wrap.Controls.Add(CreateHelpIcon(labelText.Replace("\n", " "), helpText));
+        }
+
+        grid.Controls.Add(label, 0, row);
+        grid.Controls.Add(wrap, 1, row);
+        WireSource(input, "(history - most recent completed run)", jsonPath);
     }
 
     /// <summary>Called every time RefreshHistoryList() runs (MainForm.HistoryTab.cs) -
@@ -518,14 +550,34 @@ public partial class MainForm
     /// automatically. (The date-window footgun this used to guard against - see
     /// BuildRequestFromForm's case 1 comment - is now closed at the source: "Last
     /// changed date" mode always snaps to whole-day boundaries, so retained dates
-    /// can't collapse into a near-zero-width window.)</summary>
-    private void ResetRunFormToDefaults()
+    /// can't collapse into a near-zero-width window.)
+    ///
+    /// result is passed (non-null) only from the "run genuinely finished" call site
+    /// (MainForm.HistoryTab.cs's ResultPollTimer_Tick), never from Stop Manual Run -
+    /// a stopped run isn't "successful", so the Invoice number list check below
+    /// never applies there. When it IS successful (no failures at all - IsFinal,
+    /// not Skipped, zero failed validation/write, and no whole-run failure Outcome
+    /// - see MainForm.HistoryTab.cs's own matching hasFailures check) AND this was
+    /// an Invoice number list run (ResolvedInvoiceNumberList is only ever populated
+    /// for that mode or a gap-fill sub-run, and a gap-fill sub-run is never what
+    /// this poll loop tracks), the list is cleared - confirmed live 2026-08-24 the
+    /// operator wants a successfully-processed list gone, not sitting there ready
+    /// to be accidentally re-submitted.</summary>
+    private void ResetRunFormToDefaults(SyncResult? result = null)
     {
         _runMaxInvoices.Value = 0;
         // One-time override, never persisted (see OverrideAlreadyImportedHelpText) -
         // reset the instant the run it applied to is done, same reasoning as Max
         // invoices above, so it can't silently carry forward into the next run.
         _runOverrideAlreadyImported.Checked = false;
+
+        if (result is { IsFinal: true, Skipped: false } &&
+            !string.IsNullOrWhiteSpace(result.ResolvedInvoiceNumberList) &&
+            result.InvoicesFailedValidation == 0 && result.InvoicesFailedImport == 0 &&
+            !result.Outcomes.Any(o => !o.Success))
+        {
+            _runInvoiceNumberList.Text = "";
+        }
     }
 
     private SyncRequest BuildRequestFromForm()
@@ -588,14 +640,28 @@ public partial class MainForm
     /// <summary>The actual resolved parameters this run will use - not just "Mode: X",
     /// since that alone doesn't show what dates/numbers/caps were actually resolved
     /// from the form, or which real Sage 50 company file is about to be written to.</summary>
-    private string BuildManualRunConfirmationText(SyncRequest request, string requestPathPreview)
+    /// <summary>Deliberately terse (confirmed live 2026-08-24 the previous version -
+    /// "Run this now?", the full invoice-number-list dump, and the request file
+    /// path - was too much to actually read before clicking Yes/No). Keeps only
+    /// what's needed to catch a mistake before it writes to Sage 50 for real: which
+    /// company file, which write mode, which selection mode, and the cap - plus
+    /// mode-specific detail (date range / invoice range / override warning) only
+    /// when it's actually relevant to this particular request, same as before.</summary>
+    private string BuildManualRunConfirmationText(SyncRequest request)
     {
         var lines = new List<string>
         {
-            "Run this now?",
-            "",
-            $"Write mode: {(_sage50DryRun.Checked ? "DRY RUN (simulated - nothing written to Sage 50)" : "REAL WRITE (changes Sage 50 for real)")}",
-            $"Sage 50 company file: {_sage50CompanyDataPath.Text}",
+            // CurrentConfiguredSage50Path (the SAVED value), not
+            // _sage50CompanyDataPath.Text (the live field) - confirmed live
+            // 2026-08-24 this matters: the Service process only ever reads
+            // appsettings.Local.json fresh when it starts, never this Admin
+            // instance's in-memory state, so an unsaved edit sitting in the Sage 50
+            // tab's path box would show here but the run would silently use
+            // whatever's actually saved instead - exactly the kind of mismatch
+            // that made a run look like it targeted one company file when it
+            // really targeted a completely different one.
+            $"Sage 50 path- {CurrentConfiguredSage50Path ?? "(not saved yet - go to the Sage 50 tab and Save first)"}",
+            $"Write mode: {(_sage50DryRun.Checked ? "DRY RUN" : "REAL WRITE")}",
             "",
             // Emphasized on its own line, in caps - the actual mode governs which
             // invoices get selected, and it's too easy to click through a
@@ -622,13 +688,7 @@ public partial class MainForm
         {
             lines.Add($"Start invoice: {request.StartInvoiceNumber ?? "(none)"}   End invoice: {request.EndInvoiceNumber ?? "(none)"}");
         }
-        if (!string.IsNullOrWhiteSpace(request.InvoiceNumberList))
-        {
-            lines.Add($"Invoice numbers: {request.InvoiceNumberList}");
-        }
         lines.Add($"Max invoices to process: {(request.MaxInvoicesToProcess?.ToString() ?? "no limit")}");
-        lines.Add("");
-        lines.Add($"Request will be written to:\n{requestPathPreview}");
 
         return string.Join(Environment.NewLine, lines);
     }
@@ -716,9 +776,7 @@ public partial class MainForm
             if (overrideConfirm != DialogResult.Yes) return;
         }
 
-        var requestPathPreview = Path.Combine(_manualRunFolder, $"{request.RequestId}.request.json");
-
-        var confirm = MessageBox.Show(this, BuildManualRunConfirmationText(request, requestPathPreview),
+        var confirm = MessageBox.Show(this, BuildManualRunConfirmationText(request),
             "Confirm manual run", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (confirm != DialogResult.Yes) return;
 

@@ -261,7 +261,7 @@ public partial class MainForm
         pathBar.Controls.Add(_customerRefreshPathDropdown);
 
         RefreshCustomerRefreshPathDropdown();
-        RefreshAllTabsFromConfig += RefreshCustomerRefreshPathDropdown;
+        RefreshAllTabsFromConfig += () => RefreshCustomerRefreshPathDropdown();
 
         // Also refresh on every click into this tab, not just on config load -
         // requested explicitly so a newly-configured path shows up in the picker
@@ -525,9 +525,14 @@ public partial class MainForm
     ///     force-changed just because this ran again (e.g. from a config reload).
     ///   - Nothing selected yet (first time this tab is ever shown) -&gt; defaults
     ///     to the currently configured path.
+    ///   - forceFollowCurrent=true (only passed by RefreshGlobalTargetSage50Label,
+    ///     when the actively-configured path has genuinely just changed) -&gt;
+    ///     switches to the new current path even if something else was already
+    ///     selected, since that prior selection was made against the OLD active
+    ///     path and silently staying on it would be stale, not deliberate.
     /// Called on config load and on every click into this tab (see
     /// BuildCustomerRefreshTab).</summary>
-    private void RefreshCustomerRefreshPathDropdown()
+    private void RefreshCustomerRefreshPathDropdown(bool forceFollowCurrent = false)
     {
         var knownPaths = Sage50PathStateService.GetAllKnownPaths(_syncStateDatabasePath.Text);
         var currentPath = CurrentConfiguredSage50Path;
@@ -537,7 +542,7 @@ public partial class MainForm
             knownPaths.Insert(0, currentPath);
         }
 
-        var previouslySelected = _customerRefreshPathDropdown.SelectedItem as string;
+        var previouslySelected = forceFollowCurrent ? null : _customerRefreshPathDropdown.SelectedItem as string;
 
         _customerRefreshPathDropdown.SelectedIndexChanged -= OnCustomerRefreshPathDropdownRebuilt;
         _customerRefreshPathDropdown.Items.Clear();
@@ -775,26 +780,24 @@ public partial class MainForm
         };
 
         // Leads the message (and the dialog title) rather than being buried near
-        // the bottom - the write mode is the single most consequential fact in
-        // this dialog, and Dry Run now defaults to UNCHECKED (a real write), so
-        // whichever mode is actually about to happen needs to be the first thing
-        // seen, not something you'd miss by skimming past a "Write mode:" line.
-        var modeBanner = _customerRefreshDryRun.Checked
-            ? "*** DRY RUN - simulated only, nothing will actually be written to Sage 50. ***\n\n"
-            : "*** REAL WRITE - this will make real changes to Sage 50. ***\n\n";
+        // Deliberately terse - same template as Manual Run/Automatic Service's own
+        // confirmation dialogs (confirmed live 2026-08-24 to apply everywhere):
+        // Sage 50 path and write mode lead, then just what's about to happen and
+        // the one safety-critical warning - not a "Run this now? ... Continue?"
+        // question wrapper around it.
         var dialogTitle = _customerRefreshDryRun.Checked
             ? "DRY RUN - ALERT..!! (Customer Refresh)"
             : "ALERT..!! (Customer Refresh)";
 
         var confirm = MessageBox.Show(this,
-            modeBanner +
-            $"Run Customer Refresh for {selected.Count} selected customer(s)?\n\n" +
-            $"   {insertCount} will be CREATED (new in Sage 50)\n" +
-            $"   {updateCount} will be UPDATED (overwriting existing Sage 50 data)\n\n" +
+            // The SAVED path, not the live field - see MainForm.RunTab.cs's
+            // BuildManualRunConfirmationText for why this distinction matters.
+            $"Sage 50 path- {CurrentConfiguredSage50Path ?? "(not saved yet - go to the Sage 50 tab and Save first)"}\n" +
+            $"Write mode: {(_customerRefreshDryRun.Checked ? "DRY RUN" : "REAL WRITE")}\n\n" +
+            $"{insertCount} will be CREATED (new in Sage 50)\n" +
+            $"{updateCount} will be UPDATED (overwriting existing Sage 50 data)\n\n" +
             "ANY CHANGES MADE DIRECTLY IN SAGE 50 TO AN UPDATED CUSTOMER WILL BE LOST AND REPLACED BY PORTPRO'S " +
-            "DATA.\n\n" +
-            $"Sage 50 company file: {_sage50CompanyDataPath.Text}\n\n" +
-            "Continue?",
+            "DATA.",
             dialogTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
         if (confirm != DialogResult.Yes) return;
 
@@ -824,7 +827,14 @@ public partial class MainForm
         _stopServiceButton.Enabled = false;
 
         RefreshServiceStatus();
-        SelectHistoryTab();
+        // Deliberately NOT calling SelectHistoryTab() here (unlike Manual Run) -
+        // confirmed 2026-08-24 this tab should stay put during/after Run Selected,
+        // since the grid itself already shows live-updated Applied/Date results in
+        // place once the run finishes (see ApplyCustomerRefreshOutcomes) - jumping
+        // away to History & Logs just to jump back defeats the point of that.
+        // SelectTopHistoryRow() only touches the History grid's own internal
+        // selection state (harmless while that tab isn't visible) - kept so the
+        // new run is already selected there if the operator checks it later.
         RefreshHistoryList();
         SelectTopHistoryRow();
     }
@@ -852,6 +862,22 @@ public partial class MainForm
             ? "*** DRY RUN - simulated only, nothing was actually written to Sage 50. ***\n\n"
             : "";
         var suffix = result.WasDryRun ? " (simulated)" : "";
+
+        // Same reasoning as the Extract path's check in MainForm.HistoryTab.cs -
+        // a clean FATAL failure (e.g. Sage 50 login rejected) now finishes with
+        // IsFinal=true, Skipped=true instead of crashing the process. Without this
+        // check it fell into the IsFinal/no-failures branch below and showed
+        // "Refresh completed successfully" with zero counts - actively misleading,
+        // not just uninformative.
+        if (result.Skipped)
+        {
+            MessageBox.Show(this,
+                dryRunBanner +
+                $"Run Selected FAILED:\n\n{result.SkipReason ?? "(no reason recorded)"}\n\n" +
+                "Check the Full Log tab (below, in History & Logs) for full detail.",
+                "ALERT..!! (Customer Refresh) - failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
 
         if (!result.IsFinal)
         {

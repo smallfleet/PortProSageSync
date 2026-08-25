@@ -662,6 +662,19 @@ public class Sage50Client : ISage50Client
         Console.Error.WriteLine($"FATAL: Sage 50 write failed while {operation}: {ex}");
         Console.Error.Flush();
 
+        // Environment.Exit terminates immediately without unwinding the stack, so
+        // Program.cs's "using var host = ..." (which is what normally disposes this
+        // DI singleton and runs Dispose() below) never gets a chance to run on this
+        // path - confirmed live 2026-08-24 this was a real gap: the ledgers and the
+        // company file connection itself were never explicitly closed via the SDK
+        // before the process died, only ever relying on Windows reclaiming the OS-
+        // level file handle when the process exits, not on Sage 50's own multi-user
+        // session table noticing the logout. Calling Dispose() explicitly here closes
+        // them the same best-effort way as any other exit path, regardless of
+        // whether the SDK session is in fact compromised (Dispose already swallows
+        // exceptions from every close call, so this is safe even if it is).
+        Dispose();
+
         Environment.Exit(1);
     }
 

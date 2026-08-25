@@ -115,8 +115,6 @@ public class Worker : BackgroundService
         var result = await _orchestrator.RunAsync(request, ct,
             onProgress: partial => TriggerFileManager.WriteResult(autoPollFolder, request.RequestId, partial));
 
-        TriggerFileManager.WriteResult(autoPollFolder, request.RequestId, result);
-
         // Every automatic cycle gets its own gap-fill follow-up too - see
         // GapFillRunner's doc comment. Deliberately awaited here, inside this same
         // call, rather than fired off separately - the Worker's own loop is single-
@@ -133,7 +131,26 @@ public class Worker : BackgroundService
         // Deliberately not skipped even when this cycle itself skipped/found
         // nothing (result.Skipped, or a caught-up watermark) - customer profile
         // changes are independent of whether any invoices happened to be due.
-        await _customerSync.SyncChangedCustomersAsync(ct);
+        //
+        // Captured and folded into THIS cycle's own result, BEFORE the final
+        // WriteResult below - mirrors the exact fix already made to Diagnostics.
+        // RunOnceAsync (Manual Run's own equivalent path) for the same reason:
+        // this call used to be fire-and-forget here, so a Sage 50 connection
+        // failure during this trailing sweep left no trace anywhere in History &
+        // Logs, only the raw log file, and the Updated count was never recorded
+        // at all.
+        var customerSyncResult = await _customerSync.SyncChangedCustomersAsync(ct);
+        result.CustomersUpdated = customerSyncResult.Updated;
+        if (customerSyncResult.FatalError is not null)
+        {
+            result.Outcomes.Add(new InvoiceProcessingOutcome
+            {
+                Success = false,
+                Messages = { customerSyncResult.FatalError }
+            });
+        }
+
+        TriggerFileManager.WriteResult(autoPollFolder, request.RequestId, result);
     }
 
     /// <summary>Any other live process running the exact same PortProSage.Service.exe

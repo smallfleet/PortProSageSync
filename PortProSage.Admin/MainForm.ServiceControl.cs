@@ -273,7 +273,7 @@ public partial class MainForm
 
         if (!ConfirmProceedIfSage50AppOpen()) return;
 
-        var confirm = MessageBox.Show(this, BuildAutomaticStartConfirmationText(exePath),
+        var confirm = MessageBox.Show(this, BuildAutomaticStartConfirmationText(),
             "Confirm start - Automatic Service", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (confirm != DialogResult.Yes) return;
 
@@ -292,26 +292,22 @@ public partial class MainForm
         RefreshServiceStatus();
     }
 
-    /// <summary>The actual resolved values that govern the automatic pipeline once
-    /// started - not just "reads appsettings.json", since that alone doesn't tell
-    /// the operator what will actually happen without opening the file separately.</summary>
-    private string BuildAutomaticStartConfirmationText(string exePath)
+    /// <summary>Deliberately terse - same pattern/reasoning as Manual Run's own
+    /// BuildManualRunConfirmationText (MainForm.RunTab.cs), confirmed live
+    /// 2026-08-24 to apply to every confirm-before-run dialog in the app, not just
+    /// that one: just enough to catch a mistake before starting a real background
+    /// process (which path, which write mode, how often it'll poll), not a full
+    /// settings dump the operator has to read through before clicking Yes.</summary>
+    private string BuildAutomaticStartConfirmationText()
     {
         var lines = new List<string>
         {
-            "Start the automatic Service now?",
+            // The SAVED path, not the live field - see BuildManualRunConfirmationText's
+            // matching comment (MainForm.RunTab.cs) for why this distinction matters.
+            $"Sage 50 path- {CurrentConfiguredSage50Path ?? "(not saved yet - go to the Sage 50 tab and Save first)"}",
+            $"Write mode: {(_sage50DryRun.Checked ? "DRY RUN" : "REAL WRITE")}",
             "",
-            $"Write mode: {(_sage50DryRun.Checked ? "DRY RUN (simulated - nothing written to Sage 50)" : "REAL WRITE (changes Sage 50 for real)")}",
-            $"Sage 50 company file: {_sage50CompanyDataPath.Text}",
-            $"Sage 50 username: {_sage50UserName.Text}",
-            $"PortPro base URL: {_portProBaseUrl.Text}",
-            $"Polling interval: every {_syncPollingIntervalMinutes.Value} minute(s)",
-            $"Trigger folder watched: {_triggerFolder}",
-            $"Auto-create customers: {_sage50AutoCreateCustomers.Checked}   Auto-create items: {_sage50AutoCreateItems.Checked}",
-            "",
-            $"(from {AppSettingsFileName} / {LocalSettingsFileName} in {_serviceFolderBox.Text})",
-            "",
-            $"Executable: {exePath}"
+            $"Polling interval: every {_syncPollingIntervalMinutes.Value} minute(s)"
         };
         return string.Join(Environment.NewLine, lines);
     }
@@ -355,17 +351,20 @@ public partial class MainForm
 
     private void TestSage50Connection()
     {
-        // Shows exactly what's about to be tested (the currently SAVED company
-        // path/username, same source RunConnectionTest itself tests against) before
-        // actually connecting - confirmed live 2026-08-12 this was worth confirming
-        // up front rather than only finding out which company file/account was
-        // actually used after the fact from a pass/fail dialog.
+        // Saves silently first (confirmed live 2026-08-24) - the test now always
+        // reflects exactly what's currently in the fields, so there's no more
+        // "tests what's saved, not unsaved edits" gap to warn about, and no need
+        // for a separate manual Save click before testing.
+        SaveSage50Tab(showConfirmation: false);
+
+        // Shows exactly what's about to be tested before actually connecting -
+        // confirmed live 2026-08-12 this was worth confirming up front rather
+        // than only finding out which company file/account was actually used
+        // after the fact from a pass/fail dialog.
         var confirm = MessageBox.Show(this,
-            "This will attempt a real connection to Sage 50 using the currently SAVED configuration:\n\n" +
+            "This will attempt a real connection to Sage 50 using:\n\n" +
             $"Company data path: {_sage50CompanyDataPath.Text}\n" +
             $"Sage 50 username: {_sage50UserName.Text}\n\n" +
-            "(Save Sage 50 settings first if you just changed either of these - this tests what's saved, not " +
-            "unsaved edits still sitting in the fields.)\n\n" +
             "Proceed?",
             "Sage 50 connection test", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (confirm != DialogResult.Yes) return;

@@ -13,6 +13,13 @@ public class PortProFetchResult
 {
     public List<PortProInvoice> Invoices { get; set; } = new();
     public int NotFoundCount { get; set; }
+
+    /// <summary>The actual reference numbers behind NotFoundCount - added 2026-08-24
+    /// so SyncOrchestrator can record a proper per-invoice Outcome (Success=false,
+    /// with a clear message) for each one, instead of only a bare count with no way
+    /// to see which candidates those were in History &amp; Logs' "Validate Invoice
+    /// Extracted" grid.</summary>
+    public List<string> NotFoundReferenceNumbers { get; set; } = new();
 }
 
 /// <summary>

@@ -352,7 +352,7 @@
         <div class="brand-tagline">PortPro → Sage 50 sync, by SmallArc Inc.</div>
       </div>
     </div>
-    <div class="version-pill"><span class="dot"></span>Version 2.13.6</div>
+    <div class="version-pill"><span class="dot"></span>Version 2.15.0</div>
 
     <nav class="toc" aria-label="Table of contents">
       <div class="toc-label">Contents</div>
@@ -498,6 +498,11 @@
 
       <h3>Previous Run (read-only)</h3>
       <p>A snapshot of the most recently completed run — whether started from here, from Automatic Sync, or from a trigger file. Shows Mode (with "(Override)"/"(Dry Run)" appended if used), date/invoice range, Max invoices, the first and last invoice actually processed, a SUCCESS / FINISHED WITH ERRORS / INTERRUPTED result line (marked simulated for a Dry Run), and the exact invoice list used, when applicable.</p>
+      <p>Every field here has its own <strong>Copy</strong> button (always available, even when the field is empty) — click it to copy that value to the clipboard. Most useful on <strong>Invoice List Used</strong>: copy it and paste straight into the Invoice number list field above to re-run the same set.</p>
+      <div class="callout callout--note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <p><strong>A successfully-completed Invoice number list clears itself.</strong> If every invoice in the list was found and processed with no failures, the Invoice number list field empties once the run finishes, so it can't be accidentally re-submitted. If anything wasn't found or failed, the list is left as-is.</p>
+      </div>
 
       <h3>Buttons</h3>
       <ul>
@@ -649,9 +654,9 @@
 
       <h3>The detail tabs</h3>
       <ul>
-        <li><strong>Summary</strong> — full plain-text readout: request details, exact range/list used, every count, duration, watermark before/after.</li>
-        <li><strong>Validate Invoice Extracted</strong> — one row per invoice this run touched: invoice #, PortPro date, success/fail, resulting Sage 50 invoice number, messages.</li>
-        <li><strong>Invoice Transferred</strong> — one row per invoice actually written to Sage 50: PortPro #/date, Sage 50 #/date, due date, total amount, tax charged.</li>
+        <li><strong>Summary</strong> — full plain-text readout: request details, exact range/list used, every count, duration, watermark before/after. Shows <strong>Customers created in Sage 50</strong> / <strong>Customers updated in Sage 50</strong> counts when this run touched any (omitted when both are zero).</li>
+        <li><strong>Validate Invoice Extracted</strong> — one row per invoice this run touched: <strong>PortPro Customer Name</strong>, invoice #, PortPro date, success/fail, resulting Sage 50 invoice number, messages (wrapped automatically if too long). A gap-fill candidate not found in PortPro reads "RSRE_003947 (Invoice from identified GAP, not found in PortPro)"; a manually-typed invoice number list that wasn't found reads "(not found in PortPro)" instead.</li>
+        <li><strong>Invoice Transferred</strong> — one row per invoice actually written to Sage 50: <strong>PortPro Customer Name</strong>, PortPro #/date, Sage 50 #/date, due date, total amount, tax charged, and <strong>Sage50 Customer</strong> ("CREATED" if that invoice's customer was just auto-created, "UPDATED" if it already existed and "Update Customer with latest changes in PortPro" is on, blank otherwise — "UPDATED" means kept in sync by that setting, not necessarily changed at that exact instant).</li>
         <li><strong>Warnings / Validation</strong> — just the warning/validation lines from this run's log.</li>
         <li><strong>Failed Transactions</strong> — just the error/failure lines.</li>
         <li><strong>Full log</strong> — the complete raw log text for this run, with a live search box.</li>
@@ -681,7 +686,7 @@
       <p>Connection credentials and the account-mapping rules that decide exactly where each invoice line posts in Sage 50. This is the most consequential tab in the app — take the Dry run switch seriously.</p>
       <ul>
         <li><strong>App name / App ID</strong> — how this app identifies itself to the Sage 50 SDK.</li>
-        <li><strong>Company data path</strong> — the full path to your <code>.SAI</code> company file. Use <strong>Test Connection</strong> to confirm it opens. <strong>Changing this and saving effectively switches the app to a different Sage 50 file</strong> — see <a href="#path-scoping">section 15</a> for exactly what does and doesn't carry over when you do.</li>
+        <li><strong>Company data path</strong> — the full path to your <code>.SAI</code> company file. An editable dropdown: type/paste directly, pick a previously-used path, or click <strong>Browse...</strong> to find the file on disk. Lists every path you've saved here plus every path this app has real activity against, so nothing goes missing from the list. <strong>Picking a different path restores that path's own saved configuration</strong> (username, password, App name/ID, account defaults, tax codes, charge account map) — typing a new path leaves everything else as-is. The top bar's <strong>Target Sage50</strong> banner updates the instant you pick a path, even before saving. Use <strong>Test Connection</strong> to confirm it opens (saves automatically first). <strong>Changing this and saving effectively switches the app to a different Sage 50 file</strong> — see <a href="#path-scoping">section 15</a> for exactly what does and doesn't carry over when you do.</li>
         <li><strong>Sage50 User Name / Password</strong> — must be a <strong>dedicated account</strong>, never one a person also logs into interactively.</li>
         <li><strong>Expected SDK version</strong> — optional startup version check; leave blank to skip.</li>
         <li><strong>Default revenue account</strong> — the GL account used for a charge with no specific mapping below. If also blank, an unmapped charge fails outright.</li>
@@ -954,7 +959,7 @@
         <p>This software is licensed and authorized by SmallArc Inc. for use exclusively at the licensed location and under the terms of the applicable licensing agreement. Unauthorized use, reproduction, distribution, or deployment without the express written consent of SmallArc Inc. is prohibited.</p>
       </div>
       <div class="footer-meta">
-        <span>© 2026 SmallArc Inc. · PortProSage Sync v2.13.6</span>
+        <span>© 2026 SmallArc Inc. · PortProSage Sync v2.15.0</span>
         <a href="mailto:contact@smallarc.com">contact@smallarc.com</a>
       </div>
     </footer>

@@ -36,6 +36,17 @@ public class CustomerSyncResult
 
     public int Failed { get; set; }
 
+    /// <summary>Set only when the sweep couldn't even connect to Sage 50 (or
+    /// couldn't fetch PortPro's customer list) and had to abandon the whole sweep
+    /// before touching any customer - distinct from Failed, which counts
+    /// individual per-customer failures during a sweep that otherwise ran.
+    /// Confirmed live 2026-08-24 this needs surfacing: previously this failure was
+    /// only ever logged, never reflected in the SyncResult the Admin app actually
+    /// reads, so a Manual Run could show "Completed successfully" while this
+    /// trailing sweep had silently failed with no visible trace anywhere in the
+    /// app.</summary>
+    public string? FatalError { get; set; }
+
     /// <summary>Per-customer detail - only ExecuteSelectedRefreshAsync populates
     /// this (one entry per customer it actually attempted); SyncChangedCustomersAsync
     /// leaves it empty. Lets the Admin app's Customer Refresh grid update each
@@ -103,6 +114,7 @@ public class CustomerSyncService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Customer sync: failed to fetch PortPro's customer list - skipping this sweep.");
+            result.FatalError = $"Customer sync sweep could not fetch PortPro's customer list: {ex.Message}";
             return result;
         }
 
@@ -112,7 +124,34 @@ public class CustomerSyncService
         // found, since SyncOrchestrator.RunAsync itself skips connecting entirely
         // when there's nothing due that cycle (see its UseWatermark early-return),
         // so Sage 50 isn't guaranteed to already be connected by the time this runs.
-        await _sage50.ConnectAsync(ct);
+        //
+        // Guarded (confirmed live 2026-08-24 this mattered): this runs at the tail
+        // of EVERY Manual Run and EVERY Automatic Service poll cycle, regardless of
+        // whether the main sync above needed Sage 50 at all - if THIS is the very
+        // first connect attempt in the process (e.g. a Continue run with nothing
+        // new to import) and it fails, an unguarded call here would crash the whole
+        // process via an unhandled exception, even though the invoice sync itself
+        // otherwise completed (or had nothing to do) - see Diagnostics.
+        // RunCustomerRefreshScanAsync's matching guard for the same class of bug.
+        try
+        {
+            await _sage50.ConnectAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Customer sync: could not connect to Sage 50 - skipping this sweep.");
+
+            // Innermost message too, not just the generic outer wrapper - same
+            // reasoning as SyncOrchestrator.RunAsync's own catch block: the actually
+            // diagnostic text (e.g. "This user name does not exist...") is buried in
+            // the inner SimplyErrorMessageException, and this is what the Admin app
+            // surfaces to the operator, so it needs to be in there.
+            var innermost = ex;
+            while (innermost.InnerException is not null) innermost = innermost.InnerException;
+            var detail = ReferenceEquals(innermost, ex) ? ex.Message : $"{ex.Message} ---> {innermost.Message}";
+            result.FatalError = $"Customer sync sweep could not connect to Sage 50: {detail}";
+            return result;
+        }
 
         foreach (var customer in customers)
         {

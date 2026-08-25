@@ -241,6 +241,23 @@ public class SyncResult
 
     public int InvoicesFailedValidation { get; set; }
     public int InvoicesFailedImport { get; set; }
+
+    /// <summary>Customers genuinely auto-created this run because an invoice
+    /// needed one that didn't already exist in Sage 50 (InvoiceValidationService.
+    /// ValidateCustomerAsync) - counted once per distinct customer, not once per
+    /// invoice, since a later invoice for the same newly-created customer resolves
+    /// from the per-run cache instead. Only meaningful for an ordinary invoice-sync
+    /// run - the Customer Refresh tab's own Created/Updated counts (§ Diagnostics.
+    /// RunFullCustomerRefreshAsync) are unrelated and reported separately.</summary>
+    public int CustomersCreated { get; set; }
+
+    /// <summary>Customers updated by this run's own trailing incremental sync
+    /// sweep (CustomerSyncService.SyncChangedCustomersAsync, which never creates -
+    /// only updates an existing Sage 50 customer whose PortPro profile changed).
+    /// Set by the caller (Diagnostics.RunOnceAsync) after that sweep runs, since
+    /// SyncOrchestrator.RunAsync itself returns before that sweep is even called.</summary>
+    public int CustomersUpdated { get; set; }
+
     public List<InvoiceProcessingOutcome> Outcomes { get; set; } = new();
 
     /// <summary>The actual invoice-date window this run covered - captured once,
@@ -360,6 +377,31 @@ public class InvoiceProcessingOutcome
     public string? Sage50InvoiceNumber { get; set; }
     public List<string> Messages { get; set; } = new();
 
+    /// <summary>PortPro's own customer/company name for this invoice
+    /// (invoice.Caller.CompanyName, falling back to invoice.CallerName) - shown as
+    /// the first column of History &amp; Logs' "Validate Invoice Extracted" and
+    /// "Invoice Transferred" grids. Populated for every outcome, including a
+    /// failed-validation or not-found one, wherever the invoice/candidate carries
+    /// enough PortPro data to know it; blank for a gap-fill candidate PortPro
+    /// confirmed doesn't exist at all (nothing to name).</summary>
+    public string? PortProCustomerName { get; set; }
+
+    /// <summary>Copied from ValidationResult.CustomerAutoCreated - see that
+    /// property's doc comment. Lets SyncOrchestrator.RunAsync's loop increment
+    /// SyncResult.CustomersCreated without needing the ValidationResult itself.</summary>
+    public bool CustomerAutoCreated { get; set; }
+
+    /// <summary>"CREATED" if this invoice's own customer didn't exist in Sage 50
+    /// and was just auto-created; "UPDATED" if the customer already existed and
+    /// Sage50Settings.SyncCustomerUpdatesFromPortPro is on (meaning it's kept in
+    /// sync with PortPro by the trailing incremental sweep - CustomerSyncService.
+    /// SyncChangedCustomersAsync - not necessarily updated at this exact instant,
+    /// since that sweep runs once per whole run, not per invoice); null if no
+    /// customer was resolved at all (e.g. validation failed before reaching that
+    /// point) or the setting is off for an existing customer. Shown as the
+    /// "Sage50 Customer" column on History &amp; Logs' Invoice Transferred tab.</summary>
+    public string? Sage50CustomerAction { get; set; }
+
     /// <summary>PortPro's billing/completed date for this invoice - populated for every
     /// outcome (success or failure), not just imported ones, so the Admin app's
     /// "Invoice Transferred" view can show it regardless.</summary>
@@ -394,6 +436,15 @@ public class ValidationResult
     public List<string> Warnings { get; } = new();
 
     public string? ResolvedSage50CustomerCode { get; set; }
+
+    /// <summary>True only when this invoice's own validation is what actually
+    /// created the Sage 50 customer just now (not when it resolved from the
+    /// per-run cache or an existing Sage 50 match) - see InvoiceValidationService.
+    /// ValidateCustomerAsync. Lets SyncOrchestrator.RunAsync count genuinely new
+    /// customers created this run without double-counting every later invoice
+    /// for that same (now-cached) customer.</summary>
+    public bool CustomerAutoCreated { get; set; }
+
     public Dictionary<string, string> ResolvedItemCodesByChargeName { get; } = new();
 
     /// <summary>

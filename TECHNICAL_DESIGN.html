@@ -253,7 +253,7 @@
         <div class="brand-tagline">PortPro → Sage 50 sync, by SmallArc Inc.</div>
       </div>
     </div>
-    <div class="version-pill"><span class="dot"></span>Version 2.13.6</div>
+    <div class="version-pill"><span class="dot"></span>Version 2.15.0</div>
     <div class="doc-kind-pill">Technical Design Document</div>
 
     <nav class="toc" aria-label="Table of contents">
@@ -557,8 +557,25 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
         <p>This is a <strong>one-time, best-effort backfill, not a true historical reconstruction</strong> — a table that predates this feature has no record of which path was actually active when each row was written, so every pre-existing row is stamped with "whatever's configured right now." Confirmed as a real, non-hypothetical gap 2026-08-23: cross-referencing <code>imported_invoice</code>'s <code>imported_at_utc</code> timestamps against the Service's own historical <code>logs/*.log</code> startup lines showed all 3,664 pre-existing rows were genuinely created while pointed at one path, while the migration (which ran later, after the configured path had since changed) had backfilled them to a <em>different</em> one — corrected by hand via a one-off, precisely-timestamp-matched update once identified, not by any code path.</p>
       </div>
-      <p><strong>Admin UI behavior</strong> (Customer Refresh and History &amp; Logs, mirrored identically): the path dropdown always includes the currently-configured path but <strong>never overrides an operator's existing selection</strong>. Refreshed on both full config reload and every tab click. Selecting the current path keeps Customer Refresh fully live; selecting any other path switches it to a read-only view of that path's persisted <code>customer_refresh_status</code> rows. History &amp; Logs' path filter is purely a display filter — an entry with no recorded path (pre-dates this feature, or was written by a stale Service binary — §13 item 13) <strong>always shows regardless of the selected filter</strong>, so older history is never silently hidden.</p>
+      <p><strong>Admin UI behavior</strong> (Customer Refresh and History &amp; Logs, mirrored identically): the path dropdown always includes the currently-configured path but <strong>never overrides an operator's existing selection</strong> — unless the actively-configured path has genuinely just changed (a real Save on the Sage 50 tab), in which case both dropdowns are force-reset to follow it (§6.13). Refreshed on both full config reload and every tab click. Selecting the current path keeps Customer Refresh fully live; selecting any other path switches it to a read-only view of that path's persisted <code>customer_refresh_status</code> rows. History &amp; Logs' path filter is purely a display filter — an entry with no recorded path (pre-dates this feature, or was written by a stale Service binary — §13 item 13) <strong>always shows regardless of the selected filter</strong>, so older history is never silently hidden.</p>
       <p>Backed on the Admin side by a parallel, Admin-only <code>Sage50PathStateService</code> that reads <code>state.db</code> directly (Admin can't reference Core — same net48/SDK dependency constraint as §3).</p>
+
+      <h3>6.13 Per-path Sage 50 tab configuration snapshots</h3>
+      <p>Confirmed live 2026-08-24: <code>appsettings.json</code>/<code>appsettings.Local.json</code> hold exactly <strong>one</strong> current Sage 50 configuration (App name/ID, username/password, account defaults, tax codes, charge account map), overwritten in place on every Save regardless of which path it was for. Switching between two paths used to mean re-entering all of that by hand every time.</p>
+      <p><strong>Fix:</strong> <code>Sage50ConfigSnapshotService</code> (Admin-only) adds a small <code>admin_sage50_config_snapshot</code> table to <code>state.db</code> (§8) storing the whole Sage 50 tab as one JSON blob per path, upserted on every Save (and every Test Connection, which now saves silently first). Picking a <strong>different</strong> path from the dropdown (a genuine selection, not typing) loads that path's snapshot and repopulates every other field; a path never saved through this app just leaves the other fields as-is.</p>
+      <p>The Company data path field is an editable <code>ComboBox</code> with a <strong>Browse...</strong> button (<code>OpenFileDialog</code>, filtered to <code>*.SAI</code>). Its dropdown unions two sources: an Admin-only saved-path history (<code>admin-settings.json</code>'s <code>PreviousSage50Paths</code>, capped at 10) and <code>Sage50PathStateService.GetAllKnownPaths()</code> (§6.12) — relying on just the first source alone left a genuinely-used path missing if it predated this feature.</p>
+      <p><strong>Global banner immediacy:</strong> the top bar's "Target Sage50" label used to only refresh on a full config reload, so it could show a stale path indefinitely after a Sage 50 tab Save. Now refreshed after every Save/Test Connection and on every tab switch, and tracks the last path it showed to detect a genuine change (triggering the dropdown force-follow above). Selecting a path from the dropdown also updates this banner <strong>immediately</strong> to the just-picked (possibly unsaved) path — a deliberate exception to "only ever show the SAVED path," safe because every confirmation dialog that starts a real run reads the saved path directly, never this banner (§13 item 15).</p>
+
+      <h3>6.14 Per-outcome customer detail</h3>
+      <p>Added to <code>InvoiceProcessingOutcome</code> 2026-08-24, populated in <code>SyncOrchestrator.ProcessOneInvoiceAsync</code>:</p>
+      <ul>
+        <li><strong>PortProCustomerName</strong> — <code>invoice.Caller?.CompanyName ?? invoice.CallerName</code>, shown as the leading column on both "Validate Invoice Extracted" and "Invoice Transferred".</li>
+        <li><strong>CustomerAutoCreated</strong> — copied from the new <code>ValidationResult.CustomerAutoCreated</code>, set only by a genuine <code>CreateCustomerAsync</code> call, never a cache hit. <code>SyncOrchestrator.RunAsync</code>'s loop increments <code>SyncResult.CustomersCreated</code> from it.</li>
+        <li><strong>Sage50CustomerAction</strong> — "CREATED" when auto-created; "UPDATED" when the customer already existed and <code>SyncCustomerUpdatesFromPortPro</code> is on (kept in sync by the trailing sweep, §6.10 — not necessarily at this exact instant); null otherwise. Shown as "Sage50 Customer" on Invoice Transferred only.</li>
+      </ul>
+      <p><code>SyncResult</code> also gained <strong>CustomersCreated</strong>/<strong>CustomersUpdated</strong> (the latter set by the caller from <code>SyncChangedCustomersAsync</code>'s own <code>Updated</code> count, since <code>RunAsync</code> returns before that sweep runs). Shown on the Summary tab only when non-zero.</p>
+      <p><strong>Log line changes:</strong> both <code>OUTCOME:</code> and <code>TRANSFER:</code> gained <code>Customer={Name}</code> (lazily captured, not <code>\S+</code>, since a name can contain spaces); <code>TRANSFER:</code> also gained a trailing <code>CustomerAction={Action}</code>. Both optional in <code>LogExtractorService</code>'s regexes, so an older log line still parses.</p>
+      <p><strong>Worker.cs parity fix:</strong> the Automatic Service's own poll cycle had the exact same gap <code>Diagnostics.RunOnceAsync</code> was fixed for earlier the same day (§13 item 13) — its <code>SyncChangedCustomersAsync</code> call was fire-and-forget, discarding the result and running after the final <code>WriteResult</code>. Restructured to match: now runs before the final write, folds <code>FatalError</code> into <code>Outcomes</code>, and captures <code>CustomersUpdated</code>.</p>
     </section>
 
     <section class="doc-section" id="process-flows">
@@ -736,6 +753,14 @@ CREATE TABLE customer_refresh_status (
     message                TEXT NOT NULL,
     applied_at_utc         TEXT NOT NULL,
     PRIMARY KEY (portpro_customer_id, sage50_path)
+);
+
+-- Admin-only (2026-08-24) - not part of Core's schema/migration above, and
+-- never read by the Service. See §6.13.
+CREATE TABLE admin_sage50_config_snapshot (
+    sage50_path    TEXT PRIMARY KEY COLLATE NOCASE,
+    config_json    TEXT NOT NULL,   -- the whole Sage 50 tab, serialized as one JSON blob
+    saved_at_utc   TEXT NOT NULL
 );</code></pre>
       <ul>
         <li><strong>Dedup key is PortPro's invoice id</strong> (plus <code>sage50_path</code>), not the reference number — the "already imported" check is keyed on the id (scoped to the current path), so a reference-number reuse can never falsely suppress a genuinely different invoice, and the same reference number legitimately existing under two different paths is not a collision.</li>
@@ -814,6 +839,7 @@ CREATE TABLE customer_refresh_status (
         <li>PortPro's <code>/customer</code> list endpoint silently caps every response at 50 records, ignoring the requested <code>limit</code> — confirmed live via direct calls with <code>limit=100</code> each returning exactly 50 at <code>skip=0/50/100</code>; <code>/invoices</code> correctly honors <code>limit=100</code>. → §4.4; <code>GetAllCustomersAsync</code> now advances <code>skip</code> by the actual returned count and stops only on a genuinely empty page.</li>
         <li>A stale Service binary silently <em>omits</em> a newly-added <code>SyncResult</code> field from its written result.json (not written as null — genuinely absent) if the Core DLL it's linked against predates that field. Confirmed live 2026-08-24: the actively-running Service.exe hadn't been rebuilt after <code>SyncResult.Sage50Path</code> was added, so every result it wrote that day lacked the field, which (by the deliberate "unknown path always shows" rule, §6.12) made those History &amp; Logs rows appear under every path filter instead of just the one they actually ran against. Distinct from item 9 above (that guard catches an unrecognized FilterType; this is a missing field on an otherwise-valid result) — there is no code-level guard against it. → Service/Trigger must be rebuilt (and restarted, if running as a live process) after any Core model change.</li>
         <li>Switching <code>Sage50:CompanyDataPath</code> without per-path state scoping cross-contaminated tracking between company files — an invoice/customer/watermark state recorded while pointed at one .SAI file was silently treated as applying to a completely different one after switching. → Fixed by scoping every state.db table by <code>sage50_path</code> (§6.12); the one-time migration that backfills pre-existing rows to "whatever's currently configured" is itself a known, documented limitation of that fix, not a complete historical reconstruction.</li>
+        <li>A confirmation dialog reading the Sage 50 tab's live (possibly-unsaved) CompanyDataPath field, instead of what's actually saved, could show a different path than the run it confirmed actually used — confirmed live 2026-08-24: an unsaved "E:\..." showed in Manual Run's confirmation dialog, but the process that actually ran read appsettings.Local.json fresh and used the last genuinely-saved "C:\...", with no indication of the mismatch anywhere. → Every confirmation dialog that starts a real run now reads the path via <code>CurrentConfiguredSage50Path</code>, never the live field — see §6.13's "Global banner immediacy" for the one deliberate exception (the top-bar banner itself, display-only, never read by a confirmation dialog).</li>
       </ol>
     </section>
 
@@ -823,7 +849,7 @@ CREATE TABLE customer_refresh_status (
         <p>This software is licensed and authorized by SmallArc Inc. for use exclusively at the licensed location and under the terms of the applicable licensing agreement. Unauthorized use, reproduction, distribution, or deployment without the express written consent of SmallArc Inc. is prohibited.</p>
       </div>
       <div class="footer-meta">
-        <span>© 2026 SmallArc Inc. · PortProSage Sync v2.13.6</span>
+        <span>© 2026 SmallArc Inc. · PortProSage Sync v2.15.0</span>
         <a href="mailto:contact@smallarc.com">contact@smallarc.com</a>
       </div>
     </footer>

@@ -1,10 +1,16 @@
 using System.Text.Json.Nodes;
+using PortProSage.Admin.Services;
 
 namespace PortProSage.Admin;
 
 public partial class MainForm
 {
-    private TextBox _sage50CompanyDataPath = new();
+    // Editable combo, not a plain TextBox - confirmed 2026-08-24 the operator
+    // wants both: pick a previously-used path from the dropdown (see
+    // RefreshSage50CompanyDataPathDropdown/RecordSage50Path), or type/paste a new
+    // one directly. DropDownStyle.DropDown (not DropDownList) is what keeps free
+    // typing possible - DropDownList would force picking only from the list.
+    private ComboBox _sage50CompanyDataPath = new() { DropDownStyle = ComboBoxStyle.DropDown };
     private TextBox _sage50UserName = new();
     private TextBox _sage50Password = new() { UseSystemPasswordChar = true };
     private TextBox _sage50AppName = new();
@@ -50,6 +56,8 @@ public partial class MainForm
             "Example: PortPro Sage 50 Connector",
             fieldPercent);
 
+        var browseCompanyDataPathButton = new Button { Text = "Browse...", Width = 80, Height = 23 };
+        browseCompanyDataPathButton.Click += (_, _) => BrowseForSage50CompanyDataPath();
         var testConnectionButton = new Button { Text = "Test Connection", Width = 110, Height = 23 };
         testConnectionButton.Click += (_, _) => TestSage50Connection();
         AddPercentRow(grid, "Company data path (secret)", _sage50CompanyDataPath, LocalSettingsFileName, "PortProSage:Sage50:CompanyDataPath",
@@ -57,9 +65,20 @@ public partial class MainForm
             "Example: C:\\simplyData\\RS RUSH TRANSFER XPRESS INC-2026.sai\n\n" +
             "This must point at a real, existing company file on this server - the Service opens exactly this file " +
             "every time it connects to Sage 50.\n\n" +
-            "\"Test Connection\" attempts a real connect using whatever is currently SAVED to appsettings.Local.json " +
-            "- Save Sage 50 settings first if you just changed something, or the test won't reflect your edits.",
-            fieldPercent + fieldPercent / 2, testConnectionButton); // 50% wider than the other fields on this tab
+            "Type or paste a path directly, pick one you've used before from the dropdown, or click Browse... to " +
+            "find the .SAI file on disk.\n\n" +
+            "Picking a previously-used path from the dropdown also restores the rest of this tab (username, " +
+            "password, account defaults, tax codes, charge account map) to whatever was last saved for that " +
+            "specific path - since a different company file can genuinely need a different Sage 50 login or " +
+            "chart-of-accounts mapping. Typing a brand-new path leaves everything else as-is.\n\n" +
+            "\"Test Connection\" saves this tab automatically first, then attempts a real connect using exactly " +
+            "what's currently in these fields - no need to click Save Sage 50 settings separately beforehand.",
+            fieldPercent + fieldPercent / 2, browseCompanyDataPathButton, testConnectionButton); // 50% wider than the other fields on this tab
+        // Picking (not typing) a path from the dropdown restores that path's own
+        // saved configuration - see OnSage50PathSelected/Sage50ConfigSnapshotService.
+        // Named method, not a lambda - RefreshSage50CompanyDataPathDropdown needs
+        // to unsubscribe/resubscribe this exact handler around Items.Clear().
+        _sage50CompanyDataPath.SelectedIndexChanged += OnSage50CompanyDataPathSelectedIndexChanged;
         AddPercentRow(grid, "Sage50 User Name (secret)", _sage50UserName, LocalSettingsFileName, "PortProSage:Sage50:UserName",
             "The Sage 50 login the Service uses to open the company file. Must be a dedicated account, never the " +
             "same one a human logs into Sage 50 with interactively - Sage 50 rejects two simultaneous sessions " +
@@ -370,12 +389,209 @@ public partial class MainForm
         _chargeAccountMapGrid.Columns["Sage50AccountNumber"].FillWeight = 30;
     }
 
+    /// <summary>Opens a real file picker for the .SAI company file, defaulting to
+    /// whatever folder the currently-typed path (if any) already points at - so
+    /// re-browsing after already having a value starts somewhere sensible instead
+    /// of always landing back at a default OS folder.</summary>
+    private void BrowseForSage50CompanyDataPath()
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Title = "Select Sage 50 Company File",
+            Filter = "Sage 50 Company Files (*.SAI)|*.SAI|All files (*.*)|*.*",
+            CheckFileExists = true,
+            CheckPathExists = true
+        };
+
+        var current = _sage50CompanyDataPath.Text;
+        if (!string.IsNullOrWhiteSpace(current))
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(current);
+                if (!string.IsNullOrWhiteSpace(dir) && Directory.Exists(dir)) dialog.InitialDirectory = dir;
+            }
+            catch (ArgumentException)
+            {
+                // current wasn't a well-formed path (e.g. mid-edit) - just fall back
+                // to the OS default starting folder rather than failing the browse.
+            }
+        }
+
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            _sage50CompanyDataPath.Text = dialog.FileName;
+        }
+    }
+
+    /// <summary>Populates the Company data path dropdown by UNIONING two
+    /// different sources - confirmed live 2026-08-24 relying on just one of them
+    /// left a genuinely-used path missing:
+    ///   1. LoadPreviousSage50Paths() - every path explicitly saved through this
+    ///      tab (RecordSage50Path, on every "Save Sage 50 settings" click).
+    ///   2. Sage50PathStateService.GetAllKnownPaths() - every path state.db has
+    ///      ever recorded real sync activity against (same source the Customer
+    ///      Refresh/History &amp; Logs path pickers use). Catches a path that was
+    ///      genuinely connected to and used for real runs, but never (re-)saved
+    ///      through THIS tab specifically - e.g. one only ever configured by
+    ///      hand-editing appsettings.Local.json, or configured before this
+    ///      dropdown feature existed.
+    /// Plus whatever's currently configured, so it's never missing from its own
+    /// dropdown either way. Preserves the current typed/selected text across the
+    /// rebuild - Items.Clear() alone would otherwise blank the combo.</summary>
+    private void RefreshSage50CompanyDataPathDropdown()
+    {
+        var currentText = _sage50CompanyDataPath.Text;
+
+        var paths = LoadPreviousSage50Paths();
+        if (!string.IsNullOrWhiteSpace(_syncStateDatabasePath?.Text))
+        {
+            foreach (var known in Sage50PathStateService.GetAllKnownPaths(_syncStateDatabasePath.Text))
+            {
+                if (!paths.Any(p => string.Equals(p, known, StringComparison.OrdinalIgnoreCase)))
+                {
+                    paths.Add(known);
+                }
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(currentText) &&
+            !paths.Any(p => string.Equals(p, currentText, StringComparison.OrdinalIgnoreCase)))
+        {
+            paths.Insert(0, currentText);
+        }
+
+        // Unsubscribed around Items.Clear() - clearing a ComboBox's Items resets
+        // SelectedIndex to -1, which would otherwise fire OnSage50PathSelected and
+        // try to load a config snapshot on every ordinary tab refresh/config
+        // reload, not just when the operator actually picks a path from the list.
+        _sage50CompanyDataPath.SelectedIndexChanged -= OnSage50CompanyDataPathSelectedIndexChanged;
+        _sage50CompanyDataPath.Items.Clear();
+        foreach (var path in paths) _sage50CompanyDataPath.Items.Add(path);
+        _sage50CompanyDataPath.Text = currentText;
+        _sage50CompanyDataPath.SelectedIndexChanged += OnSage50CompanyDataPathSelectedIndexChanged;
+    }
+
+    private void OnSage50CompanyDataPathSelectedIndexChanged(object? sender, EventArgs e) => OnSage50PathSelected();
+
+    /// <summary>Restores the rest of the Sage 50 tab (username, password, account
+    /// defaults, tax codes, charge account map) from whatever was last saved for
+    /// the newly-selected path - confirmed 2026-08-24 this is needed because
+    /// appsettings.json/appsettings.Local.json only ever hold ONE current
+    /// configuration, overwritten in place on every Save regardless of which path
+    /// it was actually for, so switching between two Sage 50 company files used to
+    /// mean re-entering everything else by hand every time. Only fires from an
+    /// actual dropdown pick (see the unsubscribe/resubscribe in
+    /// RefreshSage50CompanyDataPathDropdown), not from typing a new path - a path
+    /// with no saved snapshot yet (brand new, or never saved through this app)
+    /// just leaves every other field as it currently is.
+    ///
+    /// Also updates the top bar's "Target Sage50" banner immediately, to exactly
+    /// whatever was just picked - confirmed live 2026-08-24 this was expected the
+    /// instant a different path is selected, not only after a subsequent Save.
+    /// This is a deliberate, narrow exception to RefreshGlobalTargetSage50Label's
+    /// usual rule (only ever showing the SAVED path, not a live unsaved edit,
+    /// specifically so a confirmation dialog can never show something different
+    /// from what a run will really use) - safe here because every confirmation
+    /// dialog that actually starts a run reads the SAVED path directly (see
+    /// CurrentConfiguredSage50Path), never this banner, so an optimistic display
+    /// update here can't reintroduce that mismatch.</summary>
+    private void OnSage50PathSelected()
+    {
+        var path = _sage50CompanyDataPath.Text;
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        _globalTargetSage50Label.Text = $"Target Sage50: {path}";
+
+        if (_syncStateDatabasePath is null || string.IsNullOrWhiteSpace(_syncStateDatabasePath.Text)) return;
+
+        var snapshot = Sage50ConfigSnapshotService.TryLoadSnapshot(_syncStateDatabasePath.Text, path);
+        if (snapshot is null) return;
+
+        _sage50UserName.Text = snapshot.UserName;
+        _sage50Password.Text = snapshot.Password;
+        _sage50AppName.Text = snapshot.AppName;
+        _sage50AppId.Text = snapshot.AppId;
+        _sage50ExpectedSdkVersion.Text = snapshot.ExpectedSdkVersion;
+        _sage50DefaultRevenueAccount.Text = snapshot.DefaultRevenueAccount;
+        _sage50DefaultReceivableAccount.Text = snapshot.DefaultReceivableAccount;
+        _sage50DefaultNetTermDays.Value = Math.Clamp(snapshot.DefaultNetTermDays, _sage50DefaultNetTermDays.Minimum, _sage50DefaultNetTermDays.Maximum);
+        _sage50AutoCreateCustomers.Checked = snapshot.AutoCreateCustomers;
+        _sage50SyncCustomerUpdates.Checked = snapshot.SyncCustomerUpdatesFromPortPro;
+        _sage50AutoCreateItems.Checked = snapshot.AutoCreateItems;
+        _sage50DryRun.Checked = snapshot.DryRun;
+        _sage50IgnoreAccountMismatchUseDefault.Checked = snapshot.IgnoreAccountMismatchUseDefault;
+        _sage50AccountsUnverifiable.Text = snapshot.AccountsUnverifiableBySdk;
+
+        _taxCodesGrid.Rows.Clear();
+        foreach (var row in snapshot.TaxCodes) _taxCodesGrid.Rows.Add(row.Abbreviation, row.Sage50Code);
+
+        _chargeAccountMapGrid.Rows.Clear();
+        foreach (var row in snapshot.ChargeAccountMap)
+        {
+            _chargeAccountMapGrid.Rows.Add(row.PortProChargeName, row.PortProChargeNumber, row.Sage50AccountName, row.Sage50AccountNumber);
+        }
+    }
+
+    /// <summary>Mirrors the exact set of fields RefreshSage50Tab/SaveSage50Tab
+    /// already read - see Sage50ConfigSnapshotService's doc comment for why this
+    /// is captured per-path rather than relying on appsettings.json/
+    /// appsettings.Local.json alone.</summary>
+    private Sage50ConfigSnapshotService.Snapshot BuildSage50ConfigSnapshotFromForm()
+    {
+        var snapshot = new Sage50ConfigSnapshotService.Snapshot
+        {
+            UserName = _sage50UserName.Text,
+            Password = _sage50Password.Text,
+            AppName = _sage50AppName.Text,
+            AppId = _sage50AppId.Text,
+            ExpectedSdkVersion = _sage50ExpectedSdkVersion.Text,
+            DefaultRevenueAccount = _sage50DefaultRevenueAccount.Text,
+            DefaultReceivableAccount = _sage50DefaultReceivableAccount.Text,
+            DefaultNetTermDays = (int)_sage50DefaultNetTermDays.Value,
+            AutoCreateCustomers = _sage50AutoCreateCustomers.Checked,
+            SyncCustomerUpdatesFromPortPro = _sage50SyncCustomerUpdates.Checked,
+            AutoCreateItems = _sage50AutoCreateItems.Checked,
+            DryRun = _sage50DryRun.Checked,
+            IgnoreAccountMismatchUseDefault = _sage50IgnoreAccountMismatchUseDefault.Checked,
+            AccountsUnverifiableBySdk = _sage50AccountsUnverifiable.Text
+        };
+
+        foreach (DataGridViewRow r in _taxCodesGrid.Rows)
+        {
+            if (r.IsNewRow) continue;
+            var abbreviation = r.Cells["Abbreviation"].Value?.ToString();
+            if (string.IsNullOrWhiteSpace(abbreviation)) continue;
+            snapshot.TaxCodes.Add(new Sage50ConfigSnapshotService.TaxCodeRow
+            {
+                Abbreviation = abbreviation,
+                Sage50Code = r.Cells["Sage50Code"].Value?.ToString() ?? ""
+            });
+        }
+
+        foreach (DataGridViewRow r in _chargeAccountMapGrid.Rows)
+        {
+            if (r.IsNewRow) continue;
+            var name = r.Cells["PortProChargeName"].Value?.ToString();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            snapshot.ChargeAccountMap.Add(new Sage50ConfigSnapshotService.ChargeMapRow
+            {
+                PortProChargeName = name,
+                PortProChargeNumber = r.Cells["PortProChargeNumber"].Value?.ToString() ?? "",
+                Sage50AccountName = r.Cells["Sage50AccountName"].Value?.ToString() ?? "",
+                Sage50AccountNumber = r.Cells["Sage50AccountNumber"].Value?.ToString() ?? ""
+            });
+        }
+
+        return snapshot;
+    }
+
     private void RefreshSage50Tab()
     {
         if (_appSettings is null) return;
 
         _sage50CompanyDataPath.Text = _localSettings?.GetString("PortProSage.Sage50.CompanyDataPath")
             ?? _appSettings.GetString("PortProSage.Sage50.CompanyDataPath");
+        RefreshSage50CompanyDataPathDropdown();
         _sage50UserName.Text = _localSettings?.GetString("PortProSage.Sage50.UserName")
             ?? _appSettings.GetString("PortProSage.Sage50.UserName");
         _sage50Password.Text = _localSettings?.GetString("PortProSage.Sage50.Password") ?? "";
@@ -410,7 +626,12 @@ public partial class MainForm
         }
     }
 
-    private void SaveSage50Tab()
+    /// <summary>showConfirmation=false is used by TestSage50Connection - it saves
+    /// silently right before testing (confirmed live 2026-08-24: the test should
+    /// always reflect what's currently in the fields, not require a separate
+    /// manual Save first), where a "Saved" popup would just be a redundant extra
+    /// click before the actual connection-test confirmation.</summary>
+    private void SaveSage50Tab(bool showConfirmation = true)
     {
         if (_appSettings is null || _localSettings is null) return;
 
@@ -457,7 +678,28 @@ public partial class MainForm
         _localSettings.SetString("PortProSage.Sage50.Password", _sage50Password.Text);
         _localSettings.Save();
 
-        MessageBox.Show(this, "Sage 50 settings saved. The running Service needs a restart to pick up changes.", "Saved",
-            MessageBoxButtons.OK, MessageBoxIcon.Information);
+        RecordSage50Path(_sage50CompanyDataPath.Text);
+        RefreshSage50CompanyDataPathDropdown();
+
+        // Snapshot everything on this tab against the path it was actually saved
+        // for, so picking this same path again later (even after switching to a
+        // different one in between) restores it - see Sage50ConfigSnapshotService.
+        if (!string.IsNullOrWhiteSpace(_syncStateDatabasePath?.Text) && !string.IsNullOrWhiteSpace(_sage50CompanyDataPath.Text))
+        {
+            Sage50ConfigSnapshotService.SaveSnapshot(_syncStateDatabasePath.Text, _sage50CompanyDataPath.Text, BuildSage50ConfigSnapshotFromForm());
+        }
+
+        // Confirmed live 2026-08-24: without this, the top bar's "Target Sage50"
+        // banner (and Customer Refresh's/History & Logs' own path dropdowns) kept
+        // showing whatever was true before this save, indefinitely, until some
+        // unrelated full config reload happened to run - a real mismatch between
+        // what the Sage 50 tab said and what the rest of the app showed.
+        RefreshGlobalTargetSage50Label();
+
+        if (showConfirmation)
+        {
+            MessageBox.Show(this, "Sage 50 settings saved. The running Service needs a restart to pick up changes.", "Saved",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
     }
 }

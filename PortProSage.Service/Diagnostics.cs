@@ -178,8 +178,6 @@ public static class Diagnostics
         // these overwrites if the run actually completes normally.
         var result = await orchestrator.RunAsync(request, ct, onProgress: WriteResultFile);
 
-        WriteResultFile(result);
-
         logger.LogWarning(
             "MANUAL RUN complete: fetched={Fetched} imported={Imported} alreadyImported={AlreadyImported} " +
             "notFound={NotFound} zeroAmount={ZeroAmount} failedValidation={FailedVal} failedImport={FailedImp}",
@@ -191,8 +189,25 @@ public static class Diagnostics
         await GapFillRunner.RunIfApplicableAsync(request, result, orchestrator, WriteRequestFileFor, WriteResultFileFor, logger, ct);
 
         // Once per Manual Run too - see CustomerSyncService's doc comment and
-        // Sage50Settings.SyncCustomerUpdatesFromPortPro.
-        await services.GetRequiredService<CustomerSyncService>().SyncChangedCustomersAsync(ct);
+        // Sage50Settings.SyncCustomerUpdatesFromPortPro. Captured (not discarded)
+        // and folded into THIS run's own result, BEFORE the final WriteResultFile
+        // below - confirmed live 2026-08-24 this needs to happen before the final
+        // write, not after: the Admin app stops polling and shows its completion
+        // pop-up the moment it sees IsFinal=true, so a failure recorded only in a
+        // LATER write is invisible to that pop-up (History & Logs would show it on
+        // a manual refresh, but the operator saw no message at all in the moment).
+        var customerSyncResult = await services.GetRequiredService<CustomerSyncService>().SyncChangedCustomersAsync(ct);
+        result.CustomersUpdated = customerSyncResult.Updated;
+        if (customerSyncResult.FatalError is not null)
+        {
+            result.Outcomes.Add(new InvoiceProcessingOutcome
+            {
+                Success = false,
+                Messages = { customerSyncResult.FatalError }
+            });
+        }
+
+        WriteResultFile(result);
 
         // Per-invoice detail no longer dumped here - SyncOrchestrator.RunAsync now logs
         // an "OUTCOME: ..." line for every invoice live, as it happens (see its doc
@@ -201,7 +216,9 @@ public static class Diagnostics
         // views still work identically, since they filter the log for "VALIDATION:"/
         // "success=false" substrings, both still present in the live OUTCOME lines.
 
-        return result.InvoicesFailedImport > 0 || result.InvoicesFailedValidation > 0 ? 1 : 0;
+        var hasFailures = result.InvoicesFailedImport > 0 || result.InvoicesFailedValidation > 0 ||
+                           result.Outcomes.Any(o => !o.Success);
+        return hasFailures ? 1 : 0;
     }
 
     /// <summary>
@@ -230,17 +247,46 @@ public static class Diagnostics
         };
         writeResultFile(result);
 
-        var customerSync = services.GetRequiredService<CustomerSyncService>();
-        var candidates = await customerSync.ScanForRefreshAsync(ct);
+        // Unlike SyncOrchestrator.RunAsync (which wraps its whole run, including
+        // Sage50Client.ConnectAsync, in its own try/catch and returns a clean
+        // failed result), this scan had no equivalent guard when it was split out
+        // as its own path - confirmed live 2026-08-23: a Sage 50 login failure
+        // (SimplySDK.SimplyErrorMessageException from User.LoadAccessRights,
+        // wrapped by Sage50Client.ConnectAsync into InvalidOperationException)
+        // propagated all the way up through RunOnceAsync/Main uncaught, which
+        // .NET Framework treats as a genuinely unhandled exception and terminates
+        // the whole process (Application Error + WER report) - with nothing at
+        // all written to this run's own log or result.json, so the operator just
+        // saw the app vanish. Mirrors SyncOrchestrator.RunAsync's own catch block.
+        try
+        {
+            var customerSync = services.GetRequiredService<CustomerSyncService>();
+            var candidates = await customerSync.ScanForRefreshAsync(ct);
 
-        result.FinishedAtUtc = DateTimeOffset.UtcNow;
-        result.IsFinal = true;
-        result.InvoicesFetched = candidates.Count;
-        result.CustomerRefreshCandidates = candidates;
-        writeResultFile(result);
+            result.FinishedAtUtc = DateTimeOffset.UtcNow;
+            result.IsFinal = true;
+            result.InvoicesFetched = candidates.Count;
+            result.CustomerRefreshCandidates = candidates;
+            writeResultFile(result);
 
-        logger.LogWarning("CUSTOMER REFRESH SCAN complete: {Count} candidate(s) found.", candidates.Count);
-        return 0;
+            logger.LogWarning("CUSTOMER REFRESH SCAN complete: {Count} candidate(s) found.", candidates.Count);
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            var innermost = ex;
+            while (innermost.InnerException is not null) innermost = innermost.InnerException;
+            var detail = ReferenceEquals(innermost, ex) ? ex.Message : $"{ex.Message} ---> {innermost.Message}";
+
+            logger.LogError(ex, "CUSTOMER REFRESH SCAN failed: {Detail}", detail);
+
+            result.FinishedAtUtc = DateTimeOffset.UtcNow;
+            result.IsFinal = true;
+            result.Skipped = true;
+            result.SkipReason = $"FATAL: {detail}";
+            writeResultFile(result);
+            return 1;
+        }
     }
 
     /// <summary>
@@ -300,26 +346,48 @@ public static class Diagnostics
         };
         writeResultFile(result); // early checkpoint, same reasoning as SyncOrchestrator.RunAsync's onProgress
 
-        var customerSync = services.GetRequiredService<CustomerSyncService>();
-        var syncResult = await customerSync.ExecuteSelectedRefreshAsync(selectedIds, ct);
+        // See RunCustomerRefreshScanAsync's matching try/catch for why this exists -
+        // same gap, same fix: a Sage 50 connection failure (or anything else this
+        // throws) used to propagate uncaught all the way to Main and crash the
+        // whole process instead of being recorded as a clean failed result.
+        try
+        {
+            var customerSync = services.GetRequiredService<CustomerSyncService>();
+            var syncResult = await customerSync.ExecuteSelectedRefreshAsync(selectedIds, ct);
 
-        result.FinishedAtUtc = DateTimeOffset.UtcNow;
-        result.IsFinal = true;
-        result.InvoicesFetched = syncResult.Changed;
-        result.InvoicesImported = syncResult.Created + syncResult.Updated;
-        // Repurposed slots so Created/Updated stay visible separately - see
-        // MainForm.HistoryTab.cs's Customer-Refresh-specific summary handling.
-        result.InvoicesSkippedBeforeCutoff = syncResult.Created;
-        result.InvoicesSkippedAlreadyImported = syncResult.Updated;
-        result.InvoicesFailedImport = syncResult.Failed;
-        result.CustomerRefreshOutcomes = syncResult.Outcomes;
-        writeResultFile(result);
+            result.FinishedAtUtc = DateTimeOffset.UtcNow;
+            result.IsFinal = true;
+            result.InvoicesFetched = syncResult.Changed;
+            result.InvoicesImported = syncResult.Created + syncResult.Updated;
+            // Repurposed slots so Created/Updated stay visible separately - see
+            // MainForm.HistoryTab.cs's Customer-Refresh-specific summary handling.
+            result.InvoicesSkippedBeforeCutoff = syncResult.Created;
+            result.InvoicesSkippedAlreadyImported = syncResult.Updated;
+            result.InvoicesFailedImport = syncResult.Failed;
+            result.CustomerRefreshOutcomes = syncResult.Outcomes;
+            writeResultFile(result);
 
-        logger.LogWarning(
-            "CUSTOMER REFRESH complete: selected={Selected} created={Created} updated={Updated} failed={Failed}",
-            syncResult.Changed, syncResult.Created, syncResult.Updated, syncResult.Failed);
+            logger.LogWarning(
+                "CUSTOMER REFRESH complete: selected={Selected} created={Created} updated={Updated} failed={Failed}",
+                syncResult.Changed, syncResult.Created, syncResult.Updated, syncResult.Failed);
 
-        return syncResult.Failed > 0 ? 1 : 0;
+            return syncResult.Failed > 0 ? 1 : 0;
+        }
+        catch (Exception ex)
+        {
+            var innermost = ex;
+            while (innermost.InnerException is not null) innermost = innermost.InnerException;
+            var detail = ReferenceEquals(innermost, ex) ? ex.Message : $"{ex.Message} ---> {innermost.Message}";
+
+            logger.LogError(ex, "CUSTOMER REFRESH failed: {Detail}", detail);
+
+            result.FinishedAtUtc = DateTimeOffset.UtcNow;
+            result.IsFinal = true;
+            result.Skipped = true;
+            result.SkipReason = $"FATAL: {detail}";
+            writeResultFile(result);
+            return 1;
+        }
     }
 
     /// <summary>Writes a checkpoint/result file with FileShare.Read (so a concurrent

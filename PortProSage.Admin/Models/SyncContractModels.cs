@@ -102,6 +102,13 @@ public class SyncResult
     public int InvoicesFailedValidation { get; set; }
     public int InvoicesFailedImport { get; set; }
 
+    /// <summary>Mirrors Core's SyncResult.CustomersCreated/CustomersUpdated - only
+    /// meaningful for an ordinary invoice-sync run (Customer Refresh's own
+    /// Created/Updated counts are separate, repurposed InvoicesSkipped* fields -
+    /// see Diagnostics.RunFullCustomerRefreshAsync's mapping comment).</summary>
+    public int CustomersCreated { get; set; }
+    public int CustomersUpdated { get; set; }
+
     /// <summary>False for a progress checkpoint written while the run is still in
     /// progress; true only on the final write. Mirrors Core's SyncResult.IsFinal -
     /// see that doc comment for why this exists (interrupted runs used to leave no
@@ -176,6 +183,7 @@ public class InvoiceProcessingOutcome
 {
     public string PortProInvoiceId { get; set; } = string.Empty;
     public string ReferenceNumber { get; set; } = string.Empty;
+    public string? PortProCustomerName { get; set; }
     public bool Success { get; set; }
     public string? Sage50InvoiceNumber { get; set; }
     public List<string> Messages { get; set; } = new();

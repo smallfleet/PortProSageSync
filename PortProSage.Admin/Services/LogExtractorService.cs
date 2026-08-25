@@ -8,6 +8,7 @@ namespace PortProSage.Admin.Services;
 public class TransferredInvoiceRow
 {
     public string PortProReference { get; set; } = string.Empty;
+    public string PortProCustomerName { get; set; } = string.Empty;
     public string Sage50InvoiceNumber { get; set; } = string.Empty;
     public string PortProDate { get; set; } = string.Empty;
     public string Sage50Date { get; set; } = string.Empty;
@@ -19,6 +20,12 @@ public class TransferredInvoiceRow
 
     public decimal TotalAmount { get; set; }
     public decimal TaxCharged { get; set; }
+
+    /// <summary>"CREATED"/"UPDATED"/blank - see Core's InvoiceProcessingOutcome.
+    /// Sage50CustomerAction for exact semantics. Added 2026-08-24; blank for a
+    /// TRANSFER line from before then, same "not available for old runs"
+    /// treatment already applied to DueDate.</summary>
+    public string Sage50CustomerAction { get; set; } = string.Empty;
 }
 
 /// <summary>One row parsed from an "OUTCOME: ..." log line (see SyncOrchestrator.RunAsync
@@ -30,6 +37,7 @@ public class TransferredInvoiceRow
 public class LoggedOutcomeRow
 {
     public string ReferenceNumber { get; set; } = string.Empty;
+    public string PortProCustomerName { get; set; } = string.Empty;
     public string PortProDate { get; set; } = string.Empty;
     public bool Success { get; set; }
     public string Sage50InvoiceNumber { get; set; } = string.Empty;
@@ -52,20 +60,24 @@ public static class LogExtractorService
     private const string TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff zzz";
 
     // Mirrors the exact structured-logging call in SyncOrchestrator.RunAsync -
-    // "TRANSFER: Ref=RSRE_000123 Sage50Number=1045 PortProDate=2026-08-01 Sage50Date=2026-08-01 DueDate=2026-09-01 TotalAmount=450.00 TaxCharged=58.50".
-    // DueDate is optional in the pattern (older log lines from before 2026-08-22
-    // won't have it) so a historical run's log still parses instead of silently
-    // matching nothing.
+    // "TRANSFER: Ref=RSRE_000123 Customer=ACME INC Sage50Number=1045 PortProDate=2026-08-01 Sage50Date=2026-08-01 DueDate=2026-09-01 TotalAmount=450.00 TaxCharged=58.50 CustomerAction=CREATED".
+    // Customer is captured lazily up to " Sage50Number=" (not \S+, since a company
+    // name can genuinely contain spaces) and is optional in the pattern - a log
+    // line from before 2026-08-24 won't have it, so a historical run's log still
+    // parses instead of silently matching nothing; same reasoning as DueDate/
+    // CustomerAction below.
     private static readonly Regex TransferLinePattern = new(
-        @"TRANSFER: Ref=(?<ref>\S+) Sage50Number=(?<sage>\S+) PortProDate=(?<pdate>\S+) Sage50Date=(?<sdate>\S+)(?: DueDate=(?<due>\S+))? TotalAmount=(?<total>-?[\d.]+) TaxCharged=(?<tax>-?[\d.]+)",
+        @"TRANSFER: Ref=(?<ref>\S+)(?: Customer=(?<customer>.*?) (?=Sage50Number=))? Sage50Number=(?<sage>\S+) PortProDate=(?<pdate>\S+) Sage50Date=(?<sdate>\S+)(?: DueDate=(?<due>\S+))? TotalAmount=(?<total>-?[\d.]+) TaxCharged=(?<tax>-?[\d.]+)(?: CustomerAction=(?<caction>\S+))?",
         RegexOptions.Compiled);
 
     // Mirrors the exact structured-logging call in SyncOrchestrator.RunAsync -
-    // "OUTCOME: Ref=RSRE_000823 PortProDate=2026-08-01 Success=False Sage50Number=(none) Messages=[IMPORT ERROR: ...]".
-    // Messages is captured greedily to the LAST "]" on the line, not the first, since
-    // the message text itself can legitimately contain "]" (e.g. an exception message).
+    // "OUTCOME: Ref=RSRE_000823 Customer=ACME INC PortProDate=2026-08-01 Success=False Sage50Number=(none) Messages=[IMPORT ERROR: ...]".
+    // Customer is optional/lazily-captured for the same reason as TransferLinePattern
+    // above. Messages is captured greedily to the LAST "]" on the line, not the
+    // first, since the message text itself can legitimately contain "]" (e.g. an
+    // exception message).
     private static readonly Regex OutcomeLinePattern = new(
-        @"OUTCOME: Ref=(?<ref>\S+) PortProDate=(?<pdate>\S+) Success=(?<success>True|False) Sage50Number=(?<sage>\S+) Messages=\[(?<messages>.*)\]\s*$",
+        @"OUTCOME: Ref=(?<ref>\S+)(?: Customer=(?<customer>.*?) (?=PortProDate=))? PortProDate=(?<pdate>\S+) Success=(?<success>True|False) Sage50Number=(?<sage>\S+) Messages=\[(?<messages>.*)\]\s*$",
         RegexOptions.Compiled);
 
     /// <summary>Parses "Invoice Transferred" rows out of an already-extracted set of log
@@ -83,12 +95,15 @@ public static class LogExtractorService
             rows.Add(new TransferredInvoiceRow
             {
                 PortProReference = match.Groups["ref"].Value,
+                PortProCustomerName = match.Groups["customer"].Success ? match.Groups["customer"].Value : "",
                 Sage50InvoiceNumber = match.Groups["sage"].Value,
                 PortProDate = match.Groups["pdate"].Value,
                 Sage50Date = match.Groups["sdate"].Value,
                 DueDate = match.Groups["due"].Success ? match.Groups["due"].Value : "",
                 TotalAmount = decimal.TryParse(match.Groups["total"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var total) ? total : 0m,
-                TaxCharged = decimal.TryParse(match.Groups["tax"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var tax) ? tax : 0m
+                TaxCharged = decimal.TryParse(match.Groups["tax"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var tax) ? tax : 0m,
+                Sage50CustomerAction = match.Groups["caction"].Success && match.Groups["caction"].Value != "(none)"
+                    ? match.Groups["caction"].Value : ""
             });
         }
         return rows;
@@ -109,6 +124,7 @@ public static class LogExtractorService
             rows.Add(new LoggedOutcomeRow
             {
                 ReferenceNumber = match.Groups["ref"].Value,
+                PortProCustomerName = match.Groups["customer"].Success ? match.Groups["customer"].Value : "",
                 PortProDate = match.Groups["pdate"].Value,
                 Success = string.Equals(match.Groups["success"].Value, "True", StringComparison.OrdinalIgnoreCase),
                 Sage50InvoiceNumber = match.Groups["sage"].Value,

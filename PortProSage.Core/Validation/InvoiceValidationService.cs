@@ -140,6 +140,7 @@ public class InvoiceValidationService
             var profile = BuildSage50Profile(customerName, invoice.Caller?.Currency, fullProfile);
             var created = await _sage50.CreateCustomerAsync(profile, _settings.DefaultReceivableAccount, ct);
             result.ResolvedSage50CustomerCode = created.Code;
+            result.CustomerAutoCreated = true;
             _resolvedCustomerCodeByNameThisRun[customerName] = created.Code;
             result.Warnings.Add($"Customer '{customerName}' did not exist in Sage 50 and was auto-created (code {created.Code}).");
 

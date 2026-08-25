@@ -26,7 +26,7 @@ public partial class MainForm : Form
     ///                 changes (e.g. what ships in the next production installer).
     ///   ZZ (build)  - any other new exe, including small dev-test iterations.
     /// </summary>
-    public const string AppVersion = "2.13.6";
+    public const string AppVersion = "2.15.0";
 
     private readonly ToolStripStatusLabel _sourceLabel = new() { Text = "Click any field to see where it's stored." };
     private readonly TextBox _serviceFolderBox = new() { Width = 480 };
@@ -98,6 +98,14 @@ public partial class MainForm : Form
             }
         };
 
+        // Unconditional, every tab - not just History & Logs above - confirmed
+        // live 2026-08-24: the global "Target Sage50" banner (and, if it detects
+        // a genuine change, Customer Refresh's/History's own path dropdowns - see
+        // RefreshGlobalTargetSage50Label) should never be more than one tab-click
+        // stale relative to whatever's actually configured, regardless of which
+        // tab the operator happens to land on.
+        _tabs.SelectedIndexChanged += (_, _) => RefreshGlobalTargetSage50Label();
+
         Load += (_, _) => TryLoadConfig();
     }
 
@@ -117,6 +125,26 @@ public partial class MainForm : Form
         ForeColor = Color.FromArgb(150, 20, 20)
     };
 
+    // Tracks whatever path this label showed the LAST time it was refreshed, so a
+    // genuine change (a real Save on the Sage 50 tab picking a different path) can
+    // be told apart from just refreshing again with nothing actually different -
+    // see RefreshGlobalTargetSage50Label's own doc comment for why that distinction
+    // matters. Null before the very first refresh - deliberately NOT treated as "a
+    // change" on that first call, since there's nothing for the other tabs'
+    // dropdowns to have gone stale relative to yet.
+    private string? _lastKnownTargetSage50Path;
+
+    /// <summary>Confirmed live 2026-08-24 this needs to run after every Sage 50 tab
+    /// Save (and, since Test Connection now saves first too, after every Test
+    /// Connection) - not just on a full config reload, which is the only thing
+    /// that used to trigger it. Without this, the header could show a stale path
+    /// indefinitely after actually switching to a different one, exactly the
+    /// "banner says E:, Sage 50 tab says C:" mismatch that prompted this fix.
+    /// Also resets Customer Refresh's and History &amp; Logs' own path-picker
+    /// selections to follow the new path when it's genuinely changed (not just
+    /// re-shown) - their own "never override an existing selection" rule is meant
+    /// to protect a deliberate historical-path browse, not to permanently ignore
+    /// the operator actually switching which company file is active.</summary>
     private void RefreshGlobalTargetSage50Label()
     {
         var path = _localSettings?.GetString("PortProSage.Sage50.CompanyDataPath")
@@ -125,6 +153,16 @@ public partial class MainForm : Form
         _globalTargetSage50Label.Text = string.IsNullOrWhiteSpace(path)
             ? "Target Sage50: (no path specified yet - set it on the Sage 50 tab)"
             : $"Target Sage50: {path}";
+
+        var changed = _lastKnownTargetSage50Path is not null &&
+                      !string.Equals(path, _lastKnownTargetSage50Path, StringComparison.OrdinalIgnoreCase);
+        _lastKnownTargetSage50Path = path;
+
+        if (changed && !string.IsNullOrWhiteSpace(path))
+        {
+            RefreshCustomerRefreshPathDropdown(forceFollowCurrent: true);
+            RefreshHistoryPathDropdown(forceFollowCurrent: true);
+        }
     }
 
     private Panel BuildServiceFolderBar()
@@ -327,6 +365,48 @@ public partial class MainForm : Form
     }
 
     private static void SaveServiceFolder(string folder) => SaveAdminSettings(json => json["ServiceFolder"] = folder);
+
+    /// <summary>Every distinct Company data path this operator has ever saved on
+    /// the Sage 50 tab (MainForm.Sage50Tab.cs), most-recently-saved first, capped
+    /// at 10 - backs that field's editable-dropdown history. Deliberately a
+    /// separate Admin-UI-only list, not derived from state.db's "known paths"
+    /// (Sage50PathStateService, used by the Customer Refresh/History & Logs
+    /// dropdowns) - that list only grows once a real sync has actually run
+    /// against a path, so a path just typed/saved here but never yet connected to
+    /// wouldn't show up in its own history otherwise.</summary>
+    private static List<string> LoadPreviousSage50Paths()
+    {
+        try
+        {
+            return (LoadAdminSettings()["PreviousSage50Paths"] as JsonArray)?
+                .Select(n => n?.GetValue<string>() ?? "")
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToList() ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    private static void RecordSage50Path(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        SaveAdminSettings(json =>
+        {
+            var existing = (json["PreviousSage50Paths"] as JsonArray)?
+                .Select(n => n?.GetValue<string>() ?? "")
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToList() ?? new List<string>();
+
+            existing.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+            existing.Insert(0, path);
+            if (existing.Count > 10) existing = existing.Take(10).ToList();
+
+            json["PreviousSage50Paths"] = new JsonArray(existing.Select(p => (JsonNode)p).ToArray());
+        });
+    }
 
     private static string GuessServiceFolder()
     {
