@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using PortProSage.Core.Config;
 using PortProSage.Core.Models;
@@ -156,13 +157,23 @@ public class PortProAuthService
             // claim instead; fall back to a conservative 1-hour reuse window if that fails.
             _cachedTokenExpiresAt = TryGetJwtExpiry(data.Token)?.AddSeconds(-30) ?? DateTimeOffset.UtcNow.AddHours(1);
 
+            var refreshTokenRotated = !string.IsNullOrWhiteSpace(data.RefreshToken)
+                && !string.Equals(data.RefreshToken, _cachedRefreshToken, StringComparison.Ordinal);
             if (!string.IsNullOrWhiteSpace(data.RefreshToken))
             {
-                // NOTE: only updates the in-memory value for this process's lifetime.
-                // If PortPro rotates refresh tokens, persist the new value (e.g. via
-                // SyncStateRepository) so a service restart doesn't fall back to a
-                // stale one from appsettings.json.
                 _cachedRefreshToken = data.RefreshToken;
+            }
+
+            // Confirmed live 2026-08-25: PortPro rotates the refresh token on every
+            // real use, but this was previously only ever kept in memory - a fresh
+            // process (every Manual Run gets its own) re-read the OLD, already-
+            // rotated-away token from disk and got an immediate 401 on its very
+            // first refresh, even though the token PortPro actually wants was
+            // issued only moments earlier by a prior run. Persisted here so the
+            // NEXT process, not just this one, has the current pair.
+            if (refreshTokenRotated)
+            {
+                PersistCurrentTokensToLocalConfig();
             }
 
             _logger.LogInformation("Token updated and saved.");
@@ -171,6 +182,76 @@ public class PortProAuthService
         finally
         {
             _lock.Release();
+        }
+    }
+
+    /// <summary>Writes the current in-memory access/refresh token pair back to
+    /// THIS process's own appsettings.Local.json (resolved the same way Program.cs
+    /// resolves it - relative to AppContext.BaseDirectory, so this always targets
+    /// whichever Debug/Release copy is actually running, never a different one).
+    /// Best-effort by design: called only from inside RefreshAsync's lock, and any
+    /// failure here is logged and swallowed, never thrown - a failed write leaves
+    /// the in-memory tokens (already updated by the caller) working fine for the
+    /// rest of THIS run either way; only a FUTURE process would be affected, and
+    /// that's already the status quo this method is trying to improve on, not a
+    /// regression.</summary>
+    private void PersistCurrentTokensToLocalConfig()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "appsettings.Local.json");
+        try
+        {
+            var existingText = File.Exists(path) ? File.ReadAllText(path) : "{}";
+            var root = JsonNode.Parse(existingText) as JsonObject ?? new JsonObject();
+
+            var portProSage = root["PortProSage"] as JsonObject;
+            if (portProSage is null)
+            {
+                portProSage = new JsonObject();
+                root["PortProSage"] = portProSage;
+            }
+
+            var portPro = portProSage["PortPro"] as JsonObject;
+            if (portPro is null)
+            {
+                portPro = new JsonObject();
+                portProSage["PortPro"] = portPro;
+            }
+
+            portPro["AccessToken"] = _cachedAccessToken;
+            portPro["RefreshToken"] = _cachedRefreshToken;
+
+            var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            WriteTextWithRetry(path, json);
+            _logger.LogInformation("Persisted PortPro's rotated refresh token to {Path} so future runs pick it up instead of a stale one.", path);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Could not persist PortPro's rotated refresh token to {Path} - it will keep working for the rest " +
+                "of THIS run, but the next process may read a now-stale token back from disk and fail on it.", path);
+        }
+    }
+
+    /// <summary>Same retry-on-transient-file-conflict pattern used for result.json
+    /// checkpoints (Diagnostics.WriteResultFileWithRetry) - this file could
+    /// momentarily be open elsewhere (e.g. an operator editing it, or another
+    /// process's own concurrent token refresh).</summary>
+    private static void WriteTextWithRetry(string path, string content)
+    {
+        const int maxAttempts = 5;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+                using var writer = new StreamWriter(stream);
+                writer.Write(content);
+                return;
+            }
+            catch (IOException) when (attempt < maxAttempts)
+            {
+                Thread.Sleep(100 * attempt);
+            }
         }
     }
 
