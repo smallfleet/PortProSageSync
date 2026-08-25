@@ -858,6 +858,28 @@ public partial class MainForm : Form
 
     private void ShowHelpPopup(string title, string helpText)
     {
+        const int width = 460;
+        const int bodyPadding = 14;
+        const int titleHeight = 40;
+        const int okHeight = 36;
+
+        var bodyFont = new Font(Font.FontFamily, 9.5f);
+
+        // Fixed 260px height (and no scrolling) silently clipped any help text
+        // longer than a few short lines with no way to read the rest - confirmed
+        // live 2026-08-25 on the account-mismatch checkbox's longer, example-based
+        // text. Now sized to the actual content: measure the wrapped text at this
+        // popup's real width, then grow the form to fit (capped so it can never
+        // exceed the screen), with AutoScroll as a safety net for anything still
+        // too long for even that cap.
+        var bodyWidth = width - bodyPadding * 2;
+        var measured = TextRenderer.MeasureText(helpText, bodyFont, new Size(bodyWidth, int.MaxValue),
+            TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
+
+        var maxHeight = (int)(Screen.FromControl(this).WorkingArea.Height * 0.85);
+        var wantedHeight = titleHeight + measured.Height + bodyPadding * 2 + okHeight;
+        var clientHeight = Math.Clamp(wantedHeight, 260, maxHeight);
+
         using var popup = new Form
         {
             Text = "Field help",
@@ -867,38 +889,46 @@ public partial class MainForm : Form
             MinimizeBox = false,
             ShowIcon = false,
             ShowInTaskbar = false,
-            ClientSize = new Size(420, 260)
+            ClientSize = new Size(width, clientHeight)
         };
 
         var titleLabel = new Label
         {
             Text = title,
             Dock = DockStyle.Top,
-            Height = 40,
+            Height = titleHeight,
             Font = new Font(Font.FontFamily, 12f, FontStyle.Bold),
             ForeColor = HelpIconColor,
             BackColor = Color.FromArgb(235, 245, 251),
             TextAlign = ContentAlignment.MiddleLeft,
-            Padding = new Padding(14, 0, 14, 0)
+            Padding = new Padding(bodyPadding, 0, bodyPadding, 0)
+        };
+
+        var bodyScroll = new Panel
+        {
+            Dock = DockStyle.Fill,
+            AutoScroll = true
         };
 
         var body = new Label
         {
             Text = helpText,
-            Dock = DockStyle.Fill,
-            Padding = new Padding(14, 10, 14, 10),
-            Font = new Font(Font.FontFamily, 9.5f)
+            AutoSize = true,
+            MaximumSize = new Size(bodyWidth, 0),
+            Padding = new Padding(bodyPadding, 10, bodyPadding, 10),
+            Font = bodyFont
         };
+        bodyScroll.Controls.Add(body);
 
         var okButton = new Button
         {
             Text = "OK",
             Dock = DockStyle.Bottom,
-            Height = 36,
+            Height = okHeight,
             DialogResult = DialogResult.OK
         };
 
-        popup.Controls.Add(body);
+        popup.Controls.Add(bodyScroll);
         popup.Controls.Add(titleLabel);
         popup.Controls.Add(okButton);
         popup.AcceptButton = okButton;
