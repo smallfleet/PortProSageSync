@@ -99,6 +99,18 @@ public class SyncRequest
     /// </summary>
     public bool UseWatermark { get; set; }
 
+    /// <summary>Distinct from UseWatermark - this does NOT change what range gets
+    /// fetched (an explicit From/To is used exactly as given), it only means the
+    /// watermark should be advanced from what this run actually touched, same as
+    /// a watermark-driven run does. Added 2026-08-25 for Manual Run's "Invoice
+    /// date" mode: an explicit completed-date range shares no field with the
+    /// watermark (which tracks PortPro's last-changed timestamp, a different
+    /// date entirely - see FilterType.LastChangedDate's doc comment), so this is
+    /// opt-in and defaults off; when on, SyncOrchestrator advances the watermark
+    /// per invoice from that invoice's own real UpdatedAt, exactly like the
+    /// UseWatermark path does, just without also overriding From/To from it.</summary>
+    public bool AdvanceWatermarkOnCompletion { get; set; }
+
     /// <summary>
     /// Caps how many eligible (amount > 0) invoices this run will actually process,
     /// regardless of how many fall within the fetched range - confirmed live

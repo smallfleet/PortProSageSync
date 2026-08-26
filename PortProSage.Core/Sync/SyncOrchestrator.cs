@@ -413,7 +413,7 @@ public class SyncOrchestrator
                     // instead of being silently skipped forever. SetLastChangedWatermark/
                     // SetLastProcessedInvoiceNumber only ever move forward, so this is
                     // safe even if a value here were ever out of order.
-                    if (request.UseWatermark && !watermarkBlocked)
+                    if ((request.UseWatermark || request.AdvanceWatermarkOnCompletion) && !watermarkBlocked)
                     {
                         if (invoice.UpdatedAt is not null)
                         {
@@ -479,7 +479,7 @@ public class SyncOrchestrator
                 // would never be retried. If the process dies on batch 3 of 10 with
                 // no failures yet, batches 1-2 are already durably committed and only
                 // batch 3 onward needs to be retried next time.
-                if (request.UseWatermark && batchTo is not null && !watermarkBlocked)
+                if ((request.UseWatermark || request.AdvanceWatermarkOnCompletion) && batchTo is not null && !watermarkBlocked)
                 {
                     _state.SetLastChangedWatermark(batchTo.Value);
                 }

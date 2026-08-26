@@ -27,6 +27,15 @@ public partial class MainForm
     private TextBox _runEndInvoice = new() { Width = 160 };
     private TextBox _runInvoiceNumberList = new() { Width = 400 }; // real width set live by UpdateInvoiceNumberListWidth
     private CheckBox _runOverrideAlreadyImported = new() { Text = "Override \"Already Imported\" check for this run", AutoSize = true };
+
+    // Only relevant for Invoice date mode - see AdvanceWatermarkHelpText. Defaults
+    // CHECKED (confirmed live 2026-08-25); never persisted, so it can't silently
+    // carry a stale choice into an unrelated later run - see UpdateRunModeFieldStates.
+    private CheckBox _runAdvanceWatermark = new()
+    {
+        Text = "Update Automatic Sync's starting point to this run's End date (not saved)",
+        AutoSize = true
+    };
     private NumericUpDown _runMaxInvoices = new() { Minimum = 0, Maximum = 100000, Width = 120 };
     private CheckBox _runDryRun = new() { Text = "Dry run (Simulated - Default 10 Invoices and no real Sage 50 Changes)", AutoSize = true };
     private Button _manualRunButton = new() { Text = "Manual Run", Width = 140, Height = 36 };
@@ -78,15 +87,31 @@ public partial class MainForm
         "Normally, an invoice this app already recorded as imported is silently skipped on every later run - that's " +
         "what stops the same invoice from being posted to Sage 50 twice. Checking this box turns that skip off for " +
         "THIS RUN ONLY: a previously-imported invoice is re-validated and re-posted instead.\n\n" +
-        "Only available for Invoice date, Invoice number range, and Invoice number list modes - Continue and Last " +
-        "changed date drive the watermark and are meant to process only genuinely new/changed invoices, so this is " +
-        "disabled (and unchecked) for those.\n\n" +
         "This is NEVER saved anywhere - it always starts unchecked when the app opens, and resets back to unchecked " +
         "itself as soon as this run finishes or is stopped, so it can't silently carry forward into an unrelated " +
         "later run.\n\n" +
         "⚠ If the invoice is genuinely still in Sage 50, re-posting it creates a real duplicate - this does not " +
         "remove or replace the original. Only use this after confirming (in Sage 50 itself) that the invoice(s) " +
         "covered by the selected mode actually need to go in again.";
+
+    // Added 2026-08-25 alongside removing "Continue"/"Last changed date" modes -
+    // Invoice date's own date field (PortPro's billingDate) is unrelated to what
+    // the watermark actually tracks (PortPro's "last changed" timestamp - see
+    // FilterType.LastChangedDate's doc comment), so promoting it isn't automatic;
+    // this is an explicit, opt-in choice for when the operator genuinely knows
+    // this run represents "we're caught up through this date."
+    private const string AdvanceWatermarkHelpText =
+        "When checked, this run also advances the Automatic Service's saved starting point (the watermark) from " +
+        "what it actually processed - the same thing a watermark-driven run does, just without also letting the " +
+        "watermark dictate the range (this run's From/To are used exactly as entered either way).\n\n" +
+        "Only ever updates the DATE half of the watermark, from each processed invoice's own real \"last changed\" " +
+        "timestamp - not simply this run's End date, and never the invoice-number half, which isn't derivable from " +
+        "a date range at all.\n\n" +
+        "Checked by default for Invoice date mode. Uncheck it for a one-off range that shouldn't move the " +
+        "Automatic Service's position - leaving the watermark untouched just means it will later re-check this " +
+        "same window on its own and skip everything as already-imported, which is harmless but redundant.\n\n" +
+        "This is NEVER saved - it resets to its default every time this tab loads or Mode changes, so it can't " +
+        "silently carry forward into an unrelated later run.";
 
     private TabPage BuildRunTab()
     {
@@ -96,39 +121,24 @@ public partial class MainForm
         _runMode.Items.AddRange(new object[]
         {
             "Invoice date",
-            "Continue (from where we left off)",
-            "Last changed date",
             "Invoice number range",
             "Invoice number list (comma-separated)"
         });
-        // Invoice date is the default, not Continue - it filters by the invoice's own
-        // actual date (PortPro's billingDate), so a chosen window can never surprise
-        // you with an old invoice that Sage 50 then rejects for being dated before
-        // its "Do Not Allow Transactions Dated Before" cutoff. Last changed date
-        // filters by when PortPro last TOUCHED an invoice, which is a different
-        // thing entirely - confirmed live 2026-08-07 that a Last changed date run
-        // pulled in an old invoice merely because it had been recently edited, and
-        // Sage 50's date-cutoff rejection killed the whole run over it.
+        // "Continue (from where we left off)" and "Last changed date" removed
+        // 2026-08-25 - Continue was mechanically identical to the Automatic
+        // Service's own poll cycle (same FilterType.LastChangedDate + UseWatermark
+        // combination), so there was no real reason to duplicate it here; Last
+        // changed date (an explicit range on that same "last touched" field,
+        // decoupled from the watermark) was rarely if ever used. See the new
+        // "Update Automatic Sync's starting point" checkbox below for how Invoice
+        // date mode can now optionally advance the watermark instead.
         _runMode.SelectedIndex = 0;
         _runMode.SelectedIndexChanged += (_, _) => UpdateRunModeFieldStates();
 
-        AddRow(grid, "Mode", _runMode, "(request - not a settings file)", "SyncRequest.FilterType / UseWatermark",
+        AddRow(grid, "Mode", _runMode, "(request - not a settings file)", "SyncRequest.FilterType",
             "Picks how invoices get selected for this one run:\n\n" +
             "• Invoice date (default) - invoices whose own date (PortPro's billingDate) falls in the From/To " +
-            "window below. This is what you almost always want for a specific date range - it can't surprise you " +
-            "with an old invoice that was merely edited recently, unlike Last changed date below.\n" +
-            "• Continue - automatically resumes from wherever the last run stopped. Every run, whatever mode it " +
-            "used, records two things when it finishes: PortPro's \"last changed\" timestamp of the newest invoice " +
-            "it saw (the watermark), and that invoice's reference number. The NEXT Continue run reads that saved " +
-            "watermark back, asks PortPro for everything changed since then up to now, processes it, and only then " +
-            "moves the watermark forward again - so as long as every run uses Continue, nothing is skipped and " +
-            "nothing is reprocessed. No dates/numbers to set. See the \"Previous Run\" section below to confirm " +
-            "what the last run actually recorded.\n" +
-            "• Last changed date - invoices whose PortPro \"last updated\" time falls in the From/To window below - " +
-            "this can include an invoice dated well outside that window if it was simply edited/touched recently, " +
-            "which has caused a real run to fail (an old invoice pulled in this way got rejected by Sage 50 for " +
-            "being dated before its \"Do Not Allow Transactions Dated Before\" cutoff, killing the run). Prefer " +
-            "Invoice date above unless you specifically need \"what changed recently.\"\n" +
+            "window below. This is what you almost always want for a specific date range.\n" +
             "• Invoice number range - invoices whose reference number falls between Start/End invoice number below, " +
             "with BOTH endpoints included (e.g. Start=90, End=95 processes 90, 91, 92, 93, 94, 95 - 6 invoices, not 5). " +
             "Uses PortPro's paginated list endpoint, scanning the whole account.\n" +
@@ -138,17 +148,20 @@ public partial class MainForm
             "number range it actually touched - confirmed live 2026-08-12 the list endpoint can silently miss real " +
             "invoices; this catches them without needing a separate mode. It shows up as its own row in History & " +
             "Logs, and never needs choosing by hand.\n\n" +
-            "Every mode except Continue is a one-time override - it never reads or changes the saved Continue " +
-            "position, so the next Continue run behaves exactly as if the override run never happened.",
+            "None of these modes touch the Automatic Service's saved position (the watermark) unless you " +
+            "explicitly check \"Update Automatic Sync's starting point\" for Invoice date mode - see that " +
+            "checkbox's own help for why.",
             stretchInput: false);
         AddRow(grid, "Invoice Date From", _runFrom, "(request)", "SyncRequest.From",
-            "Start of the date window - only used by Invoice date / Last changed date modes.\n\n" +
+            "Start of the date window - only used by Invoice date mode.\n\n" +
             "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.",
             stretchInput: false);
         AddRow(grid, "Invoice Date To", _runTo, "(request)", "SyncRequest.To",
-            "End of the date window - only used by Invoice date / Last changed date modes.\n\n" +
+            "End of the date window - only used by Invoice date mode.\n\n" +
             "Example: set From to 2026-07-01 and To to 2026-07-31 to process everything from July 2026.",
             stretchInput: false);
+        AddCheckRow(grid, _runAdvanceWatermark, "(request - not saved)", "SyncRequest.AdvanceWatermarkOnCompletion",
+            AdvanceWatermarkHelpText);
         AddRow(grid, "Cutoff (Lower) Invoice Date", _runCutoffInvoiceDate, "(request - not a settings file)", "PortProSage:Sync:CutoffInvoiceDate",
             CutoffInvoiceDateHelpText, stretchInput: false);
         WireCutoffInvoiceDateControl(_runCutoffInvoiceDate);
@@ -179,8 +192,8 @@ public partial class MainForm
             "cap, since nothing was actually done for it. Example: Max = 10 with 5 of the next invoices already " +
             "imported and 10 genuinely new ones processes all 10 new ones (15 total looked at, not stopping at " +
             "invoice #10 overall) - the cap tracks real work, not how many invoices were glanced at.\n\n" +
-            "Example: Continue mode with Max invoices = 10 processes only the next 10 unprocessed invoices, " +
-            "even if 50 have changed since the last run.");
+            "Example: Invoice date mode covering a month with Max invoices = 10 processes only the first 10 " +
+            "genuinely new invoices in that window, even if 50 qualify.");
         AddCheckRow(grid, _runShowCommandWindow, "(request - not a settings file)", "PortProSage:Sync:ShowCommandWindow", ShowCommandWindowHelpText);
         WireShowCommandWindowControl(_runShowCommandWindow);
 
@@ -321,18 +334,28 @@ public partial class MainForm
     private void UpdateRunModeFieldStates()
     {
         var mode = _runMode.SelectedIndex;
-        _runFrom.Enabled = mode == 0 || mode == 2; // Invoice date, Last changed date
-        _runTo.Enabled = mode == 0 || mode == 2;
-        _runStartInvoice.Enabled = mode == 3; // Invoice number range
-        _runEndInvoice.Enabled = mode == 3;
-        _runInvoiceNumberList.Enabled = mode == 4; // Invoice number list
+        _runFrom.Enabled = mode == 0; // Invoice date
+        _runTo.Enabled = mode == 0;
+        _runStartInvoice.Enabled = mode == 1; // Invoice number range
+        _runEndInvoice.Enabled = mode == 1;
+        _runInvoiceNumberList.Enabled = mode == 2; // Invoice number list
 
-        // Invoice date, Invoice number range, Invoice number list only - NOT Continue
-        // or Last changed date, which drive the watermark and are meant to process
-        // only genuinely new/changed invoices (see OverrideAlreadyImportedHelpText).
-        var overrideApplicable = mode == 0 || mode == 3 || mode == 4;
-        _runOverrideAlreadyImported.Enabled = overrideApplicable;
-        if (!overrideApplicable) _runOverrideAlreadyImported.Checked = false;
+        // Available for all three remaining modes (Continue/Last changed date,
+        // the two that used to be excluded, are gone - see the Mode dropdown's
+        // own comment).
+        _runOverrideAlreadyImported.Enabled = true;
+
+        // Only meaningful for Invoice date mode (see AdvanceWatermarkHelpText) -
+        // hidden/disabled for the other two, and reset to its default every time
+        // Invoice date is (re-)selected, since it's never persisted (see the
+        // field's own doc comment). Defaults CHECKED (confirmed live 2026-08-25) -
+        // an operator running Invoice date mode is, by default, treated as
+        // genuinely catching up through that date; uncheck it for a one-off
+        // range that shouldn't move the Automatic Service's position.
+        var advanceApplicable = mode == 0;
+        _runAdvanceWatermark.Visible = advanceApplicable;
+        _runAdvanceWatermark.Enabled = advanceApplicable;
+        _runAdvanceWatermark.Checked = advanceApplicable;
     }
 
     /// <summary>Adds the read-only "Previous Run" rows to the given grid - called
@@ -349,7 +372,7 @@ public partial class MainForm
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var heading = new Label
         {
-            Text = "Previous Run",
+            Text = "Previous run (excluding \"Finding the Gap\" run)",
             AutoSize = true,
             Font = new Font(Font, FontStyle.Bold),
             Margin = new Padding(3, 18, 3, 2)
@@ -357,25 +380,12 @@ public partial class MainForm
         grid.Controls.Add(heading, 0, headingRow);
         grid.SetColumnSpan(heading, 3);
 
-        var subHeadingRow = grid.RowCount++;
-        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var subHeading = new Label
-        {
-            Text = "Read-only - the parameters and outcome of the most recently completed run (automatic or " +
-                   "manual), shown here so it's directly visible that they're retained rather than lost.",
-            AutoSize = true,
-            ForeColor = SystemColors.GrayText,
-            Margin = new Padding(3, 0, 3, 8)
-        };
-        grid.Controls.Add(subHeading, 0, subHeadingRow);
-        grid.SetColumnSpan(subHeading, 3);
-
         AddPreviousRunRowWithCopy(grid, "Previous Run: Mode", modeBox, "RunHistoryEntry.Request.FilterType / UseWatermark");
         AddPreviousRunRowWithCopy(grid, "Previous Run: Inv Start Date", fromBox, "RunHistoryEntry.Result.EffectiveFromUtc",
             "The actual invoice-date window's start, as resolved and used by that run - not the persisted " +
-            "watermark, which only ever moves for a Continue run and is otherwise unrelated to what an explicit " +
-            "Invoice date/Last changed date run actually processed. Blank for Invoice number range mode, which has " +
-            "no date window at all.");
+            "watermark, which is generally unrelated to what an explicit Invoice date run actually processed " +
+            "unless \"Update Automatic Sync's starting point\" was checked for it. Blank for Invoice number " +
+            "range/list modes, which have no date window at all.");
         AddPreviousRunRowWithCopy(grid, "Previous Run: Inv End Date", toBox, "RunHistoryEntry.Result.EffectiveToUtc",
             "The actual invoice-date window's end, as resolved and used by that run.");
         AddPreviousRunRowWithCopy(grid, "Previous Run: Max invoices to process", maxInvoicesBox, "RunHistoryEntry.Request.MaxInvoicesToProcess");
@@ -446,7 +456,16 @@ public partial class MainForm
     /// tab differs.</summary>
     private void RefreshPreviousRunSection()
     {
-        var entry = _historyEntries.FirstOrDefault(e => !e.IsPending && e.Result is not null);
+        // Excludes gap-fill sub-runs - every Manual Run automatically triggers its
+        // own gap-fill sweep immediately after (see GapFillRunner), which becomes
+        // "the most recent run" a moment later and buried what the operator
+        // actually ran underneath a narrow, derived range - confirmed live
+        // 2026-08-25. entry.Request retains its original FilterType.InvoiceNumberGapScan
+        // even though SyncOrchestrator.RunAsync rewrites its own in-memory copy to
+        // InvoiceNumberList once it starts (see RunHistoryService's Mode-column
+        // label, same check).
+        var entry = _historyEntries.FirstOrDefault(e =>
+            !e.IsPending && e.Result is not null && e.Request?.FilterType != FilterType.InvoiceNumberGapScan);
 
         string modeText, fromText, toText, maxInvoicesText, firstInvoiceText, lastInvoiceText, resultText, invoiceListUsedText;
         if (entry?.Result is null)
@@ -461,12 +480,13 @@ public partial class MainForm
                 ? "(automatic poll - continue from where we left off)"
                 : request.UseWatermark ? "Continue (from where we left off)" : request.FilterType.ToString())
                 + (request?.OverrideAlreadyImportedCheck == true ? " (Override)" : "")
+                + (request?.AdvanceWatermarkOnCompletion == true ? " (Watermark Advanced)" : "")
                 + (entry.Result.WasDryRun ? " (Dry Run)" : "");
             // The actual resolved invoice-date window (see SyncResult.EffectiveFromUtc's
-            // doc comment), not the persisted watermark - the watermark only moves for a
-            // Continue run and is otherwise stale/unrelated to what an explicit-range run
-            // actually used, which is exactly what left this blank-or-wrong for the runs
-            // that prompted this fix.
+            // doc comment), not the persisted watermark - the watermark is generally
+            // stale/unrelated to what an explicit-range run actually used (unless
+            // AdvanceWatermarkOnCompletion was checked for it), which is exactly what
+            // left this blank-or-wrong for the runs that prompted this fix.
             fromText = entry.Result.EffectiveFromUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "(n/a - no date filter this run)";
             toText = entry.Result.EffectiveToUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "(n/a - no date filter this run)";
             maxInvoicesText = request?.MaxInvoicesToProcess?.ToString() ?? "(no limit)";
@@ -591,34 +611,20 @@ public partial class MainForm
                 // date), via the billingFrom/billingTo query params (see
                 // PortProClient.BuildQueryString's FilterType.CompletedDateRange case -
                 // the name is historical/misleading, the actual param is billing-date-
-                // based, which IS the invoice's real date).
+                // based, which IS the invoice's real date). 00:00:01 to 23:59:59 (not
+                // midnight-to-midnight) so From is never equal to a boundary the
+                // previous day's To could also land on.
                 request.FilterType = FilterType.CompletedDateRange;
                 request.From = _runFrom.Value.Date.AddSeconds(1);
                 request.To = _runTo.Value.Date.AddDays(1).AddSeconds(-1);
+                request.AdvanceWatermarkOnCompletion = _runAdvanceWatermark.Checked;
                 break;
             case 1:
-                request.FilterType = FilterType.LastChangedDate;
-                request.UseWatermark = true;
-                break;
-            case 2:
-                request.FilterType = FilterType.LastChangedDate;
-                // Whole calendar days, not the picker's raw Value - the DateTimePicker
-                // only ever DISPLAYS a date (no time-of-day control), so "From: June 22,
-                // To: June 22" looks like a real window even when the two Values are
-                // actually only milliseconds apart (their untouched construction-time
-                // default) - confirmed live 2026-08-07 this produced a real run with a
-                // 15-millisecond window and, unsurprisingly, 0 invoices fetched.
-                // 00:00:01 to 23:59:59 (not midnight-to-midnight) so From is never equal
-                // to a boundary the previous day's To could also land on.
-                request.From = _runFrom.Value.Date.AddSeconds(1);
-                request.To = _runTo.Value.Date.AddDays(1).AddSeconds(-1);
-                break;
-            case 3:
                 request.FilterType = FilterType.InvoiceNumberRange;
                 request.StartInvoiceNumber = string.IsNullOrWhiteSpace(_runStartInvoice.Text) ? null : _runStartInvoice.Text.Trim();
                 request.EndInvoiceNumber = string.IsNullOrWhiteSpace(_runEndInvoice.Text) ? null : _runEndInvoice.Text.Trim();
                 break;
-            case 4:
+            case 2:
                 request.FilterType = FilterType.InvoiceNumberList;
                 request.InvoiceNumberList = _runInvoiceNumberList.Text;
                 break;
@@ -629,9 +635,6 @@ public partial class MainForm
             request.MaxInvoicesToProcess = (int)_runMaxInvoices.Value;
         }
 
-        // Only ever true for the 3 modes UpdateRunModeFieldStates() allows it for -
-        // the checkbox is disabled and force-unchecked for Continue/Last changed date,
-        // so reading .Checked here is already accurate without re-checking mode.
         request.OverrideAlreadyImportedCheck = _runOverrideAlreadyImported.Checked;
 
         return request;

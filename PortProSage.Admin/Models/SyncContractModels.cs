@@ -45,6 +45,7 @@ public class SyncRequest
     public string? InvoiceNumberList { get; set; }
 
     public bool UseWatermark { get; set; }
+    public bool AdvanceWatermarkOnCompletion { get; set; }
 
     public int? MaxInvoicesToProcess { get; set; }
 

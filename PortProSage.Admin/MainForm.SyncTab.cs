@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using PortProSage.Admin.Services;
 
 namespace PortProSage.Admin;
 
@@ -6,6 +7,41 @@ public partial class MainForm
 {
     private NumericUpDown _syncPollingIntervalMinutes = new() { Minimum = 1, Maximum = 1440 };
     private NumericUpDown _syncProcessingDelayDays = new() { Minimum = 0, Maximum = 3650 };
+
+    // Single editable field, replacing the old separate Watermark tab (removed
+    // 2026-08-25 - both the Automatic Service and Manual Run's watermark-driven
+    // path only ever consume this one, and folding it into the top of the tab
+    // that actually uses it is one less place to go looking. The old "Invoice #"
+    // half is gone from the UI entirely - it was never a query bound (see
+    // FilterType.LastChangedDate's doc comment), only a display/audit value, and
+    // is still preserved untouched in the database by SaveSyncTab below even
+    // though nothing here shows or edits it anymore. No checkbox (removed
+    // 2026-08-25) - the watermark is always applicable and always a concrete
+    // date; a brand new install with no run history yet gets a computed default
+    // (see RefreshWatermarkDisplay) instead of an empty/cleared state. Saved as
+    // part of "Save Automatic Sync settings" (SaveSyncTab), not its own button -
+    // and disabled while the Automatic Service or a Manual Run is active (see
+    // RefreshServiceStatus) so an edit can't be silently overwritten by a run
+    // that's actively advancing this same value.
+    private DateTimePicker _watermarkDate = new()
+    {
+        Width = 220,
+        Format = DateTimePickerFormat.Custom,
+        CustomFormat = "yyyy-MM-dd HH:mm:ss"
+    };
+
+    private const string WatermarkDateHelpText =
+        "The date the next Automatic Service cycle (or a Manual Run with \"Update Automatic Sync's starting " +
+        "point\" checked) will continue from. Pick a date and click \"Save Automatic Sync settings\" below to set " +
+        "it explicitly.\n\n" +
+        "Must not be earlier than the Cutoff (Lower) Invoice Date below - saving a watermark before the cutoff is " +
+        "rejected with an error, since the cutoff already guarantees nothing before it is ever processed anyway.\n\n" +
+        "Unlike normal sync progress, which can only ever move this forward, this field bypasses that protection - " +
+        "you can move it backward. Doing so will cause invoices in the newly-covered range to be re-fetched and " +
+        "re-checked on the next run; already-imported invoices are tracked separately (by PortPro invoice id, not " +
+        "by date) and will NOT be double-posted - only genuinely missed ones will actually import.\n\n" +
+        "Disabled while the Automatic Service or a Manual Run is active - editing it mid-run risks the edit being " +
+        "silently overwritten the moment that run next advances this same value.";
 
     // Live-computed, not persisted - purely a "what does this number actually
     // mean right now" readout next to the field itself, so you don't have to do
@@ -33,6 +69,7 @@ public partial class MainForm
         var grid = NewFieldGrid();
         const string f = AppSettingsFileName;
 
+        AddWatermarkRow(grid);
         AddProcessingDelayRow(grid, f);
         AddRow(grid, "Automatic Sync - Polling Interval (minutes)", _syncPollingIntervalMinutes, f, "PortProSage:Sync:PollingIntervalMinutes",
             "How often the automatic background poll checks PortPro for changed invoices, when the Service is running " +
@@ -49,20 +86,47 @@ public partial class MainForm
         BuildPreviousRunSection(grid, _syncPrevRunMode, _syncPrevRunFrom, _syncPrevRunTo, _syncPrevRunMaxInvoices,
             _syncPrevRunFirstInvoiceProcessed, _syncPrevRunLastInvoiceProcessed, _syncPrevRunResult, _syncPrevRunInvoiceListUsed);
 
-        var save = new Button { Text = "Save Automatic Sync settings" };
+        var save = new Button { Text = "Save Automatic Sync settings", Width = 190, Height = 36 };
         save.Click += (_, _) => SaveSyncTab();
-        var saveBar = CreateActionButtonBar(save);
+        // Same accent-color treatment as Manual Run's Save button - see
+        // CreateActionButtonBar - so it reads as a real action, not another gray
+        // button indistinguishable from Start/Stop Automatic Service at a glance.
+        save.BackColor = ActionButtonColor;
+        save.ForeColor = Color.White;
+        save.FlatStyle = FlatStyle.Flat;
+        save.FlatAppearance.BorderSize = 0;
+        save.Cursor = Cursors.Hand;
 
-        var serviceControlPanel = BuildServiceControlPanel();
+        WireServiceControlButtons();
+        var automaticHelp = CreateHelpIcon("Automatic Service", AutomaticServiceHelpText);
+
+        // Start/Stop/Save at the bottom, same layout style as Manual Run's own
+        // button panel (MainForm.RunTab.cs) - confirmed live 2026-08-25 the
+        // operator wants the two tabs consistent, not Automatic Sync's controls
+        // docked at the top while Manual Run's are at the bottom.
+        var buttonPanel = new Panel { Dock = DockStyle.Bottom, Height = 50 };
+        _startServiceButton.Height = 36;
+        _stopServiceButton.Height = 36;
+        _startServiceButton.Location = new Point(12, 8);
+        _stopServiceButton.Location = new Point(200, 8);
+        save.Location = new Point(388, 8);
+        automaticHelp.Location = new Point(590, 15);
+        _serviceStatusLabel.Location = new Point(625, 15);
+        _serviceStatusLabel.Font = new Font(_serviceStatusLabel.Font, FontStyle.Bold);
+        buttonPanel.Controls.Add(_startServiceButton);
+        buttonPanel.Controls.Add(_stopServiceButton);
+        buttonPanel.Controls.Add(save);
+        buttonPanel.Controls.Add(automaticHelp);
+        buttonPanel.Controls.Add(_serviceStatusLabel);
 
         var fieldsScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         fieldsScroll.Controls.Add(grid);
 
         page.Controls.Add(fieldsScroll);
-        page.Controls.Add(serviceControlPanel);
-        page.Controls.Add(saveBar);
+        page.Controls.Add(buttonPanel);
 
         RefreshAllTabsFromConfig += RefreshSyncTab;
+        RefreshAllTabsFromConfig += RefreshWatermarkDisplay;
         return page;
     }
 
@@ -76,12 +140,98 @@ public partial class MainForm
     private void SaveSyncTab()
     {
         if (_appSettings is null) return;
+
+        // The watermark can never be set earlier than the Cutoff (Lower) Invoice
+        // Date - that cutoff already guarantees nothing before it is ever
+        // processed, so a watermark behind it would just be silently unreachable
+        // rather than genuinely meaningful. Checked before anything is saved, so
+        // a rejected watermark doesn't leave the OTHER settings half-saved.
+        if (_syncCutoffInvoiceDate.Checked && _watermarkDate.Value < _syncCutoffInvoiceDate.Value)
+        {
+            MessageBox.Show(this,
+                $"Watermark Invoice Date ({_watermarkDate.Value:yyyy-MM-dd HH:mm:ss}) can't be earlier than the " +
+                $"Cutoff (Lower) Invoice Date ({_syncCutoffInvoiceDate.Value:yyyy-MM-dd}) - nothing before the " +
+                "cutoff is ever processed anyway. Adjust one of them before saving.",
+                "Watermark before cutoff", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
         _appSettings.SetInt("PortProSage.Sync.PollingIntervalMinutes", (int)_syncPollingIntervalMinutes.Value);
         _appSettings.SetInt("PortProSage.Sync.ProcessingDelayDays", (int)_syncProcessingDelayDays.Value);
         _appSettings.Save();
 
-        MessageBox.Show(this, "Sync settings saved. The running Service needs a restart to pick up changes.", "Saved",
-            MessageBoxButtons.OK, MessageBoxIcon.Information);
+        // Invoice # preserved exactly as it already was in the database - nothing
+        // in the UI shows or edits it anymore (see _watermarkDate's doc comment),
+        // but a tool reading it directly (e.g. --set-anchor) shouldn't have it
+        // silently blanked out by a save that only ever touches the date here.
+        // Scoped to the currently-SAVED Sage50 path (CurrentConfiguredSage50Path,
+        // not any live-unsaved field) - matches Core's own per-path scoping, see
+        // WatermarkStateService's doc comment for the bug this fixed.
+        var path = _syncStateDatabasePath.Text;
+        var sage50Path = CurrentConfiguredSage50Path;
+        if (!string.IsNullOrWhiteSpace(path) && !string.IsNullOrWhiteSpace(sage50Path))
+        {
+            var (_, currentInvoice) = WatermarkStateService.ReadCurrent(path, sage50Path);
+            WatermarkStateService.WriteNew(path, sage50Path, _watermarkDate.Value, currentInvoice);
+        }
+
+        MessageBox.Show(this, "Sync settings saved (including the watermark). The running Service needs a restart to pick up changes.",
+            "Saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    /// <summary>Custom row (not AddRow) since it needs its own Refresh + Save
+    /// buttons together, not AddRow's single-button slot. Placed first in the
+    /// tab - see BuildSyncTab - since it's the field every Automatic Sync cycle
+    /// actually starts from.</summary>
+    private void AddWatermarkRow(TableLayoutPanel grid)
+    {
+        var row = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var label = new Label
+        {
+            Text = "Watermark Invoice Date",
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(3, 8, 3, 3)
+        };
+
+        _watermarkDate.Anchor = AnchorStyles.Left;
+        _watermarkDate.Margin = new Padding(3, 4, 3, 4);
+
+        var refreshButton = new Button { Text = "Refresh", Width = 70, Height = 23, Margin = new Padding(6, 5, 3, 3) };
+        refreshButton.Click += (_, _) => RefreshWatermarkDisplay();
+
+        var wrap = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            AutoSize = true
+        };
+        wrap.Controls.Add(_watermarkDate);
+        wrap.Controls.Add(refreshButton);
+        wrap.Controls.Add(CreateHelpIcon(label.Text, WatermarkDateHelpText));
+
+        grid.Controls.Add(label, 0, row);
+        grid.Controls.Add(wrap, 1, row);
+    }
+
+    /// <summary>Reloads the live value from state.db, discarding any unsaved edit -
+    /// no checkbox anymore (removed 2026-08-25), so a brand new install with no
+    /// run history yet gets the same computed default Cutoff (Lower) Invoice Date
+    /// uses (today - 6 months) rather than an empty/cleared field.</summary>
+    private void RefreshWatermarkDisplay()
+    {
+        var path = _syncStateDatabasePath.Text;
+        var sage50Path = CurrentConfiguredSage50Path;
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(sage50Path))
+        {
+            _watermarkDate.Value = DateTime.Today.AddMonths(-6);
+            return;
+        }
+
+        var (date, _) = WatermarkStateService.ReadCurrent(path, sage50Path);
+        _watermarkDate.Value = date?.ToLocalTime().DateTime ?? DateTime.Today.AddMonths(-6);
     }
 
     /// <summary>Like AddRow, but with a live "Upper cutoff date" readout wrapped in

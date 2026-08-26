@@ -69,7 +69,9 @@ public partial class MainForm : Form
         _tabs.TabPages.Add(BuildRunTab()); // "Manual Run"
         _tabs.TabPages.Add(BuildSyncTab()); // "Automatic Sync" - includes the Start/Stop Automatic Service controls
         _tabs.TabPages.Add(BuildCustomerRefreshTab()); // "Customer Refresh" - scan/select/run, on-demand customer create+update
-        _tabs.TabPages.Add(BuildWatermarkTab());
+        // Watermark tab removed 2026-08-25 - its single editable field now lives
+        // at the top of "Automatic Sync" (MainForm.SyncTab.cs), the only tab that
+        // actually consumes it.
         _tabs.TabPages.Add(BuildResultsTab());
         _tabs.TabPages.Add(BuildPortProTab());
         _tabs.TabPages.Add(BuildSage50Tab());
@@ -689,6 +691,40 @@ public partial class MainForm : Form
     // primary action (Save, Refresh) actually catches the eye instead of
     // blending into the surrounding gray form.
     private static readonly Color ActionButtonColor = Color.FromArgb(0, 120, 215);
+
+    /// <summary>Adds a bold heading + gray subtext row pair - used by the Settings
+    /// tab's sub-sections and (previously) the Watermark tab. Moved here from
+    /// MainForm.WatermarkTab.cs 2026-08-25 when that tab was removed, since
+    /// SettingsTab.cs still needs it.</summary>
+    private static void AddSectionHeading(TableLayoutPanel grid, string heading, string subText = "")
+    {
+        var headingRow = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var headingLabel = new Label
+        {
+            Text = heading,
+            AutoSize = true,
+            Font = new Font(grid.Font, FontStyle.Bold),
+            Margin = new Padding(3, 8, 3, 2)
+        };
+        grid.Controls.Add(headingLabel, 0, headingRow);
+        grid.SetColumnSpan(headingLabel, 3);
+
+        if (string.IsNullOrEmpty(subText)) return;
+
+        var subRow = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var subLabel = new Label
+        {
+            Text = subText,
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(3, 0, 3, 4),
+            MaximumSize = new Size(700, 0)
+        };
+        grid.Controls.Add(subLabel, 0, subRow);
+        grid.SetColumnSpan(subLabel, 3);
+    }
 
     /// <summary>Wraps a button as a fixed-size, left-aligned, colored control inside
     /// a thin docked bar - NOT a bare Dock=Top/Bottom button, which WinForms

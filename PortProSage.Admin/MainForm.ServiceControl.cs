@@ -56,30 +56,19 @@ public partial class MainForm
         "Disabled while a Manual Run is in progress, and Manual Run is disabled while this is running - both would " +
         "otherwise try to open Sage 50 under the same configured username at the same time, which Sage 50 rejects.";
 
-    private Panel BuildServiceControlPanel()
+    /// <summary>Click handlers + status polling only - no layout. BuildSyncTab
+    /// places _startServiceButton/_stopServiceButton/_serviceStatusLabel itself,
+    /// at the bottom of the tab alongside Save (moved there 2026-08-25 to match
+    /// Manual Run's own button layout; this method used to also build a
+    /// Dock=Top panel for them).</summary>
+    private void WireServiceControlButtons()
     {
-        var panel = new Panel { Dock = DockStyle.Top, Height = 46 };
-
-        _startServiceButton.Location = new Point(0, 8);
-        _stopServiceButton.Location = new Point(170, 8);
-        var help = CreateHelpIcon("Automatic Service", AutomaticServiceHelpText);
-        help.Location = new Point(340, 12);
-        _serviceStatusLabel.Location = new Point(375, 15);
-        _serviceStatusLabel.Font = new Font(_serviceStatusLabel.Font, FontStyle.Bold);
-
         _startServiceButton.Click += (_, _) => StartServiceProcess();
         _stopServiceButton.Click += (_, _) => StopServiceProcess();
-
-        panel.Controls.Add(_startServiceButton);
-        panel.Controls.Add(_stopServiceButton);
-        panel.Controls.Add(help);
-        panel.Controls.Add(_serviceStatusLabel);
 
         _serviceStatusTimer.Tick += (_, _) => RefreshServiceStatus();
         _serviceStatusTimer.Start();
         RefreshServiceStatus();
-
-        return panel;
     }
 
     private string ServiceExePath => Path.Combine(_serviceFolderBox.Text, "PortProSage.Service.exe");
@@ -219,6 +208,13 @@ public partial class MainForm
         }
 
         UpdateManualRunButtonStates(state, process);
+
+        // Editing the watermark while something is actively reading/advancing it
+        // (the Automatic Service, or a watermark-advancing Manual Run) risks the
+        // edit being silently overwritten the moment that run next commits its
+        // own progress - confirmed live 2026-08-25 this should be blocked at the
+        // field itself, not just warned about.
+        _watermarkDate.Enabled = state == ServiceRunState.NotRunning;
     }
 
     /// <summary>process.StartTime can throw (access denied for a process not owned
@@ -300,6 +296,16 @@ public partial class MainForm
     /// settings dump the operator has to read through before clicking Yes.</summary>
     private string BuildAutomaticStartConfirmationText()
     {
+        // Current watermark - not a start/end pair, since there's no defined "end"
+        // before this cycle has even run; this is simply the position the next
+        // cycle continues from. Read fresh from the state database (RefreshWatermarkDisplay's
+        // same source), not the possibly-stale in-memory field, since the operator
+        // needs to know what the run they're about to start will actually use.
+        RefreshWatermarkDisplay();
+        var watermarkText = _watermarkDate.Checked
+            ? _watermarkDate.Value.ToString("yyyy-MM-dd HH:mm:ss")
+            : "(none - no run has ever completed)";
+
         var lines = new List<string>
         {
             // The SAVED path, not the live field - see BuildManualRunConfirmationText's
@@ -307,7 +313,8 @@ public partial class MainForm
             $"Sage 50 path- {CurrentConfiguredSage50Path ?? "(not saved yet - go to the Sage 50 tab and Save first)"}",
             $"Write mode: {(_sage50DryRun.Checked ? "DRY RUN" : "REAL WRITE")}",
             "",
-            $"Polling interval: every {_syncPollingIntervalMinutes.Value} minute(s)"
+            $"Polling interval: every {_syncPollingIntervalMinutes.Value} minute(s)",
+            $"Watermark: {watermarkText}"
         };
         return string.Join(Environment.NewLine, lines);
     }
