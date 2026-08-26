@@ -372,7 +372,7 @@ public partial class MainForm
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var heading = new Label
         {
-            Text = "Previous run (excluding \"Finding the Gap\" run)",
+            Text = "Previous run (excluding \"Find Gaps (Pass-2)\" run)",
             AutoSize = true,
             Font = new Font(Font, FontStyle.Bold),
             Margin = new Padding(3, 18, 3, 2)

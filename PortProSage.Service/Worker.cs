@@ -42,7 +42,7 @@ public class Worker : BackgroundService
 
                 if (DateTimeOffset.UtcNow - lastAutoPoll >= pollInterval)
                 {
-                    await RunAutomaticLastChangedSyncAsync(stoppingToken);
+                    await RunAutomaticContinuousSyncAsync(stoppingToken);
                     lastAutoPoll = DateTimeOffset.UtcNow;
                 }
             }
@@ -55,14 +55,35 @@ public class Worker : BackgroundService
         }
     }
 
-    private async Task RunAutomaticLastChangedSyncAsync(CancellationToken ct)
+    /// <summary>Pass-1 ("Continuous") of the Automatic Service's poll cycle -
+    /// watermark-driven, based on the invoice's own creation/completed date
+    /// (CompletedDateRange), NOT PortPro's "last changed" timestamp. Switched
+    /// from LastChangedDate 2026-08-26 for consistency with Manual Run's own
+    /// default "Invoice date" mode, and because there's no way yet to push an
+    /// UPDATE to an already-posted Sage 50 invoice (Sage50Client only has
+    /// CreateInvoiceAsync, no UpdateInvoiceAsync) - so catching an invoice
+    /// purely because PortPro touched it again had nothing useful to do with
+    /// that information anyway.
+    ///
+    /// Known, accepted limitation: an invoice edited in PortPro AFTER its own
+    /// creation date will NOT be automatically re-surfaced once its creation
+    /// date has scrolled past the current watermark - this pass only ever
+    /// looks at creation date, never at what changed later. Catching that
+    /// requires either a manual re-check (Manual Run covering that invoice's
+    /// date/number again) or a future "Pass-3" (last-changed-date-driven, see
+    /// USER_GUIDE.md's Automatic Sync section), deliberately not built yet -
+    /// it would need a real Reverse+Insert capability (reverse the original
+    /// posted invoice, then post a corrected one) to have anything useful to
+    /// do once found, and that needs its own thorough design/testing, not
+    /// bundled into this change.
+    private async Task RunAutomaticContinuousSyncAsync(CancellationToken ct)
     {
         // From/To resolved inside SyncOrchestrator.RunAsync from the persisted
         // watermark - same "continue from where we left off" resolution a manual
         // trigger run with no --mode also uses, so there's one code path for it.
         var request = new SyncRequest
         {
-            FilterType = FilterType.LastChangedDate,
+            FilterType = FilterType.CompletedDateRange,
             UseWatermark = true,
             RequestedBy = "auto-poll"
         };

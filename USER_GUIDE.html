@@ -352,7 +352,7 @@
         <div class="brand-tagline">PortPro → Sage 50 sync, by SmallArc Inc.</div>
       </div>
     </div>
-    <div class="version-pill"><span class="dot"></span>Version 2.15.1</div>
+    <div class="version-pill"><span class="dot"></span>Version 2.15.2</div>
 
     <nav class="toc" aria-label="Table of contents">
       <div class="toc-label">Contents</div>
@@ -411,7 +411,7 @@
           <tbody>
             <tr><td>You start it from</td><td><strong>Manual Run</strong> tab</td><td><strong>Automatic Sync</strong> tab</td></tr>
             <tr><td>What actually launches</td><td>A one-shot process that runs once and exits</td><td>A long-running process that keeps polling</td></tr>
-            <tr><td>You choose</td><td>Exactly which invoices to process (by date, range, list, or "continue")</td><td>Nothing per-run — it always continues from the watermark</td></tr>
+            <tr><td>You choose</td><td>Exactly which invoices to process (by date, range, or list)</td><td>Nothing per-run — it always continues from the watermark</td></tr>
             <tr><td>Runs until</td><td>It finishes (usually seconds to a few minutes)</td><td>You click Stop, or the machine restarts</td></tr>
           </tbody>
         </table>
@@ -432,7 +432,7 @@
         </li>
         <li><strong>Target Sage50: <code>&lt;path&gt;</code></strong> — always visible, shown below the Service folder row on every tab. The exact Sage 50 company file every write in the app will go to <em>right now</em>. Reads "Target Sage50: (no path specified yet - set it on the Sage 50 tab)" until a path has ever been configured. See <a href="#path-scoping">section 15</a> for why this matters beyond just "which file."</li>
         <li><strong>Help</strong> — opens this User Guide in your default browser.</li>
-        <li><strong>v2.15.1</strong> (top-right, gray) — the exact build number of the Admin app you're currently running. Useful when confirming "did the new build actually install" — compare this against what you were told to expect.</li>
+        <li><strong>v2.15.2</strong> (top-right, gray) — the exact build number of the Admin app you're currently running. Useful when confirming "did the new build actually install" — compare this against what you were told to expect.</li>
         <li><strong>Process:</strong> — always shows the real, current state:
           <ul>
             <li><strong>Not running</strong> (red) — nothing is active; either button is free to use.</li>
@@ -449,20 +449,19 @@
       <h2>4. Manual Run tab</h2>
       <p>Use this to run a sync <strong>exactly once, right now</strong>, with full control over exactly which invoices get processed.</p>
 
-      <h3>Mode dropdown — the five ways to pick invoices</h3>
+      <h3>Mode dropdown — the three ways to pick invoices</h3>
+      <p>As of 2026-08-25, "Continue" and "Last changed date" have been removed from this dropdown — Continue was mechanically identical to the Automatic Service's own poll cycle ("Continuous (Pass-1)" — see <a href="#automatic-sync">section 5</a>), and Last changed date was rarely used. Need the watermark-driven continuation to run once, right now, by hand? Start it from the Automatic Sync tab instead.</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Mode</th><th>Selects invoices by</th><th>When to use it</th></tr></thead>
           <tbody>
             <tr><td>Invoice date (default)</td><td>The invoice's own PortPro billing date, within your From/To window</td><td>The safe default for "process everything invoiced in this window." Can't accidentally pull in something merely <em>edited</em> recently that's actually dated long ago.</td></tr>
-            <tr><td>Continue</td><td>The saved watermark — automatically resumes right after the last invoice this app successfully processed</td><td>Routine day-to-day catch-up runs. No dates or numbers to fill in at all.</td></tr>
-            <tr><td>Last changed date</td><td>PortPro's "last updated" timestamp, within your From/To window</td><td>Chasing "what changed recently" specifically. <strong>Caution:</strong> can pull in an invoice dated well outside your window if it was merely edited — which has caused real failures before (an old invoice rejected by Sage 50's own cutoff rule, killing the whole run). Prefer Invoice date unless you specifically need this.</td></tr>
             <tr><td>Invoice number range</td><td>Reference numbers between a Start and an End (both ends included)</td><td>You know the numeric range of what's missing, e.g. "everything between RSRE_000090 and RSRE_000095."</td></tr>
             <tr><td>Invoice number list</td><td>An explicit, exact list of reference numbers you type in</td><td>You know precisely which invoice(s) you need. Looks each one up individually rather than paging through PortPro's list — also why it's more reliable at finding an invoice the list view sometimes misses (see <a href="#gap-fill">section 14</a>).</td></tr>
           </tbody>
         </table>
       </div>
-      <p>Every mode except Continue is a <strong>one-time override</strong> for this run only — none of them read or change the saved "continue from" position.</p>
+      <p>None of these modes read or change the saved watermark by default. The one exception: Invoice date mode has its own checkbox, <strong>"Update Automatic Sync's starting point to this run's End date"</strong> — checked by default, it advances only the date half of the watermark from what this run actually processed. Uncheck it for a one-off range that shouldn't move the Automatic Service's position. Never saved — resets to its default every time the tab loads or Mode changes.</p>
 
       <div class="callout callout--example">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
@@ -515,6 +514,19 @@
     <section class="doc-section" id="automatic-sync">
       <h2>5. Automatic Sync tab</h2>
       <p>Use this to configure and control the background service that runs continuously, watching for new/changed invoices on its own schedule.</p>
+      <h3>The two active passes (and a third, deliberately not built yet)</h3>
+      <p>As of 2026-08-26, the Automatic Service's own cycle works in passes:</p>
+      <ul>
+        <li><strong>Continuous (Pass-1)</strong> — the main poll. Watermark-driven, based on the invoice's own creation/completed date (same basis as Manual Run's "Invoice date" mode) — not PortPro's "last changed" timestamp, which it used before this date.</li>
+        <li><strong>Find Gaps (Pass-2)</strong> — the existing automatic gap-fill sweep (see <a href="#gap-fill">section 14</a>), unchanged.</li>
+        <li><strong>InvDate Changed (Pass-3)</strong> — <em>not implemented.</em> Would catch an invoice edited after its own creation date. Deferred because Sage 50's SDK has no way to push an update to an already-posted invoice today — if built, the right mechanism is <strong>Reverse + Insert</strong> (a proper accounting reversal, then a corrected new post), not a hard delete, which Sage 50 doesn't support for a posted transaction.</li>
+      </ul>
+      <div class="callout callout--warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+        <p><strong>Known, accepted limitation:</strong> an invoice edited in PortPro after its own creation date will not be automatically re-synced once its creation date has scrolled past the current watermark. Catching that requires a manual re-check (Manual Run, Invoice date mode, covering that invoice's date or number) — there's no automatic path for it in this version.</p>
+      </div>
+      <h3>Watermark Invoice Date</h3>
+      <p>The saved "continue from" position Pass-1 (and Manual Run's own watermark-advance checkbox) reads and moves forward. One editable field (date + time) — pick a value and click Save Automatic Sync settings to set it. No checkbox: the watermark is always a concrete value, defaulting to 6 months back if nothing has ever synced yet. Must not be earlier than the Cutoff (Lower) Invoice Date (rejected with an error if it is). Can move backward as well as forward — already-imported invoices are tracked separately and won't be double-posted either way. Disabled while the Automatic Service or a Manual Run is active; the Refresh button reloads the live value on demand.</p>
       <h3>Fields</h3>
       <ul>
         <li><strong>Automatic Sync - Processing Delay (Days)</strong> — holds back the most recent N days before they're eligible to sync. A live readout shows exactly what date that resolves to. A rolling delay, not a permanent skip. 0 disables it.</li>
@@ -522,12 +534,12 @@
         <li><strong>Cutoff (Lower) Invoice Date</strong> and <strong>Show command window while running</strong> — the same shared fields described under Manual Run; changing either here changes it everywhere.</li>
       </ul>
       <h3>Previous Run</h3>
-      <p>Identical in content and layout to the Manual Run tab's Previous Run section.</p>
-      <h3>Buttons</h3>
+      <p>Identical in content and layout to the Manual Run tab's Previous Run section. Excludes "Find Gaps (Pass-2)" runs, which would otherwise always be "the most recent run" a moment after Pass-1 finishes.</p>
+      <h3>Buttons (bottom of the tab, matching Manual Run's layout)</h3>
       <ul>
-        <li><strong>Save Automatic Sync settings</strong> — saves Polling Interval and Processing Delay.</li>
-        <li><strong>Start Automatic Service</strong> — same pre-flight checks as Manual Run, shows a confirmation, then starts the long-running background process.</li>
+        <li><strong>Start Automatic Service</strong> — same pre-flight checks as Manual Run, shows a confirmation including the current watermark, then starts the long-running background process.</li>
         <li><strong>Stop Automatic Service</strong> — confirms, then gracefully stops it.</li>
+        <li><strong>Save Automatic Sync settings</strong> — saves Polling Interval, Processing Delay, and the Watermark Invoice Date together.</li>
       </ul>
       <div class="callout callout--warning">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
@@ -588,25 +600,10 @@
 
     <section class="doc-section" id="watermark">
       <h2>7. Watermark tab</h2>
-      <p>The "watermark" is the saved bookmark — a date plus an invoice number — that Continue mode and the Automatic Service's own polling both use to know where they left off. This tab lets you view it, and, if truly necessary, override it by hand.</p>
       <div class="callout callout--note">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-        <p>The watermark is one of the things scoped per Sage 50 path (see <a href="#path-scoping">section 15</a>) — what you see and change here always applies to whichever company file the "Target Sage50" banner currently shows, not to any other path.</p>
+        <p><strong>This tab was removed 2026-08-26.</strong> The watermark now lives as a single editable field at the top of <a href="#automatic-sync">section 5, the Automatic Sync tab</a> — the only tab that actually consumes it. See that section for the current description.</p>
       </div>
-      <h3>Current Watermark (read-only)</h3>
-      <p>Shows the watermark date and invoice number currently saved, with a <strong>Refresh</strong> button. Reads <code>(none - no run has ever completed)</code> if nothing has ever synced successfully yet.</p>
-      <h3>Reset / Change Watermark</h3>
-      <ul>
-        <li><strong>New Watermark Date</strong> — check the box and pick a date to set it explicitly; leave <strong>unchecked</strong> to clear the watermark entirely.</li>
-        <li><strong>New Watermark Invoice #</strong> — reference/record-keeping only; the date is what actually controls fetching.</li>
-      </ul>
-      <p>Both fields start out pre-filled with a copy of the current watermark.</p>
-      <div class="callout callout--warning">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
-        <p><strong>This can move the watermark backward, not just forward.</strong> Doing so makes the next Continue run re-check invoices in the newly-covered range — but it will not create duplicates: every invoice already recorded as imported is still recognized and skipped. Only genuinely missed ones get imported.</p>
-      </div>
-      <h3>Save button</h3>
-      <p>Blocked entirely while any run is active. Shows a clear WARNING dialog comparing old and new values before committing — the old value is not recoverable once overwritten.</p>
     </section>
 
     <section class="doc-section" id="history-logs">
@@ -625,7 +622,7 @@
             <tr><td>#</td><td>A short, stable reference number for the run, assigned in the order it happened; never renumbers.</td></tr>
             <tr><td>Request ID</td><td>The full internal ID for this run.</td></tr>
             <tr><td>Source</td><td>"Automatic Service", "Manual Run", "Customer Refresh", or "Trigger file".</td></tr>
-            <tr><td>Mode</td><td>Selection mode used (see <a href="#manual-run">section 4</a>); a gap-fill run shows "Finding the Gap (found/checked)" once finished (see <a href="#gap-fill">section 14</a>); an override run shows "(Override)" appended; a Dry Run shows "(Dry Run)" appended.</td></tr>
+            <tr><td>Mode</td><td>Selection mode used (see <a href="#manual-run">section 4</a>); the Automatic Service's own poll shows "Continuous (Pass-1)"; a gap-fill run shows "Find Gaps (Pass-2) (found/checked)" once finished (see <a href="#gap-fill">section 14</a>); an override run shows "(Override)" appended; a Dry Run shows "(Dry Run)" appended.</td></tr>
             <tr><td>Process Start / End</td><td>When the run's process actually started and finished.</td></tr>
             <tr><td>Inv Start / End Date</td><td>The actual invoice-date window this run covered.</td></tr>
             <tr><td>Fetched</td><td>How many invoices PortPro returned (shown as <code>found/checked</code> for a gap-fill row).</td></tr>
@@ -663,7 +660,7 @@
       </ul>
 
       <h3>Reading a gap-fill row</h3>
-      <p>A "Finding the Gap" row is automatically created after almost every other run (see <a href="#gap-fill">section 14</a>). If you see one with "Fetched: 0/79" and "Not found: 79", that means it checked 79 candidates individually and genuinely didn't find any of them — a normal, healthy result, not an error.</p>
+      <p>A "Find Gaps (Pass-2)" row is automatically created after almost every other run (see <a href="#gap-fill">section 14</a>). If you see one with "Fetched: 0/79" and "Not found: 79", that means it checked 79 candidates individually and genuinely didn't find any of them — a normal, healthy result, not an error.</p>
     </section>
 
     <section class="doc-section" id="portpro-tab">
@@ -757,14 +754,15 @@
 
     <section class="doc-section" id="gap-fill">
       <h2>14. Understanding automatic gap-fill ("Finding the Gap")</h2>
+      <p>Now labeled "Find Gaps (Pass-2)" in the app itself (this section title keeps its original wording so existing links still work).</p>
       <p>This is the one behavior in the app that isn't a button you click — it just happens, automatically, after almost every run.</p>
       <h3>Why it exists</h3>
       <p>PortPro's normal invoice list — the one every date-range or number-range run uses — can, under certain conditions, silently leave out real invoices that genuinely exist. Looking that invoice up <em>individually</em>, by its exact reference number, finds it fine; it's specifically the bulk list view that can miss it. The app doesn't rely on you to remember to check — it checks automatically, every time.</p>
       <h3>How it works</h3>
-      <p>After any range-based run finishes, the app automatically looks at the exact invoice-number range that run actually touched, figures out which numbers are <em>not</em> already recorded as imported, and looks each one up individually. This shows up in History &amp; Logs as its own separate row, labeled "Finding the Gap". You never select this yourself.</p>
+      <p>After any range-based run finishes, the app automatically looks at the exact invoice-number range that run actually touched, figures out which numbers are <em>not</em> already recorded as imported, and looks each one up individually. This shows up in History &amp; Logs as its own separate row, labeled "Find Gaps (Pass-2)". You never select this yourself.</p>
       <h3>Reading the result</h3>
       <p>Once a gap-fill row finishes, its Mode column shows something like:</p>
-      <pre><code>Finding the Gap (19/98)</code></pre>
+      <pre><code>Find Gaps (Pass-2) (19/98)</code></pre>
       <p>That means: 98 candidate invoice numbers were checked one by one, and 19 of them turned out to be real invoices that genuinely existed (and have now been imported). The other 79 were checked and confirmed to simply not exist — completely normal; invoice numbering in any system has gaps.</p>
       <div class="callout callout--note">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
@@ -780,7 +778,7 @@
       <p>Every one of these is tracked independently for each distinct Sage 50 company-file path (the exact value of <strong>Company data path</strong> on the Sage 50 tab):</p>
       <ul>
         <li><strong>Already-imported invoice tracking</strong> — the "don't post this again" memory used by every sync mode. Switching to a different path starts this fresh for that path; switching back to a path you used before brings its own tracking back exactly as you left it.</li>
-        <li><strong>The watermark</strong> (<a href="#watermark">section 7</a>) — Continue mode resumes from whichever path's own watermark is currently active.</li>
+        <li><strong>The watermark</strong> (<a href="#automatic-sync">section 5</a>) — Pass-1 resumes from whichever path's own watermark is currently active.</li>
         <li><strong>Customer Refresh results</strong> (<a href="#customer-refresh">section 6</a>) — the persisted Applied/Date history shown in the grid, and what the path picker shows in historical mode.</li>
         <li><strong>History &amp; Logs' path filter</strong> (<a href="#history-logs">section 8</a>) — which runs a given path's dropdown selection shows.</li>
       </ul>
@@ -808,9 +806,11 @@
       <h2>16. Walkthroughs: common tasks step by step</h2>
 
       <h3>Run a normal catch-up sync manually, right now</h3>
+      <p>There's no standalone "run Pass-1 once" button — Pass-1 is the Automatic Service's own continuous poll (<a href="#automatic-sync">section 5</a>). For a genuine one-off catch-up from Manual Run instead:</p>
       <ol>
         <li>Go to <strong>Manual Run</strong>.</li>
-        <li>Set Mode to <strong>Continue</strong>.</li>
+        <li>Set Mode to <strong>Invoice date</strong>, and set the From/To window to cover the gap.</li>
+        <li>Leave "Update Automatic Sync's starting point to this run's End date" checked (the default) so this run also advances the watermark.</li>
         <li>Click <strong>Manual Run</strong>, confirm the dialog.</li>
         <li>You'll land on <strong>History &amp; Logs</strong> with the new run selected — watch Status until it says <strong>Completed</strong>.</li>
       </ol>
@@ -821,7 +821,7 @@
         <li>Set Mode to <strong>Invoice date</strong>.</li>
         <li>Set <strong>Invoice Date From</strong> and <strong>Invoice Date To</strong>.</li>
         <li>Click <strong>Manual Run</strong>, confirm.</li>
-        <li>A "Finding the Gap" follow-up row appears automatically underneath — let it finish too.</li>
+        <li>A "Find Gaps (Pass-2)" follow-up row appears automatically underneath — let it finish too.</li>
       </ol>
 
       <h3>Re-check one or a few specific invoices you know the numbers of</h3>
@@ -916,9 +916,9 @@
       <p>The other process is currently active — check the <strong>Process:</strong> line in the top bar. Stop it first.</p>
 
       <h3>A run shows "Interrupted (no result)" or "Interrupted (partial)".</h3>
-      <p>The process stopped before finishing cleanly. Nothing already successfully imported is lost or will be double-imported; re-running the same range/Continue picks up exactly where it left off. Check <strong>Full log</strong>.</p>
+      <p>The process stopped before finishing cleanly. Nothing already successfully imported is lost or will be double-imported; re-running the same range picks up exactly where it left off. Check <strong>Full log</strong>.</p>
 
-      <h3>A "Finding the Gap" row found 0 invoices — is that a problem?</h3>
+      <h3>A "Find Gaps (Pass-2)" row found 0 invoices — is that a problem?</h3>
       <p>No — see <a href="#gap-fill">section 14</a>. That's the normal, healthy result most of the time.</p>
 
       <h3>An invoice was imported twice.</h3>
@@ -940,15 +940,16 @@
     <section class="doc-section" id="glossary">
       <h2>18. Glossary</h2>
       <ul>
-        <li><strong>Watermark</strong> — the saved bookmark (a date + invoice number) that Continue mode and the Automatic Service use to know where they left off. Scoped per Sage 50 path — see <a href="#path-scoping">section 15</a>.</li>
-        <li><strong>Continue mode</strong> — the Mode option that resumes from the watermark automatically.</li>
-        <li><strong>Gap-fill / "Finding the Gap"</strong> — the automatic follow-up sweep double-checking for invoices the bulk list view might have missed. See <a href="#gap-fill">section 14</a>.</li>
+        <li><strong>Watermark</strong> — the saved bookmark (a date, plus an invoice number kept for reference only) that Pass-1 and the Automatic Service use to know where they left off. One editable field on the Automatic Sync tab. Scoped per Sage 50 path — see <a href="#path-scoping">section 15</a>.</li>
+        <li><strong>Continuous (Pass-1)</strong> — the Automatic Service's main poll cycle, watermark-driven, based on each invoice's own creation date.</li>
+        <li><strong>Find Gaps (Pass-2) / "Finding the Gap"</strong> — the automatic follow-up sweep double-checking for invoices the bulk list view might have missed. See <a href="#gap-fill">section 14</a>.</li>
+        <li><strong>InvDate Changed (Pass-3)</strong> — not implemented. A planned future pass to catch an invoice edited after its own creation date; needs a Reverse + Insert capability that doesn't exist yet.</li>
         <li><strong>Override Already Imported check</strong> — a Manual Run checkbox that lets a previously-imported invoice be re-processed for one run only. Never persisted; see <a href="#manual-run">section 4</a>.</li>
         <li><strong>Dry run</strong> — a mode that simulates a run without writing anything real to Sage 50. There are two independent Dry Run flags in the app: the shared one (Sage 50 tab / Manual Run tab) and Customer Refresh's own — see <a href="#customer-refresh">section 6</a>.</li>
         <li><strong>Trigger folder</strong> — the folder the running Service watches for new manual/trigger requests.</li>
         <li><strong>Request ID</strong> — the unique internal ID assigned to a single run, with a shorter "#" number for easier reference.</li>
         <li><strong>Cutoff (Lower) Invoice Date</strong> — the hard floor date below which no invoice is ever processed.</li>
-        <li><strong>Processing Delay (Days)</strong> — how many of the most recent days are held back from automatic/Continue processing.</li>
+        <li><strong>Processing Delay (Days)</strong> — how many of the most recent days are held back from Pass-1/watermark-driven processing.</li>
         <li><strong>Sage 50 path scoping</strong> — the app tracks already-imported invoices, the watermark, and Customer Refresh results separately for each distinct Sage 50 company-file path, so switching between company files (e.g. DEV vs PROD) never mixes up their tracking. See <a href="#path-scoping">section 15</a>.</li>
       </ul>
     </section>
@@ -959,7 +960,7 @@
         <p>This software is licensed and authorized by SmallArc Inc. for use exclusively at the licensed location and under the terms of the applicable licensing agreement. Unauthorized use, reproduction, distribution, or deployment without the express written consent of SmallArc Inc. is prohibited.</p>
       </div>
       <div class="footer-meta">
-        <span>© 2026 SmallArc Inc. · PortProSage Sync v2.15.1</span>
+        <span>© 2026 SmallArc Inc. · PortProSage Sync v2.15.2</span>
         <a href="mailto:contact@smallarc.com">contact@smallarc.com</a>
       </div>
     </footer>

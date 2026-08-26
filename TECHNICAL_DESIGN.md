@@ -252,16 +252,26 @@ SDKInstanceManager.Instance                       // process-wide singleton
 
 | Mode | Selects by | Notes |
 |---|---|---|
-| `LastChangedDate` | PortPro `updatedAt` window, or the persisted watermark when `UseWatermark=true` ("Continue") | Automatic polling always uses `UseWatermark=true`. |
-| `CompletedDateRange` | Invoice's own billing date window | Admin UI labels this "Invoice date" — the safe default; can't pull in something merely *edited* outside the window. |
+| `LastChangedDate` | PortPro `updatedAt` window | Admin UI labels this "Last changed date" - removed from Manual Run's Mode dropdown 2026-08-25 (rarely used); no longer used by automatic polling either as of 2026-08-26 - see §6.2. |
+| `CompletedDateRange` | Invoice's own billing date window, or the persisted watermark when `UseWatermark=true` | Admin UI labels this "Invoice date" - the safe default; can't pull in something merely *edited* outside the window. As of 2026-08-26, this is what automatic polling uses (`UseWatermark=true`) - see §6.2. |
 | `InvoiceNumberRange` | Reference number between Start/End (both inclusive) | Client-side filtered within a wide date-bounded fetch — see §4.2. |
 | `InvoiceNumberList` | An explicit, comma-separated set | One-at-a-time single-invoice lookups. |
 | `InvoiceNumberGapScan` | *(internal only — never chosen by hand)* | Computes its own `InvoiceNumberList` candidate set (a range minus everything already recorded as imported), then rewrites itself into `InvoiceNumberList` and proceeds through that exact path. Driven by `GapFillRunner`, §6.9. |
 | `FullCustomerRefresh` | *(no invoices at all)* | Entirely separate code path — see §6.10. Every `Invoices*` field on the resulting `SyncResult` is repurposed to carry customer counts instead. |
 
-### 6.2 Watermark / "Continue"
+### 6.2 Watermark / the three-pass model
 
-A persisted `(date, last-processed-invoice-number)` pair in `state.db`'s `watermark` table. A `UseWatermark=true` request resolves `From` from the saved date and `To` as "now" inside `SyncOrchestrator.RunAsync`; only a watermark-driven run advances this state afterward. Any other mode is a one-time override that never reads or writes it — confirmed by design: `WatermarkBeforeRun`/`WatermarkAfterRun` are captured on every run (not just watermark-driven ones) specifically so an explicit-range run can be shown side by side proving it left the persisted state untouched.
+A persisted `(date, last-processed-invoice-number)` pair in `state.db`'s `watermark` table, scoped by `sage50_path` (composite primary key `(key, sage50_path)` - see §6.12). A `UseWatermark=true` request resolves `From` from the saved date and `To` as "now" inside `SyncOrchestrator.RunAsync`; only a watermark-driven run advances this state afterward (or a run with the new `AdvanceWatermarkOnCompletion=true` - see below). Any other mode is a one-time override that never reads or writes it.
+
+As of 2026-08-26, the Automatic Service's own cycle is described in the Admin UI as three passes, two of which are actually built:
+
+- **"Continuous (Pass-1)"** (`Worker.RunAutomaticContinuousSyncAsync`) - the main poll. `FilterType.CompletedDateRange` + `UseWatermark=true` - **not** `LastChangedDate`, which it used before this date. Switched for consistency with Manual Run's own default "Invoice date" mode, and because there was no way to act on "this invoice changed" information anyway (see Pass-3 below).
+- **"Find Gaps (Pass-2)"** - the existing gap-fill sweep (§6.9), unchanged. Runs after Pass-1 (and after every other range-based run) regardless of which `FilterType` produced the range it sweeps.
+- **"InvDate Changed (Pass-3)"** - **not implemented.** Would be a `LastChangedDate`-driven pass catching an invoice edited after its own creation date - i.e. what the old `LastChangedDate`-based automatic polling used to catch, before the Pass-1 switch above removed that behavior. Deliberately deferred: `Sage50Client` has no `UpdateInvoiceAsync` (only `CreateInvoiceAsync`), confirmed via a raw string scan of `Sage_SA.SDK.dll` (`ReflectionOnlyLoadFrom`/`Assembly.LoadFrom` both failed outside the actual Service process - the SDK only loads inside net48 with all its real dependencies present) - the scan found `ReverseInvoice`/`ReverseJournal` but no `DeleteInvoice`/`VoidInvoice`. If Pass-3 is ever built, the correct mechanism is **Reverse + Insert** (reverse the original posted invoice via that SDK method, then post a corrected one) - not a hard delete, which isn't exposed by the SDK and would break the audit trail/invoice-number continuity even if it were. Needs its own signature verification (live, from inside the Service process) and thorough testing before any implementation.
+
+**Known, accepted limitation**: with Pass-1 on `CompletedDateRange` and Pass-3 not built, an invoice edited in PortPro after its own creation date will not be automatically re-synced once its creation date has scrolled past the current watermark - only a manual re-check (Manual Run covering that invoice's date/number) catches it. Documented for operators in USER_GUIDE.md's Automatic Sync section.
+
+Manual Run's Mode dropdown lost "Continue" and "Last changed date" the same day (2026-08-25) - Continue was mechanically identical to Pass-1 (same `FilterType`+`UseWatermark` combination), so keeping both was redundant; Last changed date was rarely used. In their place, `SyncRequest.AdvanceWatermarkOnCompletion` (distinct from `UseWatermark` - it does NOT also override `From`/`To`) lets Invoice date mode optionally advance the watermark from what it actually processed, reusing the exact same per-invoice/per-batch `SetLastChangedWatermark`/`SetLastProcessedInvoiceNumber` calls the `UseWatermark` path already used (`SyncOrchestrator.RunAsync`'s gating condition widened from `request.UseWatermark` to `(request.UseWatermark || request.AdvanceWatermarkOnCompletion)`).
 
 ### 6.3 Cutoff (lower) invoice date
 

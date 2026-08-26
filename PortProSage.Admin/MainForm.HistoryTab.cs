@@ -487,8 +487,12 @@ public partial class MainForm
     /// <summary>Display-only label for the Mode column - InvoiceNumberGapScan is
     /// never picked by hand (see GapFillRunner, Core-side), so its enum name reads
     /// as an internal implementation detail here rather than "what actually
-    /// happened this row". Every other FilterType's enum name is already a
-    /// reasonable label as-is.
+    /// happened this row". Labeled "Find Gaps (Pass-2)" - the second of the two
+    /// currently-active automatic passes (see the Mode column's own comment for
+    /// "Continuous (Pass-1)", the first) - since 2026-08-26; a Manual Run can
+    /// also trigger its own gap-fill sweep, in which case this same label still
+    /// applies (the mechanism is identical either way). Every other FilterType's
+    /// enum name is already a reasonable label as-is.
     ///
     /// For a finished gap-fill run, appends "(found/checked)" - e.g. "(19/98)" -
     /// so the single most useful number (how many of the candidates it went and
@@ -504,12 +508,12 @@ public partial class MainForm
         if (filterType == FilterType.FullCustomerRefresh) return "Customer Refresh";
         if (filterType == FilterType.CustomerRefreshScan) return "Customer Refresh (scan)";
         if (filterType != FilterType.InvoiceNumberGapScan) return filterType.ToString();
-        if (result is null || !result.IsFinal) return "Finding the Gap";
+        if (result is null || !result.IsFinal) return "Find Gaps (Pass-2)";
 
         var (found, checkedCount) = GetGapFillCounts(result);
         return checkedCount > 0
-            ? $"Finding the Gap ({found}/{checkedCount})"
-            : "Finding the Gap";
+            ? $"Find Gaps (Pass-2) ({found}/{checkedCount})"
+            : "Find Gaps (Pass-2)";
     }
 
     private void RefreshHistoryList()
@@ -602,10 +606,16 @@ public partial class MainForm
             // gave no visible indication anywhere in its own history that it was
             // simulated, not a real write.
             var dryRunSuffix = entry.Result?.WasDryRun == true ? " (Dry Run)" : "";
+            // "Continuous (Pass-1)" - the Automatic Service's own watermark-driven
+            // poll cycle (see Worker.RunAutomaticContinuousSyncAsync). UseWatermark
+            // is exclusively set by that cycle as of 2026-08-26 (Manual Run's old
+            // "Continue" mode was removed the same day), so this label is now
+            // unambiguous - see FormatModeText for "Find Gaps (Pass-2)", the other
+            // active pass.
             var mode = (entry.Result?.Skipped == true
                 ? "Skipped - Process Running"
                 : entry.Request is not null
-                    ? (entry.Request.UseWatermark ? "Continue" : FormatModeText(entry.Request.FilterType, entry.Result))
+                    ? (entry.Request.UseWatermark ? "Continuous (Pass-1)" : FormatModeText(entry.Request.FilterType, entry.Result))
                     : "(auto-poll)") + overrideSuffix + dryRunSuffix;
             var source = entry.Request?.FilterType is FilterType.FullCustomerRefresh or FilterType.CustomerRefreshScan ? "Customer Refresh"
                 : entry.IsAutomaticPoll || entry.ReconstructedFromLog ? "Automatic Service"
@@ -1353,19 +1363,16 @@ public partial class MainForm
 
             lines.Add("");
 
-            // Pre/post snapshot of the persisted "continue from" DATE - Start == End
-            // confirms an explicit-range run genuinely left it untouched (the
-            // guarantee UseWatermark=False is supposed to make); for a
-            // watermark-driven run, the gap between them is exactly how far this
-            // run advanced. See the Watermark tab for the current persisted value
-            // directly - the invoice-number pair below is deliberately just what
-            // THIS run actually touched, not the persisted watermark, to avoid
-            // showing two different-looking "watermark" invoice numbers side by
-            // side (the persisted one barely ever changes for most run types,
-            // which read as a confusing mismatch against what was actually
-            // processed).
-            lines.Add($"Start Watermark (date): {entry.Result.WatermarkBeforeRun?.ToLocalTime().ToString("G") ?? "(none yet)"}");
-            lines.Add($"End Watermark (date):   {entry.Result.WatermarkAfterRun?.ToLocalTime().ToString("G") ?? "(none yet)"}");
+            // The persisted "continue from" DATE as of right after this run - just
+            // the one current value, not a before/after pair (removed 2026-08-26;
+            // see the Automatic Sync tab's own editable field for the live value
+            // outside the context of any one run). The invoice-number pair below is
+            // deliberately just what THIS run actually touched, not the persisted
+            // watermark, to avoid showing two different-looking "watermark" invoice
+            // numbers side by side (the persisted one barely ever changes for most
+            // run types, which read as a confusing mismatch against what was
+            // actually processed).
+            lines.Add($"Watermark Date (End date): {entry.Result.WatermarkAfterRun?.ToLocalTime().ToString("G") ?? "(none yet)"}");
 
             // entry.Result.Outcomes directly when it's actually populated (a Manual
             // Run's own result.json) - falls back to the log's "OUTCOME: ..." lines
