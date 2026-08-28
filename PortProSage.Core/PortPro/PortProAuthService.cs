@@ -28,6 +28,23 @@ public class PortProAuthCircuitState
     public Exception? RefreshTokenConfirmedDead { get; set; }
 }
 
+/// <summary>Thrown once PortPro has confirmed the configured RefreshToken itself
+/// is dead - either just now (401 on the refresh call) or earlier this same run
+/// (PortProAuthCircuitState). Carries UserMessage, a short, plain-language
+/// version fit to show directly in the Admin UI (a MessageBox, a History &amp; Logs
+/// row) - separate from Message/the full technical chain, which is still logged
+/// in full via the normal exception path for anyone who needs to diagnose it.</summary>
+public class PortProRefreshTokenDeadException : InvalidOperationException
+{
+    public string UserMessage { get; }
+
+    public PortProRefreshTokenDeadException(string message, string userMessage, Exception? inner = null)
+        : base(message, inner)
+    {
+        UserMessage = userMessage;
+    }
+}
+
 /// <summary>
 /// Handles PortPro token refresh.
 ///
@@ -46,6 +63,13 @@ public class PortProAuthCircuitState
 /// </summary>
 public class PortProAuthService
 {
+    /// <summary>Shown directly to the user (Admin MessageBox, History &amp; Logs) - plain
+    /// language, no exception jargon, one clear next step. Kept in one place so
+    /// every "the refresh token is dead" site says exactly the same thing.</summary>
+    public const string UserFriendlyTokenExpiredMessage =
+        "PortPro's connection has expired and needs to be reconnected. Get a new Access Token and Refresh Token " +
+        "from PortPro's Integration / API Settings page, then paste them into the PortPro tab here and try again.";
+
     private readonly HttpClient _http;
     private readonly PortProSettings _settings;
     private readonly PortProAuthCircuitState _circuitState;
@@ -65,13 +89,27 @@ public class PortProAuthService
 
         _cachedAccessToken = string.IsNullOrWhiteSpace(settings.AccessToken) ? null : settings.AccessToken;
         _cachedRefreshToken = settings.RefreshToken;
+
+        // Confirmed live 2026-08-26 this was silently never happening:
+        // _cachedTokenExpiresAt used to just stay at DateTimeOffset.MinValue from
+        // construction, so GetAccessTokenAsync's very first call - on EVERY fresh
+        // process, since Manual Run and each Automatic Sync cycle each start a
+        // new one - always fell through to RefreshAsync regardless of whether the
+        // configured access token was itself still perfectly valid. A freshly-
+        // pasted, genuinely working access token was therefore never actually
+        // tried - success depended entirely on the refresh token too, even for a
+        // process that would have had everything it needed from the access token
+        // alone. Decoding its real expiry here (same JWT decode RefreshAsync
+        // already uses) makes that comment above's stated intent - "reuse it
+        // until told otherwise" - actually true.
+        if (_cachedAccessToken is not null)
+        {
+            _cachedTokenExpiresAt = TryGetJwtExpiry(_cachedAccessToken)?.AddSeconds(-30) ?? DateTimeOffset.MinValue;
+        }
     }
 
     public async Task<string> GetAccessTokenAsync(CancellationToken ct)
     {
-        // We don't know this access token's real expiry up front (PortPro didn't
-        // hand us one via config), so we optimistically reuse it until a caller
-        // tells us it was rejected via NotifyTokenRejectedAsync.
         if (_cachedAccessToken is not null && DateTimeOffset.UtcNow < _cachedTokenExpiresAt)
         {
             return _cachedAccessToken;
@@ -101,10 +139,11 @@ public class PortProAuthService
             // this same cached failure instead of repeating the doomed round-trip.
             if (_circuitState.RefreshTokenConfirmedDead is { } dead)
             {
-                throw new InvalidOperationException(
+                throw new PortProRefreshTokenDeadException(
                     "PortPro's refresh token was already confirmed rejected earlier in this run - not retrying " +
                     "the same doomed refresh call again. A new PortPro:AccessToken/RefreshToken pair is needed " +
                     "(from PortPro's integration/API settings), then restart the Service or start a new Manual Run.",
+                    UserFriendlyTokenExpiredMessage,
                     dead);
             }
 
@@ -139,10 +178,11 @@ public class PortProAuthService
                 // PortProAuthCircuitState) so every later call in this process,
                 // from any consumer, fails fast instead of repeating the same
                 // doomed round-trip and logging another duplicate stack trace.
-                var deadEx = new InvalidOperationException(
+                var deadEx = new PortProRefreshTokenDeadException(
                     $"PortPro rejected the refresh token itself (401 on {_settings.NewTokenEndpoint}) - the " +
                     "configured PortPro:RefreshToken is expired or invalid. A new token pair is needed from " +
-                    "PortPro's integration/API settings.");
+                    "PortPro's integration/API settings.",
+                    UserFriendlyTokenExpiredMessage);
                 _circuitState.RefreshTokenConfirmedDead = deadEx;
                 throw deadEx;
             }

@@ -364,12 +364,14 @@ public class SyncOrchestrator
                         !outcome.Sage50InvoiceNumber.StartsWith("DRYRUN-", StringComparison.Ordinal))
                     {
                         _logger.LogInformation(
-                            "TRANSFER: Ref={Ref} Customer={Customer} Sage50Number={SageNo} PortProDate={PortProDate} Sage50Date={Sage50Date} DueDate={DueDate} TotalAmount={TotalAmount} TaxCharged={TaxCharged} CustomerAction={CustomerAction}",
+                            "TRANSFER: Ref={Ref} Customer={Customer} Sage50Number={SageNo} PortProDate={PortProDate} Sage50Date={Sage50Date} DueDate={DueDate} TotalAmount={TotalAmount} TaxCharged={TaxCharged} Sage50Amount={Sage50Amount} Sage50Tax={Sage50Tax} CustomerAction={CustomerAction}",
                             outcome.ReferenceNumber, outcome.PortProCustomerName ?? "(none)", outcome.Sage50InvoiceNumber,
                             outcome.PortProInvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
                             outcome.Sage50InvoiceDate?.ToString("yyyy-MM-dd") ?? "(none)",
                             outcome.Sage50DueDate?.ToString("yyyy-MM-dd") ?? "(none)",
-                            outcome.TotalAmount, outcome.TaxCharged, outcome.Sage50CustomerAction ?? "(none)");
+                            outcome.TotalAmount, outcome.TaxCharged,
+                            outcome.Sage50TotalAmount ?? outcome.TotalAmount, outcome.Sage50TaxCharged ?? outcome.TaxCharged,
+                            outcome.Sage50CustomerAction ?? "(none)");
                     }
 
                     if (outcome.Success)
@@ -519,6 +521,20 @@ public class SyncOrchestrator
             while (innermost.InnerException is not null) innermost = innermost.InnerException;
             var detail = ReferenceEquals(innermost, ex) ? ex.Message : $"{ex.Message} ---> {innermost.Message}";
 
+            // A dead PortPro refresh token is the one top-level failure a user can
+            // directly fix themselves, right now, without any troubleshooting - so
+            // it gets its own plain-language message (surfaced as a MessageBox in
+            // the Admin app - see MainForm.RunTab.cs) instead of making them find
+            // "PortPro's integration/API settings" buried inside a FATAL/stack-
+            // trace-shaped Outcome message. Checked across the whole chain (ex or
+            // innermost), since it can arrive wrapped either way depending on which
+            // consumer (PortProClient vs CustomerSyncService) hit it first.
+            var tokenDead = ex as PortProRefreshTokenDeadException ?? innermost as PortProRefreshTokenDeadException;
+            if (tokenDead is not null)
+            {
+                result.FriendlyFatalErrorMessage = tokenDead.UserMessage;
+            }
+
             result.Outcomes.Add(new InvoiceProcessingOutcome
             {
                 Success = false,
@@ -637,6 +653,18 @@ public class SyncOrchestrator
             var sageInvoice = MapToSage50Invoice(invoice, validation);
             outcome.Sage50InvoiceDate = sageInvoice.InvoiceDate;
             outcome.Sage50DueDate = sageInvoice.InvoiceDate.AddDays(sageInvoice.NetTermDays);
+
+            // Independent of TotalAmount/TaxCharged above - see Sage50TotalAmount's
+            // doc comment. Tax is scaled proportionally to whatever revenue base
+            // actually made it into the invoice, not just copied from PortPro's
+            // figure unconditionally, so a genuine shortfall flags BOTH columns
+            // together rather than only the amount one.
+            outcome.Sage50TotalAmount = sageInvoice.Lines.Sum(l => l.UnitPrice * l.Quantity);
+            var portProPreTaxAmount = outcome.TotalAmount - outcome.TaxCharged;
+            outcome.Sage50TaxCharged = portProPreTaxAmount > 0m
+                ? Math.Round(outcome.TaxCharged * (outcome.Sage50TotalAmount.Value / portProPreTaxAmount), 2)
+                : outcome.TaxCharged;
+
             var sageInvoiceNumber = await _sage50.CreateInvoiceAsync(sageInvoice, ct);
 
             // A dry-run invoice number (see Sage50Client) must NOT be recorded as

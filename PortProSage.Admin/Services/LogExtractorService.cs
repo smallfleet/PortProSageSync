@@ -18,8 +18,23 @@ public class TransferredInvoiceRow
     /// Sage50Client.SetTermDiscNetDay).</summary>
     public string DueDate { get; set; } = string.Empty;
 
+    /// <summary>PortPro's own reported total - see Core's InvoiceProcessingOutcome.
+    /// TotalAmount.</summary>
     public decimal TotalAmount { get; set; }
+
+    /// <summary>The tax PortPro charged - see Core's InvoiceProcessingOutcome.TaxCharged.</summary>
     public decimal TaxCharged { get; set; }
+
+    /// <summary>What actually got mapped/posted to Sage 50 - see Core's
+    /// InvoiceProcessingOutcome.Sage50TotalAmount. Added 2026-08-28 alongside the
+    /// reconciliation columns; falls back to TotalAmount for a TRANSFER line logged
+    /// before this field existed, so an old run reads as "matching" rather than
+    /// showing a false mismatch against a value that was simply never logged.</summary>
+    public decimal Sage50TotalAmount { get; set; }
+
+    /// <summary>See Core's InvoiceProcessingOutcome.Sage50TaxCharged. Same
+    /// falls-back-to-TaxCharged convention as Sage50TotalAmount above.</summary>
+    public decimal Sage50TaxCharged { get; set; }
 
     /// <summary>"CREATED"/"UPDATED"/blank - see Core's InvoiceProcessingOutcome.
     /// Sage50CustomerAction for exact semantics. Added 2026-08-24; blank for a
@@ -76,8 +91,12 @@ public static class LogExtractorService
     // "NO CHANGE" (a space-containing value, added 2026-08-25 alongside
     // SyncOrchestrator's real vs. merely-eligible update distinction) - safe
     // because it's always the last field on the line, nothing ever follows it.
+    // Sage50Amount/Sage50Tax (added 2026-08-28 for the reconciliation columns) sit
+    // between TaxCharged and CustomerAction and are optional as a pair, same
+    // backward-compatibility reasoning as DueDate - a line logged before this
+    // change simply won't have them.
     private static readonly Regex TransferLinePattern = new(
-        @"TRANSFER: Ref=(?<ref>\S+)(?: Customer=(?<customer>.*?)(?= Sage50Number=))? Sage50Number=(?<sage>\S+) PortProDate=(?<pdate>\S+) Sage50Date=(?<sdate>\S+)(?: DueDate=(?<due>\S+))? TotalAmount=(?<total>-?[\d.]+) TaxCharged=(?<tax>-?[\d.]+)(?: CustomerAction=(?<caction>.*))?",
+        @"TRANSFER: Ref=(?<ref>\S+)(?: Customer=(?<customer>.*?)(?= Sage50Number=))? Sage50Number=(?<sage>\S+) PortProDate=(?<pdate>\S+) Sage50Date=(?<sdate>\S+)(?: DueDate=(?<due>\S+))? TotalAmount=(?<total>-?[\d.]+) TaxCharged=(?<tax>-?[\d.]+)(?: Sage50Amount=(?<sage50total>-?[\d.]+) Sage50Tax=(?<sage50tax>-?[\d.]+))?(?: CustomerAction=(?<caction>.*))?",
         RegexOptions.Compiled);
 
     // Mirrors the exact structured-logging call in SyncOrchestrator.RunAsync -
@@ -115,6 +134,16 @@ public static class LogExtractorService
                 DueDate = match.Groups["due"].Success ? match.Groups["due"].Value : "",
                 TotalAmount = decimal.TryParse(match.Groups["total"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var total) ? total : 0m,
                 TaxCharged = decimal.TryParse(match.Groups["tax"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var tax) ? tax : 0m,
+                // Falls back to the PortPro-side figure (not 0) for a TRANSFER line
+                // logged before these fields existed - see TransferredInvoiceRow's
+                // doc comments for why that reads as "matching" rather than a false
+                // mismatch against a value that was simply never there.
+                Sage50TotalAmount = match.Groups["sage50total"].Success &&
+                    decimal.TryParse(match.Groups["sage50total"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var sage50total)
+                        ? sage50total : total,
+                Sage50TaxCharged = match.Groups["sage50tax"].Success &&
+                    decimal.TryParse(match.Groups["sage50tax"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var sage50tax)
+                        ? sage50tax : tax,
                 Sage50CustomerAction = match.Groups["caction"].Success && match.Groups["caction"].Value.Trim() != "(none)"
                     ? match.Groups["caction"].Value.Trim() : ""
             });

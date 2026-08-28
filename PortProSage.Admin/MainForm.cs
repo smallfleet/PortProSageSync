@@ -73,6 +73,7 @@ public partial class MainForm : Form
         // at the top of "Automatic Sync" (MainForm.SyncTab.cs), the only tab that
         // actually consumes it.
         _tabs.TabPages.Add(BuildResultsTab());
+        _tabs.TabPages.Add(BuildReconciliationTab()); // "Reconciliation" - Invoice Transferred look/feel across ALL runs, filterable
         _tabs.TabPages.Add(BuildPortProTab());
         _tabs.TabPages.Add(BuildSage50Tab());
         _tabs.TabPages.Add(BuildSettingsTab()); // "Settings" - Email + Folder Locations

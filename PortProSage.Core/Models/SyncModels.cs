@@ -186,6 +186,18 @@ public class SyncResult
     /// this flag rather than just whether a result file exists.</summary>
     public bool IsFinal { get; set; }
 
+    /// <summary>Set only when this run died to a top-level exception the user can
+    /// directly act on (currently just PortProRefreshTokenDeadException) - a short,
+    /// plain-language message with no exception jargon or stack trace, meant to be
+    /// shown directly in a MessageBox/banner. Null for every other run, including
+    /// ordinary per-invoice failures (those go through InvoicesFailedImport/
+    /// InvoicesFailedValidation and the Outcomes list as usual) - this is
+    /// specifically for the "the whole run couldn't even start" case, where
+    /// burying the actual next step inside "FATAL: System.InvalidOperationException
+    /// ---> ..." in the Outcomes list would leave the user digging through logs to
+    /// find it.</summary>
+    public string? FriendlyFatalErrorMessage { get; set; }
+
     /// <summary>The OS process ID that actually ran this - a Manual Run gets its
     /// own dedicated process, but the Automatic Service's periodic poll and
     /// trigger-file processing all share one long-running process, so several
@@ -431,13 +443,37 @@ public class InvoiceProcessingOutcome
     /// fix so the resolved due date is visible, not just implied by NetTermDays.</summary>
     public DateTimeOffset? Sage50DueDate { get; set; }
 
+    /// <summary>PortPro's own reported total for this invoice (invoice.TotalAmount) -
+    /// the source of truth for what the invoice is actually worth, independent of
+    /// whatever ended up mapped into Sage50TotalAmount below. Shown as "PortPro Amt"
+    /// in the Admin app's Invoice Transferred / reconciliation grids.</summary>
     public decimal TotalAmount { get; set; }
 
     /// <summary>Sum of PortPro pricing lines recognized as a Canadian sales tax charge
     /// (see InvoiceValidationService.TryGetTaxAbbreviation) - the tax PortPro charged
     /// on this invoice, regardless of whether it mapped to a configured Sage 50 tax
-    /// code.</summary>
+    /// code. Shown as "PortPro Tax Charged".</summary>
     public decimal TaxCharged { get; set; }
+
+    /// <summary>Sum of the Sage 50 invoice lines actually built and sent to
+    /// CreateInvoiceAsync (SyncOrchestrator.MapToSage50Invoice) - independent of
+    /// TotalAmount above, so a mapping-time discrepancy (e.g. a charge line's
+    /// FinalAmount failing to parse and silently contributing $0 to the line, or
+    /// any future regression in how charge sets get consolidated) shows up as a
+    /// genuine divergence between the two rather than being masked by re-deriving
+    /// both figures from the same PortPro data. Null until mapping actually
+    /// succeeds (same convention as Sage50InvoiceDate). Shown as "Sage 50 Amount".</summary>
+    public decimal? Sage50TotalAmount { get; set; }
+
+    /// <summary>TaxCharged, scaled down proportionally if Sage50TotalAmount came in
+    /// short of TotalAmount (same tax code/rate, smaller revenue base actually
+    /// posted -&gt; proportionally smaller tax) - the best available estimate of what
+    /// Sage 50's own tax-code calculation will produce, since Sage 50 computes the
+    /// literal dollar tax amount internally at posting time and this app has no
+    /// read-back call to confirm it directly. Equal to TaxCharged exactly whenever
+    /// Sage50TotalAmount matches TotalAmount (the normal case). Null until mapping
+    /// actually succeeds. Shown as "Sage 50 Tax Charged".</summary>
+    public decimal? Sage50TaxCharged { get; set; }
 }
 
 /// <summary>Outcome of validating/matching one invoice against Sage 50 master data.</summary>

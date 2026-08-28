@@ -76,6 +76,14 @@ public class SyncResult
     public DateTimeOffset FinishedAtUtc { get; set; }
     public int ProcessId { get; set; }
 
+    /// <summary>Mirrors Core's SyncResult.FriendlyFatalErrorMessage - a short,
+    /// plain-language message (no exception jargon) set only when the whole run
+    /// died to something the user can directly act on (currently just a dead
+    /// PortPro refresh token). MainForm.RunTab.cs shows this in a MessageBox right
+    /// after a Manual Run finishes, instead of leaving it buried in the Outcomes
+    /// list's "FATAL: ..." text.</summary>
+    public string? FriendlyFatalErrorMessage { get; set; }
+
     /// <summary>Mirrors Core's SyncResult.WasDryRun - captured once at the start of
     /// the run from Sage50Settings.DryRun.</summary>
     public bool WasDryRun { get; set; }

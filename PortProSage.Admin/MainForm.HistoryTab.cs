@@ -416,17 +416,26 @@ public partial class MainForm
         _historyOutcomesGrid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
     }
 
-    private void SetupTransferredGrid()
+    /// <summary>Builds the "Invoice Transferred" grid's columns - shared by History
+    /// &amp; Logs' per-run tab and the standalone Reconciliation tab (see
+    /// BuildReconciliationTab), which shows the exact same columns/coloring across
+    /// every run instead of just the one currently selected. AutoSizeColumnsMode is
+    /// left to the caller since the two hosts want it applied at different times
+    /// (History &amp; Logs' grid never changes it elsewhere; Reconciliation sets it
+    /// once up front the same way).</summary>
+    private static void SetupTransferredGridColumns(DataGridView grid)
     {
-        // Built from the run's full log (see LogExtractorService.ExtractTransferredInvoices),
-        // not from result.json's Outcomes - the automatic poll never writes a result.json,
-        // so the log is the only record that exists for those runs.
-        _historyTransferredGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
         // CustomerName leads (confirmed live 2026-08-24), same as Validate Invoice
         // Extracted's identical column.
-        _historyTransferredGrid.Columns.Add("CustomerName", "PortPro Customer Name");
-        _historyTransferredGrid.Columns.Add("PortProRef", "PortPro Invoice #");
-        _historyTransferredGrid.Columns.Add("PortProDate", "PortPro Date");
+        grid.Columns.Add("CustomerName", "PortPro Customer Name");
+        grid.Columns.Add("PortProRef", "PortPro Invoice #");
+        grid.Columns.Add("PortProDate", "PortPro Date");
+        // PortPro's own reported amount/tax (InvoiceProcessingOutcome.TotalAmount/
+        // TaxCharged) - placed right after PortPro Date (requested 2026-08-28) so
+        // the whole PortPro-side picture (customer, ref, date, amount, tax) reads
+        // left-to-right before the Sage 50 side starts.
+        grid.Columns.Add("PortProAmt", "PortPro Amt");
+        grid.Columns.Add("PortProTax", "PortPro Tax Charged");
         // CREATED (customer didn't exist, auto-created by this invoice) or
         // UPDATED (customer already existed and "Update Customer with latest
         // changes in PortPro" is on, so it's kept in sync by the trailing
@@ -435,29 +444,85 @@ public partial class MainForm
         // Sage50CustomerAction for full semantics. Blank if neither applies.
         // Placed right before Sage50Number (confirmed live 2026-08-25) so the
         // customer outcome reads next to the invoice it applies to.
-        _historyTransferredGrid.Columns.Add("CustomerAction", "Sage50 Customer");
-        _historyTransferredGrid.Columns.Add("Sage50Number", "Sage 50 Invoice #");
-        _historyTransferredGrid.Columns.Add("Sage50Date", "Sage 50 Date");
-        _historyTransferredGrid.Columns.Add("DueDate", "Due Date");
-        _historyTransferredGrid.Columns.Add("TotalAmount", "Total Amount");
-        _historyTransferredGrid.Columns.Add("TaxCharged", "Tax Charged");
+        grid.Columns.Add("CustomerAction", "Sage50 Customer");
+        grid.Columns.Add("Sage50Number", "Sage 50 Invoice #");
+        grid.Columns.Add("Sage50Date", "Sage 50 Date");
+        grid.Columns.Add("DueDate", "Due Date");
+        // What actually got mapped/posted (InvoiceProcessingOutcome.Sage50TotalAmount/
+        // Sage50TaxCharged) - renamed from "Total Amount"/"Tax Charged" (2026-08-28)
+        // now that there are two genuinely distinct figures to show side by side;
+        // grouped with the other Sage50-labeled columns at the end of the row.
+        grid.Columns.Add("Sage50Amount", "Sage 50 Amount");
+        grid.Columns.Add("Sage50Tax", "Sage 50 Tax Charged");
 
         // Proportional widths (FillWeight, not pixels) - read directly as
-        // percentages of the available width. PortProRef cut 60% (22->9),
-        // PortProDate and Sage50Number both halved (13->7, 22->11) from their
-        // original weights to make room for the new CustomerName column.
-        _historyTransferredGrid.Columns["CustomerName"].FillWeight = 25;
-        _historyTransferredGrid.Columns["PortProRef"].FillWeight = 9;
-        _historyTransferredGrid.Columns["PortProDate"].FillWeight = 7;
-        _historyTransferredGrid.Columns["CustomerAction"].FillWeight = 10;
-        _historyTransferredGrid.Columns["Sage50Number"].FillWeight = 11;
-        _historyTransferredGrid.Columns["Sage50Date"].FillWeight = 13;
-        _historyTransferredGrid.Columns["DueDate"].FillWeight = 10;
-        _historyTransferredGrid.Columns["TotalAmount"].FillWeight = 10;
-        _historyTransferredGrid.Columns["TaxCharged"].FillWeight = 10;
+        // percentages of the available width. CustomerName intentionally left
+        // unchanged (requested 2026-08-28) - every other column shrunk modestly to
+        // make room for the two new PortPro Amt/Tax columns instead.
+        grid.Columns["CustomerName"].FillWeight = 25;
+        grid.Columns["PortProRef"].FillWeight = 8;
+        grid.Columns["PortProDate"].FillWeight = 6;
+        grid.Columns["PortProAmt"].FillWeight = 9;
+        grid.Columns["PortProTax"].FillWeight = 9;
+        grid.Columns["CustomerAction"].FillWeight = 8;
+        grid.Columns["Sage50Number"].FillWeight = 10;
+        grid.Columns["Sage50Date"].FillWeight = 11;
+        grid.Columns["DueDate"].FillWeight = 8;
+        grid.Columns["Sage50Amount"].FillWeight = 9;
+        grid.Columns["Sage50Tax"].FillWeight = 9;
 
-        _historyTransferredGrid.Columns["TotalAmount"].DefaultCellStyle.Format = "N2";
-        _historyTransferredGrid.Columns["TaxCharged"].DefaultCellStyle.Format = "N2";
+        grid.Columns["PortProAmt"].DefaultCellStyle.Format = "N2";
+        grid.Columns["PortProTax"].DefaultCellStyle.Format = "N2";
+        grid.Columns["Sage50Amount"].DefaultCellStyle.Format = "N2";
+        grid.Columns["Sage50Tax"].DefaultCellStyle.Format = "N2";
+    }
+
+    /// <summary>Adds one "Invoice Transferred" row to the given grid and applies its
+    /// mismatch/CREATED coloring - shared between History &amp; Logs' per-run tab and
+    /// the standalone Reconciliation tab so both stay visually identical.</summary>
+    private static void AddTransferredRow(DataGridView grid, TransferredInvoiceRow row)
+    {
+        var rowIndex = grid.Rows.Add(
+            row.PortProCustomerName, row.PortProReference, row.PortProDate,
+            row.TotalAmount, row.TaxCharged, row.Sage50CustomerAction, row.Sage50InvoiceNumber, row.Sage50Date,
+            string.IsNullOrEmpty(row.DueDate) ? "(n/a - pre-2026-08-22 run)" : row.DueDate,
+            row.Sage50TotalAmount, row.Sage50TaxCharged);
+        var gridRow = grid.Rows[rowIndex];
+
+        // A brand-new Sage 50 customer (an insert, not just an update to one
+        // that already existed) flagged red across every Sage50-labeled
+        // column, so a CREATED row stands out from an UPDATED one at a
+        // glance - confirmed live 2026-08-25.
+        if (row.Sage50CustomerAction == "CREATED")
+        {
+            gridRow.Cells["CustomerAction"].Style.ForeColor = Color.Red;
+            gridRow.Cells["Sage50Number"].Style.ForeColor = Color.Red;
+            gridRow.Cells["Sage50Date"].Style.ForeColor = Color.Red;
+        }
+
+        // Amount/tax mismatch - the whole row, not just the two figures, since a
+        // real dollar discrepancy is the one thing in this grid worth never
+        // missing at a glance (this is exactly the class of bug that under-billed
+        // 30 real invoices $49,065.80 before the 2026-08-28 multi-charge-set fix -
+        // see PortProClient.GetInvoicesAsync/ConsolidateChargeSets). A small
+        // tolerance (1 cent) avoids flagging harmless decimal rounding as a false
+        // mismatch.
+        var amountMismatch = Math.Abs(row.TotalAmount - row.Sage50TotalAmount) > 0.01m;
+        var taxMismatch = Math.Abs(row.TaxCharged - row.Sage50TaxCharged) > 0.01m;
+        if (amountMismatch || taxMismatch)
+        {
+            gridRow.DefaultCellStyle.BackColor = Color.MistyRose;
+            gridRow.DefaultCellStyle.ForeColor = Color.DarkRed;
+        }
+    }
+
+    private void SetupTransferredGrid()
+    {
+        // Built from the run's full log (see LogExtractorService.ExtractTransferredInvoices),
+        // not from result.json's Outcomes - the automatic poll never writes a result.json,
+        // so the log is the only record that exists for those runs.
+        _historyTransferredGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        SetupTransferredGridColumns(_historyTransferredGrid);
     }
 
     private void SelectHistoryTab()
@@ -1013,6 +1078,19 @@ public partial class MainForm
             return;
         }
 
+        // A dead PortPro refresh token gets its own short, plain-language dialog -
+        // ahead of the generic "WITH ERRORS" one below, which would otherwise bury
+        // the actual next step ("get a new token pair") inside a wall of "FATAL:
+        // System.InvalidOperationException ---> ..." exception text. This is the
+        // one whole-run failure an operator can fix themselves immediately, so it
+        // gets a message that just says what to do, not what broke.
+        if (!string.IsNullOrWhiteSpace(result.FriendlyFatalErrorMessage))
+        {
+            MessageBox.Show(this, result.FriendlyFatalErrorMessage, "PortPro connection expired",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
         // Outcomes.Any(!Success) catches a whole-run failure that isn't reflected in
         // either counter - e.g. a Sage 50 connection failure (SyncOrchestrator.
         // RunAsync's own catch block) or the trailing customer-sync sweep's failure
@@ -1174,22 +1252,7 @@ public partial class MainForm
 
         foreach (var row in LogExtractorService.ExtractTransferredInvoices(_selectedRunLogLines))
         {
-            var rowIndex = _historyTransferredGrid.Rows.Add(
-                row.PortProCustomerName, row.PortProReference, row.PortProDate, row.Sage50CustomerAction, row.Sage50InvoiceNumber, row.Sage50Date,
-                string.IsNullOrEmpty(row.DueDate) ? "(n/a - pre-2026-08-22 run)" : row.DueDate,
-                row.TotalAmount, row.TaxCharged);
-
-            // A brand-new Sage 50 customer (an insert, not just an update to one
-            // that already existed) flagged red across every Sage50-labeled
-            // column, so a CREATED row stands out from an UPDATED one at a
-            // glance - confirmed live 2026-08-25.
-            if (row.Sage50CustomerAction == "CREATED")
-            {
-                var gridRow = _historyTransferredGrid.Rows[rowIndex];
-                gridRow.Cells["CustomerAction"].Style.ForeColor = Color.Red;
-                gridRow.Cells["Sage50Number"].Style.ForeColor = Color.Red;
-                gridRow.Cells["Sage50Date"].Style.ForeColor = Color.Red;
-            }
+            AddTransferredRow(_historyTransferredGrid, row);
         }
 
         ApplyLogSearchFilter();
