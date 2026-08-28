@@ -29,20 +29,24 @@ public partial class MainForm
     // Process Start/End first, then PortPro Invoice date - requested 2026-08-28
     // (Process is "when this app actually ran", Invoice date is "what PortPro
     // says the invoice is dated" - Process reads first since it's the filter
-    // most directly tied to "what happened, and when").
-    private readonly CheckBox _reconciliationProcessDateEnabled = new() { Text = "Process Start/End:", AutoSize = true };
+    // most directly tied to "what happened, and when"). No enable checkbox
+    // (removed 2026-08-28, same "always a concrete value" preference already
+    // applied to the Automatic Sync watermark field) - both ranges are always
+    // live filters, defaulted wide (6 months back through tomorrow) so the grid
+    // starts showing everything rather than nothing.
     private readonly DateTimePicker _reconciliationProcessFrom = new()
-    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", Width = 145, Enabled = false };
+    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", Width = 145, Value = DateTime.Today.AddMonths(-6) };
     private readonly DateTimePicker _reconciliationProcessTo = new()
-    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", Width = 145, Enabled = false };
+    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", Width = 145, Value = DateTime.Today.AddDays(1) };
 
-    private readonly CheckBox _reconciliationInvoiceDateEnabled = new() { Text = "PortPro Invoice Date:", AutoSize = true };
     private readonly DateTimePicker _reconciliationInvoiceDateFrom = new()
-    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd", Width = 110, Enabled = false };
+    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd", Width = 110, Value = DateTime.Today.AddMonths(-6) };
     private readonly DateTimePicker _reconciliationInvoiceDateTo = new()
-    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd", Width = 110, Enabled = false };
+    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd", Width = 110, Value = DateTime.Today.AddDays(1) };
 
-    private readonly CheckBox _reconciliationMismatchOnly = new() { Text = "Amount/Tax not matching", AutoSize = true };
+    // Red font (requested 2026-08-28) so this reads as the "show me the errors"
+    // control at a glance, same visual language as the mismatched rows themselves.
+    private readonly CheckBox _reconciliationMismatchOnly = new() { Text = "Amount/Tax not matching", AutoSize = true, ForeColor = Color.Red };
     private readonly Label _reconciliationStatusLabel = new() { AutoSize = true, Text = "Not scanned yet - click Search/Refresh." };
 
     /// <summary>One row plus the extra context (which Sage50 path/run it came from)
@@ -53,6 +57,14 @@ public partial class MainForm
     private TabPage BuildReconciliationTab()
     {
         var page = new TabPage("Reconciliation");
+        // Process Start/End lead as columns 1 and 2 (requested 2026-08-28) - this
+        // grid spans every run, unlike Invoice Transferred's single-run view, so
+        // which run each row came from needs to be visible in the grid itself, not
+        // just in the filter above it.
+        _reconciliationGrid.Columns.Add("ProcessStartDate", "Prcs Start Dt");
+        _reconciliationGrid.Columns.Add("ProcessEndDate", "Prcs End Dt");
+        _reconciliationGrid.Columns["ProcessStartDate"].FillWeight = 9;
+        _reconciliationGrid.Columns["ProcessEndDate"].FillWeight = 9;
         SetupTransferredGridColumns(_reconciliationGrid);
 
         var filterPanel = new FlowLayoutPanel
@@ -83,44 +95,78 @@ public partial class MainForm
         filterPanel.Controls.Add(Group(new Label { Text = "Sage50 path:", AutoSize = true }, _reconciliationPathDropdown));
         filterPanel.Controls.Add(Group(new Label { Text = "Invoice #:", AutoSize = true }, _reconciliationInvoiceSearch));
         filterPanel.Controls.Add(Group(
-            _reconciliationProcessDateEnabled, _reconciliationProcessFrom,
+            new Label { Text = "Process Start/End:", AutoSize = true }, _reconciliationProcessFrom,
             new Label { Text = "to", AutoSize = true }, _reconciliationProcessTo));
         filterPanel.Controls.Add(Group(
-            _reconciliationInvoiceDateEnabled, _reconciliationInvoiceDateFrom,
+            new Label { Text = "PortPro Invoice Date:", AutoSize = true }, _reconciliationInvoiceDateFrom,
             new Label { Text = "to", AutoSize = true }, _reconciliationInvoiceDateTo));
         filterPanel.Controls.Add(Group(_reconciliationMismatchOnly));
 
-        var refreshButton = new Button { Text = "Search / Refresh" };
-        refreshButton.Click += (_, _) => RunReconciliationScan();
-        filterPanel.Controls.Add(Group(refreshButton, _reconciliationStatusLabel));
+        // Blue/white, matching History & Logs' "Delete Selected" red-button
+        // treatment for a primary action - requested 2026-08-28, plain "Search"
+        // (the "/Refresh" dropped) since it's one action either way.
+        var searchButton = new Button
+        {
+            Text = "Search",
+            Width = 90,
+            Height = 28,
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand,
+            BackColor = Color.FromArgb(0, 102, 204),
+            ForeColor = Color.White
+        };
+        searchButton.FlatAppearance.BorderSize = 0;
+        searchButton.Click += (_, _) => RunReconciliationScan();
+        filterPanel.Controls.Add(Group(searchButton));
 
-        _reconciliationProcessDateEnabled.CheckedChanged += (_, _) =>
+        // Resets every filter except Sage50 path (requested 2026-08-28 - the path
+        // is treated as "which file am I working in", not part of the search
+        // itself) - clears the invoice number search, widens both date ranges
+        // back to their defaults, and unchecks the mismatch-only filter. Re-
+        // filters the already-loaded data; no need for a fresh scan.
+        var clearSearchButton = new Button { Text = "Clear Search", Width = 100 };
+        clearSearchButton.Click += (_, _) =>
         {
-            _reconciliationProcessFrom.Enabled = _reconciliationProcessDateEnabled.Checked;
-            _reconciliationProcessTo.Enabled = _reconciliationProcessDateEnabled.Checked;
+            _reconciliationInvoiceSearch.Text = "";
+            _reconciliationProcessFrom.Value = DateTime.Today.AddMonths(-6);
+            _reconciliationProcessTo.Value = DateTime.Today.AddDays(1);
+            _reconciliationInvoiceDateFrom.Value = DateTime.Today.AddMonths(-6);
+            _reconciliationInvoiceDateTo.Value = DateTime.Today.AddDays(1);
+            _reconciliationMismatchOnly.Checked = false;
             ApplyReconciliationFilters();
         };
-        _reconciliationInvoiceDateEnabled.CheckedChanged += (_, _) =>
-        {
-            _reconciliationInvoiceDateFrom.Enabled = _reconciliationInvoiceDateEnabled.Checked;
-            _reconciliationInvoiceDateTo.Enabled = _reconciliationInvoiceDateEnabled.Checked;
-            ApplyReconciliationFilters();
-        };
+        filterPanel.Controls.Add(Group(clearSearchButton, _reconciliationStatusLabel));
+
         _reconciliationProcessFrom.ValueChanged += (_, _) => ApplyReconciliationFilters();
         _reconciliationProcessTo.ValueChanged += (_, _) => ApplyReconciliationFilters();
         _reconciliationInvoiceDateFrom.ValueChanged += (_, _) => ApplyReconciliationFilters();
         _reconciliationInvoiceDateTo.ValueChanged += (_, _) => ApplyReconciliationFilters();
         _reconciliationMismatchOnly.CheckedChanged += (_, _) => ApplyReconciliationFilters();
         _reconciliationInvoiceSearch.TextChanged += (_, _) => ApplyReconciliationFilters();
-        _reconciliationPathDropdown.SelectedIndexChanged += (_, _) => ApplyReconciliationFilters();
+        // Path changes trigger a fresh Search/Refresh, not just a re-filter of
+        // whatever's already loaded - requested 2026-08-28. Wired through
+        // OnReconciliationPathDropdownRebuilt only (see RefreshReconciliationPathDropdown,
+        // which unsubscribes/resubscribes it around its own programmatic rebuild)
+        // so this fires for a genuine user-picked path, never while the dropdown
+        // is being repopulated.
 
         page.Controls.Add(_reconciliationGrid);
         page.Controls.Add(filterPanel);
 
         RefreshAllTabsFromConfig += () => RefreshReconciliationPathDropdown();
+        // Re-derives the Sage50 path filter from the most recent run every time
+        // this tab is selected (requested 2026-08-28) - not just once at startup -
+        // so switching back to Reconciliation always reflects whatever was
+        // actually just run, even if that's a different path than last time.
         _tabs.SelectedIndexChanged += (_, _) =>
         {
-            if (_tabs.SelectedTab == page) RefreshReconciliationPathDropdown();
+            if (_tabs.SelectedTab != page) return;
+            if (!string.IsNullOrWhiteSpace(_triggerFolder) && !string.IsNullOrWhiteSpace(_processedTriggerFolder))
+            {
+                _historyEntries = RunHistoryService.ListRuns(_triggerFolder, _processedTriggerFolder, _logFolder, _manualRunFolder, _autoPollFolder);
+            }
+            RefreshReconciliationPathDropdown(forceLastRunPath: true);
+            RunReconciliationScan();
         };
 
         return page;
@@ -129,19 +175,30 @@ public partial class MainForm
     /// <summary>Same add/preserve-selection rules as History &amp; Logs' identical
     /// picker (RefreshHistoryPathDropdown) - nothing known yet shows a placeholder;
     /// the currently configured path is added if missing; an existing selection is
-    /// never force-changed.</summary>
-    private void RefreshReconciliationPathDropdown()
+    /// never force-changed (unless forceLastRunPath). Default preference order:
+    /// the most recent run's actual Sage50Path (requested 2026-08-28 - this is an
+    /// audit tool, so "what actually just ran" beats "what's currently configured
+    /// but maybe not run yet"), then the Sage 50 tab's current setting, then
+    /// whatever's first in the list.</summary>
+    private void RefreshReconciliationPathDropdown(bool forceLastRunPath = false)
     {
         var knownPaths = Sage50PathStateService.GetAllKnownPaths(_syncStateDatabasePath.Text);
         var currentPath = _localSettings?.GetString("PortProSage.Sage50.CompanyDataPath")
             ?? _appSettings?.GetString("PortProSage.Sage50.CompanyDataPath");
+        // _historyEntries is newest-first (RunHistoryService.ListRuns) - the first
+        // entry with a recorded Sage50Path is the most recent run's.
+        var lastRunPath = _historyEntries.FirstOrDefault(e => !string.IsNullOrWhiteSpace(e.Result?.Sage50Path))?.Result?.Sage50Path;
 
         if (!string.IsNullOrWhiteSpace(currentPath) && !knownPaths.Contains(currentPath, StringComparer.OrdinalIgnoreCase))
         {
             knownPaths.Insert(0, currentPath);
         }
+        if (!string.IsNullOrWhiteSpace(lastRunPath) && !knownPaths.Contains(lastRunPath, StringComparer.OrdinalIgnoreCase))
+        {
+            knownPaths.Insert(0, lastRunPath);
+        }
 
-        var previouslySelected = _reconciliationPathDropdown.SelectedItem as string;
+        var previouslySelected = forceLastRunPath ? null : _reconciliationPathDropdown.SelectedItem as string;
 
         _reconciliationPathDropdown.SelectedIndexChanged -= OnReconciliationPathDropdownRebuilt;
         _reconciliationPathDropdown.Items.Clear();
@@ -156,15 +213,22 @@ public partial class MainForm
         }
 
         _reconciliationPathDropdown.Enabled = true;
-        // "All paths" - reconciliation is an audit view, so seeing everything
-        // together by default (unlike History & Logs, which follows the
-        // currently-configured path first) is the more useful starting point.
+        // "(all paths)" still offered as an explicit choice, but not the default -
+        // see this method's doc comment for the preference order.
         _reconciliationPathDropdown.Items.Add(AllPathsPlaceholder);
         foreach (var p in knownPaths) _reconciliationPathDropdown.Items.Add(p);
 
         if (previouslySelected is not null && _reconciliationPathDropdown.Items.Contains(previouslySelected))
         {
             _reconciliationPathDropdown.SelectedItem = previouslySelected;
+        }
+        else if (!string.IsNullOrWhiteSpace(lastRunPath) && _reconciliationPathDropdown.Items.Contains(lastRunPath))
+        {
+            _reconciliationPathDropdown.SelectedItem = lastRunPath;
+        }
+        else if (!string.IsNullOrWhiteSpace(currentPath) && _reconciliationPathDropdown.Items.Contains(currentPath))
+        {
+            _reconciliationPathDropdown.SelectedItem = currentPath;
         }
         else
         {
@@ -176,7 +240,21 @@ public partial class MainForm
 
     private const string AllPathsPlaceholder = "(all Sage50 paths)";
 
-    private void OnReconciliationPathDropdownRebuilt(object? sender, EventArgs e) => ApplyReconciliationFilters();
+    private void OnReconciliationPathDropdownRebuilt(object? sender, EventArgs e) => RunReconciliationScan();
+
+    /// <summary>Same as History &amp; Logs' AddTransferredRow, plus the two leading
+    /// Process Start/Process End columns this grid alone has.</summary>
+    private static void AddReconciliationRow(DataGridView grid, TransferredInvoiceRow row, DateTimeOffset processStart, DateTimeOffset processEnd)
+    {
+        var rowIndex = grid.Rows.Add(
+            processStart.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
+            processEnd.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
+            row.PortProCustomerName, row.PortProReference, row.PortProDate,
+            row.TotalAmount, row.TaxCharged, row.Sage50CustomerAction, row.Sage50InvoiceNumber, row.Sage50Date,
+            string.IsNullOrEmpty(row.DueDate) ? "(n/a - pre-2026-08-22 run)" : row.DueDate,
+            row.Sage50TotalAmount, row.Sage50TaxCharged);
+        ApplyTransferredRowStyle(grid.Rows[rowIndex], row);
+    }
 
     /// <summary>Scans every completed run's log for TRANSFER lines - this is the
     /// expensive step (re-reads each run's own daily log file), so it only runs on
@@ -246,19 +324,18 @@ public partial class MainForm
                 return false;
             }
 
-            if (_reconciliationProcessDateEnabled.Checked &&
-                (entry.ProcessStart < _reconciliationProcessFrom.Value || entry.ProcessStart > _reconciliationProcessTo.Value))
+            // Both date ranges are always-active filters now (no enable checkbox -
+            // removed 2026-08-28), defaulted wide enough on load to include
+            // everything until the operator narrows them.
+            if (entry.ProcessStart < _reconciliationProcessFrom.Value || entry.ProcessStart > _reconciliationProcessTo.Value)
             {
                 return false;
             }
 
-            if (_reconciliationInvoiceDateEnabled.Checked)
+            if (!DateTimeOffset.TryParse(entry.Row.PortProDate, out var invoiceDate)) return false;
+            if (invoiceDate.Date < _reconciliationInvoiceDateFrom.Value.Date || invoiceDate.Date > _reconciliationInvoiceDateTo.Value.Date)
             {
-                if (!DateTimeOffset.TryParse(entry.Row.PortProDate, out var invoiceDate)) return false;
-                if (invoiceDate.Date < _reconciliationInvoiceDateFrom.Value.Date || invoiceDate.Date > _reconciliationInvoiceDateTo.Value.Date)
-                {
-                    return false;
-                }
+                return false;
             }
 
             if (_reconciliationMismatchOnly.Checked)
@@ -269,11 +346,15 @@ public partial class MainForm
             }
 
             return true;
-        }).ToList();
+        })
+        // Sorted by Process Start date by default, most recent first - requested
+        // 2026-08-28.
+        .OrderByDescending(entry => entry.ProcessStart)
+        .ToList();
 
         foreach (var entry in filtered)
         {
-            AddTransferredRow(_reconciliationGrid, entry.Row);
+            AddReconciliationRow(_reconciliationGrid, entry.Row, entry.ProcessStart, entry.ProcessEnd);
         }
 
         _reconciliationStatusLabel.Text =

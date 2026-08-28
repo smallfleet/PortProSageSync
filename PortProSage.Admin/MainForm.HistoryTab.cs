@@ -477,18 +477,11 @@ public partial class MainForm
         grid.Columns["Sage50Tax"].DefaultCellStyle.Format = "N2";
     }
 
-    /// <summary>Adds one "Invoice Transferred" row to the given grid and applies its
-    /// mismatch/CREATED coloring - shared between History &amp; Logs' per-run tab and
-    /// the standalone Reconciliation tab so both stay visually identical.</summary>
-    private static void AddTransferredRow(DataGridView grid, TransferredInvoiceRow row)
+    /// <summary>Applies the CREATED/mismatch coloring to an already-added row -
+    /// shared by AddTransferredRow and AddReconciliationRow so both grids color
+    /// identically regardless of which extra (non-shared) columns they carry.</summary>
+    private static void ApplyTransferredRowStyle(DataGridViewRow gridRow, TransferredInvoiceRow row)
     {
-        var rowIndex = grid.Rows.Add(
-            row.PortProCustomerName, row.PortProReference, row.PortProDate,
-            row.TotalAmount, row.TaxCharged, row.Sage50CustomerAction, row.Sage50InvoiceNumber, row.Sage50Date,
-            string.IsNullOrEmpty(row.DueDate) ? "(n/a - pre-2026-08-22 run)" : row.DueDate,
-            row.Sage50TotalAmount, row.Sage50TaxCharged);
-        var gridRow = grid.Rows[rowIndex];
-
         // A brand-new Sage 50 customer (an insert, not just an update to one
         // that already existed) flagged red across every Sage50-labeled
         // column, so a CREATED row stands out from an UPDATED one at a
@@ -514,6 +507,20 @@ public partial class MainForm
             gridRow.DefaultCellStyle.BackColor = Color.MistyRose;
             gridRow.DefaultCellStyle.ForeColor = Color.DarkRed;
         }
+    }
+
+    /// <summary>Adds one "Invoice Transferred" row to the given grid and applies its
+    /// mismatch/CREATED coloring - used by History &amp; Logs' per-run tab (the
+    /// standalone Reconciliation tab uses AddReconciliationRow instead, which adds
+    /// two extra leading columns this grid doesn't have).</summary>
+    private static void AddTransferredRow(DataGridView grid, TransferredInvoiceRow row)
+    {
+        var rowIndex = grid.Rows.Add(
+            row.PortProCustomerName, row.PortProReference, row.PortProDate,
+            row.TotalAmount, row.TaxCharged, row.Sage50CustomerAction, row.Sage50InvoiceNumber, row.Sage50Date,
+            string.IsNullOrEmpty(row.DueDate) ? "(n/a - pre-2026-08-22 run)" : row.DueDate,
+            row.Sage50TotalAmount, row.Sage50TaxCharged);
+        ApplyTransferredRowStyle(grid.Rows[rowIndex], row);
     }
 
     private void SetupTransferredGrid()
