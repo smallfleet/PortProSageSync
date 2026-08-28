@@ -33,7 +33,7 @@ public partial class MainForm
     // carry a stale choice into an unrelated later run - see UpdateRunModeFieldStates.
     private CheckBox _runAdvanceWatermark = new()
     {
-        Text = "Update Automatic Sync's starting point to this run's End date (not saved)",
+        Text = "Watermark will be updated with this run's End Date (not saved)",
         AutoSize = true
     };
     private NumericUpDown _runMaxInvoices = new() { Minimum = 0, Maximum = 100000, Width = 120 };
@@ -130,8 +130,8 @@ public partial class MainForm
         // combination), so there was no real reason to duplicate it here; Last
         // changed date (an explicit range on that same "last touched" field,
         // decoupled from the watermark) was rarely if ever used. See the new
-        // "Update Automatic Sync's starting point" checkbox below for how Invoice
-        // date mode can now optionally advance the watermark instead.
+        // "Watermark will be updated..." checkbox below for how Invoice date
+        // mode can now optionally advance the watermark instead.
         _runMode.SelectedIndex = 0;
         _runMode.SelectedIndexChanged += (_, _) => UpdateRunModeFieldStates();
 
@@ -149,8 +149,8 @@ public partial class MainForm
             "invoices; this catches them without needing a separate mode. It shows up as its own row in History & " +
             "Logs, and never needs choosing by hand.\n\n" +
             "None of these modes touch the Automatic Service's saved position (the watermark) unless you " +
-            "explicitly check \"Update Automatic Sync's starting point\" for Invoice date mode - see that " +
-            "checkbox's own help for why.",
+            "explicitly check \"Watermark will be updated with this run's End Date\" for Invoice date mode - see " +
+            "that checkbox's own help for why.",
             stretchInput: false);
         AddRow(grid, "Invoice Date From", _runFrom, "(request)", "SyncRequest.From",
             "Start of the date window - only used by Invoice date mode.\n\n" +
@@ -384,8 +384,8 @@ public partial class MainForm
         AddPreviousRunRowWithCopy(grid, "Previous Run: Inv Start Date", fromBox, "RunHistoryEntry.Result.EffectiveFromUtc",
             "The actual invoice-date window's start, as resolved and used by that run - not the persisted " +
             "watermark, which is generally unrelated to what an explicit Invoice date run actually processed " +
-            "unless \"Update Automatic Sync's starting point\" was checked for it. Blank for Invoice number " +
-            "range/list modes, which have no date window at all.");
+            "unless \"Watermark will be updated with this run's End Date\" was checked for it. Blank for Invoice " +
+            "number range/list modes, which have no date window at all.");
         AddPreviousRunRowWithCopy(grid, "Previous Run: Inv End Date", toBox, "RunHistoryEntry.Result.EffectiveToUtc",
             "The actual invoice-date window's end, as resolved and used by that run.");
         AddPreviousRunRowWithCopy(grid, "Previous Run: Max invoices to process", maxInvoicesBox, "RunHistoryEntry.Request.MaxInvoicesToProcess");

@@ -98,7 +98,7 @@ public partial class MainForm
         save.Cursor = Cursors.Hand;
 
         WireServiceControlButtons();
-        var automaticHelp = CreateHelpIcon("Automatic Service", AutomaticServiceHelpText);
+        var automaticHelp = CreateHelpIcon("Automatic Sync", AutomaticServiceHelpText);
 
         // Start/Stop/Save at the bottom, same layout style as Manual Run's own
         // button panel (MainForm.RunTab.cs) - confirmed live 2026-08-25 the
@@ -137,9 +137,18 @@ public partial class MainForm
         _syncProcessingDelayDays.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.ProcessingDelayDays", 4), _syncProcessingDelayDays.Minimum, _syncProcessingDelayDays.Maximum);
     }
 
-    private void SaveSyncTab()
+    /// <summary>Returns true if everything (including the watermark) genuinely
+    /// saved, false if it was blocked (cutoff violation, or the watermark
+    /// couldn't be saved at all) - callers that need settings to be current
+    /// before proceeding (StartServiceProcess) check this instead of assuming a
+    /// call always succeeds. showConfirmation=false suppresses the success
+    /// pop-up (used when this is an implicit save-before-Start, not an explicit
+    /// click of "Save Automatic Sync settings") - failure dialogs always show
+    /// regardless, since silently failing to save before starting the service
+    /// would be worse than the extra pop-up.</summary>
+    private bool SaveSyncTab(bool showConfirmation = true)
     {
-        if (_appSettings is null) return;
+        if (_appSettings is null) return false;
 
         // The watermark can never be set earlier than the Cutoff (Lower) Invoice
         // Date - that cutoff already guarantees nothing before it is ever
@@ -153,7 +162,7 @@ public partial class MainForm
                 $"Cutoff (Lower) Invoice Date ({_syncCutoffInvoiceDate.Value:yyyy-MM-dd}) - nothing before the " +
                 "cutoff is ever processed anyway. Adjust one of them before saving.",
                 "Watermark before cutoff", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
+            return false;
         }
 
         _appSettings.SetInt("PortProSage.Sync.PollingIntervalMinutes", (int)_syncPollingIntervalMinutes.Value);
@@ -166,17 +175,30 @@ public partial class MainForm
         // silently blanked out by a save that only ever touches the date here.
         // Scoped to the currently-SAVED Sage50 path (CurrentConfiguredSage50Path,
         // not any live-unsaved field) - matches Core's own per-path scoping, see
-        // WatermarkStateService's doc comment for the bug this fixed.
-        var path = _syncStateDatabasePath.Text;
+        // WatermarkStateService's doc comment for the bug this fixed. Reads
+        // StateDatabasePath directly from _appSettings, not _syncStateDatabasePath.Text -
+        // see RefreshWatermarkDisplay's doc comment for why that field can't be
+        // trusted here either.
+        var path = _appSettings.GetString("PortProSage.Sync.StateDatabasePath");
         var sage50Path = CurrentConfiguredSage50Path;
-        if (!string.IsNullOrWhiteSpace(path) && !string.IsNullOrWhiteSpace(sage50Path))
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(sage50Path))
         {
-            var (_, currentInvoice) = WatermarkStateService.ReadCurrent(path, sage50Path);
-            WatermarkStateService.WriteNew(path, sage50Path, _watermarkDate.Value, currentInvoice);
+            MessageBox.Show(this,
+                "Polling Interval and Processing Delay were saved, but the watermark was NOT - " +
+                (string.IsNullOrWhiteSpace(path) ? "the state database path isn't known yet." : "no Sage 50 path is saved yet (go to the Sage 50 tab and Save first)."),
+                "Watermark not saved", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
         }
 
-        MessageBox.Show(this, "Sync settings saved (including the watermark). The running Service needs a restart to pick up changes.",
-            "Saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        var (_, currentInvoice) = WatermarkStateService.ReadCurrent(path, sage50Path);
+        WatermarkStateService.WriteNew(path, sage50Path, _watermarkDate.Value, currentInvoice);
+
+        if (showConfirmation)
+        {
+            MessageBox.Show(this, "Sync settings saved (including the watermark). The running Service needs a restart to pick up changes.",
+                "Saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        return true;
     }
 
     /// <summary>Custom row (not AddRow) since it needs its own Refresh + Save
@@ -219,10 +241,22 @@ public partial class MainForm
     /// <summary>Reloads the live value from state.db, discarding any unsaved edit -
     /// no checkbox anymore (removed 2026-08-25), so a brand new install with no
     /// run history yet gets the same computed default Cutoff (Lower) Invoice Date
-    /// uses (today - 6 months) rather than an empty/cleared field.</summary>
+    /// uses (today - 6 months) rather than an empty/cleared field.
+    ///
+    /// Reads the state database path directly from _appSettings, NOT
+    /// _syncStateDatabasePath.Text - confirmed live 2026-08-26 that field is only
+    /// populated by RefreshSettingsTab (MainForm.SettingsTab.cs), and
+    /// RefreshAllTabsFromConfig's subscribers fire in tab-construction order:
+    /// this tab (Automatic Sync) is built well before Settings, so
+    /// RefreshWatermarkDisplay was running - and reading that still-empty
+    /// textbox - before RefreshSettingsTab ever got a chance to fill it in. Every
+    /// config reload silently reset the watermark display to the 6-months-back
+    /// default regardless of what was actually saved, and saving from that state
+    /// (SaveSyncTab has the same fix) would have overwritten the real value with
+    /// the wrong default.</summary>
     private void RefreshWatermarkDisplay()
     {
-        var path = _syncStateDatabasePath.Text;
+        var path = _appSettings?.GetString("PortProSage.Sync.StateDatabasePath");
         var sage50Path = CurrentConfiguredSage50Path;
         if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(sage50Path))
         {

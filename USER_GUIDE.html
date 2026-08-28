@@ -461,7 +461,7 @@
           </tbody>
         </table>
       </div>
-      <p>None of these modes read or change the saved watermark by default. The one exception: Invoice date mode has its own checkbox, <strong>"Update Automatic Sync's starting point to this run's End date"</strong> — checked by default, it advances only the date half of the watermark from what this run actually processed. Uncheck it for a one-off range that shouldn't move the Automatic Service's position. Never saved — resets to its default every time the tab loads or Mode changes.</p>
+      <p>None of these modes read or change the saved watermark by default. The one exception: Invoice date mode has its own checkbox, <strong>"Watermark will be updated with this run's End Date"</strong> — checked by default, it advances only the date half of the watermark from what this run actually processed. Uncheck it for a one-off range that shouldn't move the Automatic Service's position. Never saved — resets to its default every time the tab loads or Mode changes.</p>
 
       <div class="callout callout--example">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
@@ -526,7 +526,7 @@
         <p><strong>Known, accepted limitation:</strong> an invoice edited in PortPro after its own creation date will not be automatically re-synced once its creation date has scrolled past the current watermark. Catching that requires a manual re-check (Manual Run, Invoice date mode, covering that invoice's date or number) — there's no automatic path for it in this version.</p>
       </div>
       <h3>Watermark Invoice Date</h3>
-      <p>The saved "continue from" position Pass-1 (and Manual Run's own watermark-advance checkbox) reads and moves forward. One editable field (date + time) — pick a value and click Save Automatic Sync settings to set it. No checkbox: the watermark is always a concrete value, defaulting to 6 months back if nothing has ever synced yet. Must not be earlier than the Cutoff (Lower) Invoice Date (rejected with an error if it is). Can move backward as well as forward — already-imported invoices are tracked separately and won't be double-posted either way. Disabled while the Automatic Service or a Manual Run is active; the Refresh button reloads the live value on demand.</p>
+      <p>The saved "continue from" position Pass-1 (and Manual Run's own watermark-advance checkbox) reads and moves forward. One editable field (date + time) — pick a value and click Save Automatic Sync settings to set it. No checkbox: the watermark is always a concrete value, defaulting to 6 months back if nothing has ever synced yet. Must not be earlier than the Cutoff (Lower) Invoice Date (rejected with an error if it is). Can move backward as well as forward — already-imported invoices are tracked separately and won't be double-posted either way. Disabled while the Automatic Service or a Manual Run is active, and refreshes live every few seconds while disabled so it always reflects the true current position by the time it becomes editable again; the Refresh button reloads it on demand too.</p>
       <h3>Fields</h3>
       <ul>
         <li><strong>Automatic Sync - Processing Delay (Days)</strong> — holds back the most recent N days before they're eligible to sync. A live readout shows exactly what date that resolves to. A rolling delay, not a permanent skip. 0 disables it.</li>
@@ -810,7 +810,7 @@
       <ol>
         <li>Go to <strong>Manual Run</strong>.</li>
         <li>Set Mode to <strong>Invoice date</strong>, and set the From/To window to cover the gap.</li>
-        <li>Leave "Update Automatic Sync's starting point to this run's End date" checked (the default) so this run also advances the watermark.</li>
+        <li>Leave "Watermark will be updated with this run's End Date" checked (the default) so this run also advances the watermark.</li>
         <li>Click <strong>Manual Run</strong>, confirm the dialog.</li>
         <li>You'll land on <strong>History &amp; Logs</strong> with the new run selected — watch Status until it says <strong>Completed</strong>.</li>
       </ol>

@@ -96,9 +96,9 @@ As of 2026-08-25, "Continue (from where we left off)" and "Last changed date" ha
 | **Invoice number range** | Reference numbers between a Start and an End (both ends included) | You know the numeric range of what's missing, e.g. "everything between RSRE_000090 and RSRE_000095." |
 | **Invoice number list (comma-separated)** | An explicit, exact list of reference numbers you type in | You know precisely which invoice(s) you need, e.g. re-checking one specific invoice that failed earlier. This mode looks each one up individually rather than paging through PortPro's list — which is also why it's more reliable at finding an invoice the list view sometimes misses (see [section 14](#14-understanding-automatic-gap-fill-finding-the-gap)). |
 
-None of these modes read or change the saved watermark by default — each is a one-time override for this run only. The one exception: **Invoice date** mode has its own checkbox, **"Update Automatic Sync's starting point to this run's End date"**, described next.
+None of these modes read or change the saved watermark by default — each is a one-time override for this run only. The one exception: **Invoice date** mode has its own checkbox, **"Watermark will be updated with this run's End Date"**, described next.
 
-#### Update Automatic Sync's starting point to this run's End date
+#### Watermark will be updated with this run's End Date
 
 Only shown for Invoice date mode. **Checked by default.** When checked, this run also advances the Automatic Service's saved watermark from what it actually processed — the same thing the Automatic Service's own Pass-1 does, just without letting the watermark dictate the range (this run's From/To are used exactly as you entered them either way). Only the **date** half of the watermark ever moves this way, from each processed invoice's own real PortPro date — never the invoice-number half, and never simply this run's End date verbatim.
 
@@ -167,7 +167,7 @@ The saved "continue from" position Pass-1 (and Manual Run's own watermark-advanc
 - **Defaults to 6 months back** if nothing has ever synced yet (same default the Cutoff Date field uses), instead of showing an empty/cleared state.
 - **Must not be earlier than the Cutoff (Lower) Invoice Date** below it — saving a watermark before the cutoff is rejected with an error, since the cutoff already guarantees nothing before it is ever processed anyway.
 - **Can move backward, not just forward** — unlike normal sync progress, which can only ever advance it. Moving it back causes invoices in the newly-covered range to be re-fetched and re-checked on the next run; already-imported invoices are tracked separately (by PortPro invoice id, not by date) and will **not** be double-posted — only genuinely missed ones actually import.
-- **Disabled while the Automatic Service or a Manual Run is active** — editing it mid-run risks the edit being silently overwritten the moment that run next advances this same value. Re-enables once nothing is running.
+- **Disabled while the Automatic Service or a Manual Run is active** — editing it mid-run risks the edit being silently overwritten the moment that run next advances this same value. Re-enables once nothing is running. While disabled, the displayed value refreshes live every few seconds, so it always reflects the true current position by the time it becomes editable again — confirmed live 2026-08-26 that without this, saving any unrelated setting after a long Automatic Service session could silently regress the watermark back to a stale snapshot.
 - **Refresh** button reloads the live value from the database, discarding any unsaved edit — useful for watching it advance in near-real-time while it's disabled during a run.
 - Scoped per Sage 50 path, same as everything else described in [section 15](#15-working-with-more-than-one-sage-50-company-file).
 
@@ -476,7 +476,7 @@ There's no standalone "run Pass-1 once" button — Pass-1 is the Automatic Servi
 
 1. Go to **Manual Run**.
 2. Set Mode to **Invoice date**, and set **Invoice Date From/To** to cover the gap you want caught up.
-3. Leave **"Update Automatic Sync's starting point to this run's End date"** checked (the default) so this run also advances the watermark, keeping Pass-1 in sync with what you just covered.
+3. Leave **"Watermark will be updated with this run's End Date"** checked (the default) so this run also advances the watermark, keeping Pass-1 in sync with what you just covered.
 4. Click **Manual Run**, confirm the dialog.
 5. You'll land on **History & Logs** with the new run selected — watch the Status column until it says **Completed**.
 

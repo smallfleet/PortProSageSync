@@ -21,8 +21,8 @@ public enum ServiceRunState { NotRunning, AutomaticRunning, ManualRunning }
 public partial class MainForm
 {
     private readonly Label _serviceStatusLabel = new() { AutoSize = true };
-    private readonly Button _startServiceButton = new() { Text = "Start Automatic Service", Width = 160 };
-    private readonly Button _stopServiceButton = new() { Text = "Stop Automatic Service", Width = 160 };
+    private readonly Button _startServiceButton = new() { Text = "Start Automatic Sync", Width = 160 };
+    private readonly Button _stopServiceButton = new() { Text = "Stop Automatic Sync", Width = 160 };
     private readonly System.Windows.Forms.Timer _serviceStatusTimer = new() { Interval = 3000 };
 
     /// <summary>Always-visible in the top header bar (see MainForm.cs's
@@ -180,7 +180,7 @@ public partial class MainForm
                 _serviceStatusLabel.ForeColor = Color.DarkGreen;
                 _startServiceButton.Enabled = false;
                 _stopServiceButton.Enabled = true;
-                _headerStatusLabel.Text = $"Automatic Service running - PID {process.Id}, since {FormatStartTime(process)}";
+                _headerStatusLabel.Text = $"Automatic Sync running - PID {process.Id}, since {FormatStartTime(process)}";
                 _headerStatusLabel.ForeColor = Color.DarkGreen;
                 _headerStopButton.Enabled = true;
                 _headerActivityIndicator.Visible = true;
@@ -214,7 +214,24 @@ public partial class MainForm
         // edit being silently overwritten the moment that run next commits its
         // own progress - confirmed live 2026-08-25 this should be blocked at the
         // field itself, not just warned about.
-        _watermarkDate.Enabled = state == ServiceRunState.NotRunning;
+        var running = state != ServiceRunState.NotRunning;
+        _watermarkDate.Enabled = !running;
+
+        // While disabled (something is actively advancing the real value),
+        // keep the displayed value LIVE rather than frozen at whatever it
+        // showed when the service started - confirmed live 2026-08-26 that
+        // without this, "Save Automatic Sync settings" for an unrelated field
+        // (Polling Interval, anything) after a long Automatic Service session
+        // silently regressed the watermark back to that stale snapshot,
+        // undoing real progress the service had already made. This timer
+        // already ticks every 3 seconds regardless of which tab is visible, so
+        // by the time the field becomes editable again it's already showing
+        // the true current value - never refreshed while enabled, so this
+        // can't stomp on an edit the operator is mid-typing.
+        if (running)
+        {
+            RefreshWatermarkDisplay();
+        }
     }
 
     /// <summary>process.StartTime can throw (access denied for a process not owned
@@ -269,8 +286,18 @@ public partial class MainForm
 
         if (!ConfirmProceedIfSage50AppOpen()) return;
 
+        // Confirmed live 2026-08-26 the operator expects Start to always reflect
+        // whatever's currently in the form, not require a separate explicit Save
+        // first (same reasoning as Test Connection's own auto-save) - most
+        // importantly the watermark, which the confirmation dialog below is
+        // about to display. Aborts if the save itself was blocked (e.g. the
+        // watermark is before the cutoff) rather than starting against
+        // whatever's stale/wrong in the database - SaveSyncTab already showed
+        // the operator exactly why.
+        if (!SaveSyncTab(showConfirmation: false)) return;
+
         var confirm = MessageBox.Show(this, BuildAutomaticStartConfirmationText(),
-            "Confirm start - Automatic Service", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            "Confirm start - Automatic Sync", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (confirm != DialogResult.Yes) return;
 
         // "Show command window" (Automatic Sync / Manual Run tab, shared/synced
@@ -325,7 +352,7 @@ public partial class MainForm
         if (state != ServiceRunState.AutomaticRunning || process is null) { RefreshServiceStatus(); return; }
 
         var confirm = MessageBox.Show(this,
-            $"Stop the automatic Service (PID {process.Id}) now?\n\n" +
+            $"Stop Automatic Sync (PID {process.Id}) now?\n\n" +
             "This interrupts automatic polling and manual-trigger processing until it's started again.",
             "Confirm stop", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
         if (confirm != DialogResult.Yes) return;
