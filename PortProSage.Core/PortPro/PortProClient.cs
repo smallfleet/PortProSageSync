@@ -62,16 +62,22 @@ public class PortProClient
 
             // Each "data" entry wraps one load - the actual invoice fields (reference
             // number, pricing, caller, ...) live one level deeper in its "invoice"
-            // array. Flatten here so nothing downstream deals with the wrapper.
-            var pageInvoices = body.Data.SelectMany(load => load.Invoice.Select(inv =>
-            {
-                inv.Id = load.Id;
-                inv.CreatedAt = load.CreatedAt;
-                inv.UpdatedAt = load.UpdatedAt;
-                inv.PaymentTermsNetDays = load.PaymentTerms;
-                inv.PaymentTermsMethod = load.PaymentTermsMethod;
-                return inv;
-            }));
+            // array, and a single load can legitimately carry MULTIPLE charge-set
+            // entries sharing one reference number (confirmed live 2026-08-28 against
+            // RSRE_004131: 20 charge sets of $275 each under one load, true total
+            // $5,500 - exactly the shape GetInvoiceAsync/ConsolidateChargeSets already
+            // combines for the single-invoice path). Before this fix, each charge set
+            // was flattened into its own separate PortProInvoice while EVERY one of
+            // them was assigned the SAME Id (the parent load's Id, below) -
+            // IsAlreadyImported/MarkImported key off that Id, so only the FIRST charge
+            // set in a load was ever actually imported and every other one was
+            // silently skipped as "already imported" on the very same run, permanently
+            // under-billing multi-charge-set invoices with no error or warning.
+            // Consolidating here the same way the single-invoice endpoint already does
+            // fixes it at the source.
+            var pageInvoices = body.Data
+                .Where(load => load.Invoice.Count > 0)
+                .Select(load => ConsolidateChargeSets(load, load.Invoice));
 
             if (request.FilterType == FilterType.InvoiceNumberRange)
             {
