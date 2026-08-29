@@ -31,7 +31,11 @@ public partial class MainForm
     // Renamed from "Run Selected" (requested 2026-08-29) - "Transfer Selected to
     // Sage50" says what actually happens, matching the button's own naming
     // convention elsewhere in this app (e.g. Reconciliation's "Search").
-    private readonly Button _customerRefreshRunButton = new() { Text = "Transfer Selected to Sage50", Width = 210, Height = 30, Enabled = false };
+    // Same Width as Extract All Customer (170, requested 2026-08-29 - "same size
+    // as of 1") - the longer label wraps rather than being clipped, since AutoSize
+    // stays off and Height matches too. Always enabled (never Enabled=false) - see
+    // UpdateCustomerRefreshRunButtonText's doc comment for why.
+    private readonly Button _customerRefreshRunButton = new() { Text = "Transfer Selected to Sage50", Width = 170, Height = 30 };
     private readonly Label _customerRefreshLastScannedLabel = new() { AutoSize = true, ForeColor = SystemColors.GrayText };
 
     // Incremental "find and jump to" - not a filter (nothing is hidden), just
@@ -198,7 +202,14 @@ public partial class MainForm
             WrapContents = false,
             AutoSize = false
         };
+        // Transfer Selected to Sage50 added right here, immediately after Extract
+        // All Customer, so it's genuinely the 2nd control in the row (not last,
+        // behind Select all/Wrapped Details/Dry run) - a FlowLayoutPanel flows
+        // children in Controls.Add order, and this button's actual Add call had
+        // been left down near its styling code further below, well after these
+        // four, despite the surrounding comment already claiming it sat here.
         leftFlow.Controls.Add(_customerRefreshScanButton);
+        leftFlow.Controls.Add(_customerRefreshRunButton);
         leftFlow.Controls.Add(_customerRefreshLastScannedLabel);
         leftFlow.Controls.Add(_customerRefreshSelectAllCheckbox);
         leftFlow.Controls.Add(_customerRefreshWrapDetails);
@@ -305,7 +316,6 @@ public partial class MainForm
         _customerRefreshDryRun.Margin = new Padding(0, 10, 4, 0);
         dryRunHelp.Margin = new Padding(0, 10, 20, 0);
         customerRefreshHelp.Margin = new Padding(0, 10, 0, 0);
-        leftFlow.Controls.Add(_customerRefreshRunButton);
         leftFlow.Controls.Add(_customerRefreshDryRun);
         leftFlow.Controls.Add(dryRunHelp);
         leftFlow.Controls.Add(customerRefreshHelp);
@@ -658,10 +668,11 @@ public partial class MainForm
 
     /// <summary>Called from UpdateManualRunButtonStates (MainForm.RunTab.cs)
     /// whenever the overall service-availability state changes, and locally
-    /// whenever row selection or the path picker changes - both Extract and Run
-    /// Selected must reflect ALL of "is anything else running", "is the LIVE
-    /// (current) path selected, not a historical one", and - for Run Selected
-    /// only - "are any rows actually checked."</summary>
+    /// whenever row selection or the path picker changes. Neither button is ever
+    /// actually disabled (see UpdateCustomerRefreshScanButtonEnabled/
+    /// UpdateCustomerRefreshRunButtonText's own comments for why) - this just
+    /// keeps _customerRefreshServiceAvailable current so StartCustomerRefreshScan/
+    /// StartCustomerRefreshExecute's own click-time checks see the right value.</summary>
     private void UpdateCustomerRefreshRunButtonEnabled(bool serviceAvailable)
     {
         _customerRefreshServiceAvailable = serviceAvailable;
@@ -669,16 +680,25 @@ public partial class MainForm
         UpdateCustomerRefreshRunButtonText();
     }
 
+    /// <summary>Deliberately does NOT set Button.Enabled (confirmed live 2026-08-29:
+    /// a FlatStyle.Flat button renders its text in a grayed/dark system color while
+    /// disabled, regardless of an explicit ForeColor - the exact "black font" bug
+    /// this was reported as). "Is anything else running" and "is this the live
+    /// path" are both already checked, with a clear message, at the top of
+    /// StartCustomerRefreshScan/StartCustomerRefreshExecute - disabling the button
+    /// on top of that was always redundant, and cost the always-blue/white
+    /// appearance for no real safety benefit.</summary>
     private void UpdateCustomerRefreshScanButtonEnabled()
     {
-        _customerRefreshScanButton.Enabled = _customerRefreshServiceAvailable && _customerRefreshIsLivePath;
     }
 
+    /// <summary>Text only, never Enabled - requested 2026-08-29 ("keep it enabled
+    /// all time"), see UpdateCustomerRefreshScanButtonEnabled's doc comment for why
+    /// disabling it was removed entirely rather than fixed some other way.</summary>
     private void UpdateCustomerRefreshRunButtonText()
     {
         var count = GetSelectedCustomerRefreshCandidates().Count;
-        _customerRefreshRunButton.Text = count > 0 ? $"Run Selected ({count})" : "Run Selected";
-        _customerRefreshRunButton.Enabled = _customerRefreshServiceAvailable && _customerRefreshIsLivePath && count > 0;
+        _customerRefreshRunButton.Text = count > 0 ? $"Transfer Selected to Sage50 ({count})" : "Transfer Selected to Sage50";
     }
 
     private void StartCustomerRefreshScan()
@@ -697,6 +717,15 @@ public partial class MainForm
                 "Something is already running (automatic or manual) - Customer Refresh can't run at the same " +
                 "time, since all of them connect to Sage 50 under the same account.",
                 "Already running", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (!_customerRefreshIsLivePath)
+        {
+            MessageBox.Show(this,
+                "You're viewing a historical Sage 50 path, not the currently-configured one - Extract only works " +
+                "against the live path. Switch \"Viewing data for:\" back to the current path first.",
+                "Not the live path", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -761,6 +790,16 @@ public partial class MainForm
                 "No rows are selected - tick the checkbox on each customer you want to process first (or use " +
                 "Select all).",
                 "Nothing selected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (!_customerRefreshIsLivePath)
+        {
+            MessageBox.Show(this,
+                "You're viewing a historical Sage 50 path, not the currently-configured one - Transfer Selected " +
+                "to Sage50 only works against the live path. Switch \"Viewing data for:\" back to the current " +
+                "path first.",
+                "Not the live path", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
