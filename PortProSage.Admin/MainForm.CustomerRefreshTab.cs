@@ -28,7 +28,10 @@ public partial class MainForm
     private readonly CheckBox _customerRefreshWrapDetails = new() { Text = "Wrapped Details", AutoSize = true };
 
     private readonly Button _customerRefreshScanButton = new() { Text = "Extract All Customer", Width = 170, Height = 30 };
-    private readonly Button _customerRefreshRunButton = new() { Text = "Run Selected", Width = 150, Height = 34, Enabled = false };
+    // Renamed from "Run Selected" (requested 2026-08-29) - "Transfer Selected to
+    // Sage50" says what actually happens, matching the button's own naming
+    // convention elsewhere in this app (e.g. Reconciliation's "Search").
+    private readonly Button _customerRefreshRunButton = new() { Text = "Transfer Selected to Sage50", Width = 210, Height = 30, Enabled = false };
     private readonly Label _customerRefreshLastScannedLabel = new() { AutoSize = true, ForeColor = SystemColors.GrayText };
 
     // Incremental "find and jump to" - not a filter (nothing is hidden), just
@@ -126,7 +129,7 @@ public partial class MainForm
 
     private TabPage BuildCustomerRefreshTab()
     {
-        var page = new TabPage("Customer Refresh");
+        var page = new TabPage("Customer Reconciliation");
 
         SetupCustomerRefreshGrid();
 
@@ -274,20 +277,39 @@ public partial class MainForm
             if (_tabs.SelectedTab == page) RefreshCustomerRefreshPathDropdown();
         };
 
+        // Blue/white (requested 2026-08-29, replacing its old red) and moved into
+        // the top scan bar right after Extract All Customer, instead of sitting
+        // alone at the bottom of the tab - same "primary action" treatment as
+        // Reconciliation's Search button.
         _customerRefreshRunButton.Click += (_, _) => StartCustomerRefreshExecute();
-        _customerRefreshRunButton.BackColor = Color.FromArgb(196, 43, 43);
+        _customerRefreshRunButton.BackColor = Color.FromArgb(0, 102, 204);
         _customerRefreshRunButton.ForeColor = Color.White;
         _customerRefreshRunButton.FlatStyle = FlatStyle.Flat;
         _customerRefreshRunButton.FlatAppearance.BorderSize = 0;
         _customerRefreshRunButton.Cursor = Cursors.Hand;
-        var customerRefreshHelp = CreateHelpIcon("Customer Refresh", CustomerRefreshHelpText);
+        var customerRefreshHelp = CreateHelpIcon("Customer Reconciliation", CustomerRefreshHelpText);
         var dryRunHelp = CreateHelpIcon("Dry run", CustomerRefreshDryRunHelpText);
 
+        // Moved into the header row alongside the buttons (requested 2026-08-29) -
+        // FlowLayoutPanel auto-positions these, so no manual Location needed
+        // (unlike their old home in the now-removed bottomBar).
+        _customerRefreshRunButton.Margin = new Padding(0, 12, 4, 0);
+        _customerRefreshDryRun.Margin = new Padding(20, 16, 4, 0);
+        dryRunHelp.Margin = new Padding(0, 12, 20, 0);
+        customerRefreshHelp.Margin = new Padding(0, 12, 0, 0);
+        leftFlow.Controls.Add(_customerRefreshRunButton);
+        leftFlow.Controls.Add(_customerRefreshDryRun);
+        leftFlow.Controls.Add(dryRunHelp);
+        leftFlow.Controls.Add(customerRefreshHelp);
+
+        // Moved up under the header row (requested 2026-08-29) - stays right next
+        // to the button it warns about, instead of separated at the bottom of the
+        // tab underneath the whole grid.
         var warning = new Label
         {
-            Text = "⚠ RUN SELECTED WILL CREATE NEW CUSTOMERS IN SAGE 50 FOR ANY SELECTED ROW MARKED INSERT, AND " +
-                   "OVERWRITE EXISTING CUSTOMER DATA FOR ANY ROW MARKED UPDATE, USING WHATEVER PORTPRO CURRENTLY " +
-                   "HAS ON FILE. ANY CHANGES MADE DIRECTLY IN SAGE 50 TO AN UPDATED CUSTOMER WILL BE LOST.",
+            Text = "⚠ TRANSFER SELECTED TO SAGE50 WILL CREATE NEW CUSTOMERS IN SAGE 50 FOR ANY SELECTED ROW MARKED " +
+                   "INSERT, AND OVERWRITE EXISTING CUSTOMER DATA FOR ANY ROW MARKED UPDATE, USING WHATEVER PORTPRO " +
+                   "CURRENTLY HAS ON FILE. ANY CHANGES MADE DIRECTLY IN SAGE 50 TO AN UPDATED CUSTOMER WILL BE LOST.",
             AutoSize = false,
             Dock = DockStyle.Top,
             Height = 32,
@@ -295,22 +317,8 @@ public partial class MainForm
             ForeColor = Color.FromArgb(150, 20, 20)
         };
 
-        var bottomBar = new Panel { Dock = DockStyle.Bottom, Height = 120, Padding = new Padding(12, 8, 12, 8) };
-        _customerRefreshDryRun.Location = new Point(0, 4);
-        dryRunHelp.Location = new Point(_customerRefreshDryRun.Right + 8, 2);
-        _customerRefreshRunButton.Location = new Point(0, 76);
-        customerRefreshHelp.Location = new Point(_customerRefreshRunButton.Right + 16, 82);
-        var warningPanel = new Panel { Location = new Point(0, 30), Size = new Size(900, 36) };
-        warningPanel.Controls.Add(warning);
-
-        bottomBar.Controls.Add(_customerRefreshDryRun);
-        bottomBar.Controls.Add(dryRunHelp);
-        bottomBar.Controls.Add(warningPanel);
-        bottomBar.Controls.Add(_customerRefreshRunButton);
-        bottomBar.Controls.Add(customerRefreshHelp);
-
         page.Controls.Add(gridPanel);
-        page.Controls.Add(bottomBar);
+        page.Controls.Add(warning);
         page.Controls.Add(pathBar);
         page.Controls.Add(scanBar);
 

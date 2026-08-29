@@ -147,23 +147,6 @@ public class SyncRequest
     /// old blanket "refresh everything" behavior and its "max customers" cap.</summary>
     public List<string>? CustomerRefreshSelectedPortProIds { get; set; }
 
-    /// <summary>Bypasses SyncStateRepository.IsAlreadyImported's skip check for
-    /// this run only - an invoice this app already recorded as imported gets
-    /// re-validated and re-posted to Sage 50 instead of being silently skipped.
-    /// Added 2026-08-16 as a one-time, per-run override for Manual Run's Invoice
-    /// date/Invoice number range/Invoice number list modes (Admin's checkbox is
-    /// deliberately never persisted and always resets to unchecked - see
-    /// MainForm.RunTab.cs) - NOT for Continue or Last changed date, which drive
-    /// the watermark and are meant to process only genuinely new/changed
-    /// invoices. Checking this does NOT clear the existing imported_invoice
-    /// tracking row; a successful re-import just overwrites it (see
-    /// SyncStateRepository.MarkImported's upsert), so this is safe to use
-    /// repeatedly, but it WILL create a genuine duplicate transaction in
-    /// Sage 50 if the invoice is truly still there - it does not undo or replace
-    /// the original Sage 50 invoice, only PortProSageSync's own memory of it.
-    /// </summary>
-    public bool OverrideAlreadyImportedCheck { get; set; }
-
     public DateTimeOffset RequestedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public string RequestedBy { get; set; } = Environment.UserName;
 }

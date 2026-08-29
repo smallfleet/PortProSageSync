@@ -26,7 +26,6 @@ public partial class MainForm
     private TextBox _runStartInvoice = new() { Width = 160 };
     private TextBox _runEndInvoice = new() { Width = 160 };
     private TextBox _runInvoiceNumberList = new() { Width = 400 }; // real width set live by UpdateInvoiceNumberListWidth
-    private CheckBox _runOverrideAlreadyImported = new() { Text = "Override \"Already Imported\" check for this run", AutoSize = true };
 
     // Only relevant for Invoice date mode - see AdvanceWatermarkHelpText. Defaults
     // CHECKED (confirmed live 2026-08-25); never persisted, so it can't silently
@@ -52,17 +51,6 @@ public partial class MainForm
         "Use \"Stop Manual Run\" to interrupt it if it's taking too long or picked up more than intended - it sends " +
         "a graceful shutdown signal first (same as Ctrl+C, so already-imported invoices and the last-processed " +
         "anchor stay correctly recorded up to that point), falling back to a hard stop only if it doesn't respond.";
-
-    private const string OverrideAlreadyImportedHelpText =
-        "Normally, an invoice this app already recorded as imported is silently skipped on every later run - that's " +
-        "what stops the same invoice from being posted to Sage 50 twice. Checking this box turns that skip off for " +
-        "THIS RUN ONLY: a previously-imported invoice is re-validated and re-posted instead.\n\n" +
-        "This is NEVER saved anywhere - it always starts unchecked when the app opens, and resets back to unchecked " +
-        "itself as soon as this run finishes or is stopped, so it can't silently carry forward into an unrelated " +
-        "later run.\n\n" +
-        "⚠ If the invoice is genuinely still in Sage 50, re-posting it creates a real duplicate - this does not " +
-        "remove or replace the original. Only use this after confirming (in Sage 50 itself) that the invoice(s) " +
-        "covered by the selected mode actually need to go in again.";
 
     // Added 2026-08-25 alongside removing "Continue"/"Last changed date" modes -
     // Invoice date's own date field (PortPro's billingDate) is unrelated to what
@@ -151,8 +139,6 @@ public partial class MainForm
             "the list endpoint doesn't return it.\n\n" +
             "Example: RSRE_000284, RSRE_000301, RSRE_000455",
             stretchInput: false);
-        AddCheckRow(grid, _runOverrideAlreadyImported, "(not saved anywhere - always resets to unchecked)",
-            "SyncRequest.OverrideAlreadyImportedCheck (one-time, this run only)", OverrideAlreadyImportedHelpText);
         AddRow(grid, "Max invoices to process (0 = no limit)", _runMaxInvoices, "(request)", "SyncRequest.MaxInvoicesToProcess",
             "Caps how many eligible (amount > 0) invoices this run actually processes, on top of whatever Mode " +
             "selects - once this many have been GENUINELY PROCESSED, the run stops even if more would otherwise " +
@@ -311,11 +297,6 @@ public partial class MainForm
         _runEndInvoice.Enabled = mode == 1;
         _runInvoiceNumberList.Enabled = mode == 2; // Invoice number list
 
-        // Available for all three remaining modes (Continue/Last changed date,
-        // the two that used to be excluded, are gone - see the Mode dropdown's
-        // own comment).
-        _runOverrideAlreadyImported.Enabled = true;
-
         // Only meaningful for Invoice date mode (see AdvanceWatermarkHelpText) -
         // hidden/disabled for the other two, and reset to its default every time
         // Invoice date is (re-)selected, since it's never persisted (see the
@@ -372,10 +353,6 @@ public partial class MainForm
     private void ResetRunFormToDefaults(SyncResult? result = null)
     {
         _runMaxInvoices.Value = 0;
-        // One-time override, never persisted (see OverrideAlreadyImportedHelpText) -
-        // reset the instant the run it applied to is done, same reasoning as Max
-        // invoices above, so it can't silently carry forward into the next run.
-        _runOverrideAlreadyImported.Checked = false;
 
         if (result is { IsFinal: true, Skipped: false } &&
             !string.IsNullOrWhiteSpace(result.ResolvedInvoiceNumberList) &&
@@ -421,8 +398,6 @@ public partial class MainForm
             request.MaxInvoicesToProcess = (int)_runMaxInvoices.Value;
         }
 
-        request.OverrideAlreadyImportedCheck = _runOverrideAlreadyImported.Checked;
-
         return request;
     }
 
@@ -458,12 +433,6 @@ public partial class MainForm
             $"MODE: {_runMode.SelectedItem?.ToString()?.ToUpperInvariant()}",
             ""
         };
-
-        if (request.OverrideAlreadyImportedCheck)
-        {
-            lines.Add("*** OVERRIDE \"ALREADY IMPORTED\" CHECK IS ON - previously-imported invoice(s) will be re-processed. ***");
-            lines.Add("");
-        }
 
         if (request.UseWatermark)
         {
@@ -549,20 +518,6 @@ public partial class MainForm
         {
             MessageBox.Show(this, rangeError, "Invalid range", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
-        }
-
-        // A separate, dedicated alert - not just a line in the main confirmation
-        // dialog below - because re-processing an invoice that's genuinely still in
-        // Sage 50 creates a real duplicate transaction, not just a harmless re-check.
-        if (request.OverrideAlreadyImportedCheck)
-        {
-            var overrideConfirm = MessageBox.Show(this,
-                "The invoice number(s) from the selected Mode should already be removed from Sage 50 before " +
-                "running with \"Override Already Imported\" checked - otherwise this WILL create duplicate " +
-                "invoices in Sage 50.\n\nAre you sure you want to proceed?",
-                "Confirm override of Already Imported check", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
-                MessageBoxDefaultButton.Button2);
-            if (overrideConfirm != DialogResult.Yes) return;
         }
 
         var confirm = MessageBox.Show(this, BuildManualRunConfirmationText(request),

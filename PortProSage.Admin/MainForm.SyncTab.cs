@@ -97,11 +97,10 @@ public partial class MainForm
         WireServiceControlButtons();
         var automaticHelp = CreateHelpIcon("Automatic Sync", AutomaticServiceHelpText);
 
-        // Start/Stop/Save at the bottom, same layout style as Manual Run's own
-        // button panel (MainForm.RunTab.cs) - confirmed live 2026-08-25 the
-        // operator wants the two tabs consistent, not Automatic Sync's controls
-        // docked at the top while Manual Run's are at the bottom.
-        var buttonPanel = new Panel { Dock = DockStyle.Bottom, Height = 50 };
+        // Start/Stop/Save moved to the top (requested 2026-08-29, alongside the
+        // same move already made for Manual Run's button panel) - always visible
+        // without scrolling down through the field list.
+        var buttonPanel = new Panel { Dock = DockStyle.Top, Height = 50 };
         _startServiceButton.Height = 36;
         _stopServiceButton.Height = 36;
         _startServiceButton.Location = new Point(12, 8);

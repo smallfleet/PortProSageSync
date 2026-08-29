@@ -762,10 +762,6 @@ public partial class MainForm
             // that plainly in Mode/Status instead of the usual FilterType-derived
             // text, which would otherwise misleadingly read as a real Continue/
             // LastChangedDate run that just happened to fetch 0 invoices.
-            // Appended whenever this run had "Override Already Imported" checked, so a
-            // re-processed run is never mistaken for an ordinary one just by glancing
-            // at the Mode column.
-            var overrideSuffix = entry.Request?.OverrideAlreadyImportedCheck == true ? " (Override)" : "";
             // Same idea for Dry Run - confirmed live 2026-08-22 a completed Dry Run
             // gave no visible indication anywhere in its own history that it was
             // simulated, not a real write.
@@ -780,7 +776,7 @@ public partial class MainForm
                 ? "Skipped - Process Running"
                 : entry.Request is not null
                     ? (entry.Request.UseWatermark ? "Continuous (Pass-1)" : FormatModeText(entry.Request.FilterType, entry.Result))
-                    : "(auto-poll)") + overrideSuffix + dryRunSuffix;
+                    : "(auto-poll)") + dryRunSuffix;
             var source = entry.Request?.FilterType is FilterType.FullCustomerRefresh or FilterType.CustomerRefreshScan ? "Customer Refresh"
                 : entry.IsAutomaticPoll || entry.ReconstructedFromLog ? "Automatic Service"
                 : entry.IsManual ? "Manual Run"
@@ -1373,8 +1369,7 @@ public partial class MainForm
         if (entry.Request is not null)
         {
             lines.Add($"Requested by: {entry.Request.RequestedBy}");
-            var overrideNote = entry.Request.OverrideAlreadyImportedCheck ? " *** OVERRIDE ALREADY IMPORTED CHECK WAS ON ***" : "";
-            lines.Add($"Filter type: {entry.Request.FilterType}, UseWatermark: {entry.Request.UseWatermark}{overrideNote}");
+            lines.Add($"Filter type: {entry.Request.FilterType}, UseWatermark: {entry.Request.UseWatermark}");
             if (entry.Request.From is not null || entry.Request.To is not null)
                 lines.Add($"From: {entry.Request.From:g}   To: {entry.Request.To:g}");
             if (entry.Request.StartInvoiceNumber is not null || entry.Request.EndInvoiceNumber is not null)

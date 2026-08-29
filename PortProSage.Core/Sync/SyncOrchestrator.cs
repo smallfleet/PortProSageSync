@@ -331,7 +331,7 @@ public class SyncOrchestrator
                 foreach (var invoice in orderedInvoices)
                 {
                     ct.ThrowIfCancellationRequested();
-                    var outcome = await ProcessOneInvoiceAsync(invoice, request.OverrideAlreadyImportedCheck, ct);
+                    var outcome = await ProcessOneInvoiceAsync(invoice, ct);
                     result.Outcomes.Add(outcome);
                     if (outcome.CustomerAutoCreated) result.CustomersCreated++;
 
@@ -601,7 +601,7 @@ public class SyncOrchestrator
     private static List<(DateTimeOffset? From, DateTimeOffset? To)> ComputeBatches(DateTimeOffset? from, DateTimeOffset? to)
         => new() { (from, to) };
 
-    private async Task<InvoiceProcessingOutcome> ProcessOneInvoiceAsync(PortProInvoice invoice, bool overrideAlreadyImportedCheck, CancellationToken ct)
+    private async Task<InvoiceProcessingOutcome> ProcessOneInvoiceAsync(PortProInvoice invoice, CancellationToken ct)
     {
         var outcome = new InvoiceProcessingOutcome
         {
@@ -615,9 +615,7 @@ public class SyncOrchestrator
                 .Sum(l => decimal.TryParse(l.FinalAmount, out var amount) ? amount : 0m)
         };
 
-        // See SyncRequest.OverrideAlreadyImportedCheck's doc comment - a one-time,
-        // per-run bypass of the skip-check below, not a permanent state change.
-        if (!overrideAlreadyImportedCheck && _state.IsAlreadyImported(invoice.Id))
+        if (_state.IsAlreadyImported(invoice.Id))
         {
             outcome.Success = true;
             outcome.Sage50InvoiceNumber = "ALREADY_IMPORTED";

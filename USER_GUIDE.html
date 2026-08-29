@@ -477,13 +477,6 @@
         <li><strong>Cutoff (Lower) Invoice Date</strong> — a hard floor: no invoice dated before this date is <em>ever</em> processed, by Manual Run or the Automatic Service, no matter which Mode is used. Exists specifically to stop Sage 50's own "Do Not Allow Transactions Dated Before…" rule from rejecting an invoice mid-run and killing everything after it. Shared with the Automatic Sync tab, saves instantly.</li>
         <li><strong>Start invoice number / End invoice number</strong> — only used by Invoice number range mode. Leave either blank for "no bound in that direction."</li>
         <li><strong>Invoice number list</strong> — only used by Invoice number list mode. This box resizes itself as you resize the window (tracks about 75% of the window's width).</li>
-        <li><strong>Override "Already Imported" check for this run</strong> — normally, an invoice this app already recorded as imported is silently skipped on every later run. Checking this box turns that skip off <em>for this run only</em>: a previously-imported invoice is re-validated and re-posted instead. Only available for Invoice date, Invoice number range, and Invoice number list modes.
-          <ul>
-            <li><strong>Never saved anywhere</strong> — always starts unchecked, and resets itself the moment the run it applied to finishes or is stopped.</li>
-            <li><strong>Shows an extra warning</strong> before the run starts, since a genuinely-still-present invoice would be posted twice if you're wrong. Only use this after confirming, in Sage 50 itself, that the invoice needs to go in again.</li>
-            <li><strong>Any run that used it is marked "(Override)"</strong> everywhere its Mode is shown, so it's never ambiguous afterward.</li>
-          </ul>
-        </li>
         <li><strong>Max invoices to process (0 = no limit)</strong> — caps how many <em>genuinely processed</em> invoices this run will actually handle. "Processed" means imported (or simulated, under Dry Run) or failed — an already-imported invoice does <strong>not</strong> count against this cap, since nothing was actually done for it.</li>
         <li><strong>Show command window while running</strong> — checked (default) pops up the Service's console window live; unchecked runs hidden in the background. Shared with Automatic Sync, saves instantly.</li>
         <li><strong>Dry run (Simulated - Default 10 Invoices and no real Sage 50 Changes)</strong> — the exact same setting as the Sage 50 tab's Dry run checkbox, editable here too; toggling it either place saves immediately and applies everywhere.
@@ -841,13 +834,10 @@
       </ol>
 
       <h3>Force-reprocess an invoice that's already marked as imported</h3>
-      <p>Use this only after confirming, in Sage 50 itself, that the invoice genuinely needs to go in again.</p>
+      <p>Use this only after confirming, in Sage 50 itself, that the invoice genuinely needs to go in again. There's no per-invoice "override" checkbox in Manual Run — instead, clear that invoice's own tracking first, then run normally.</p>
       <ol>
-        <li>Go to <strong>Manual Run</strong>.</li>
-        <li>Set Mode appropriately and enter the invoice(s).</li>
-        <li>Check <strong>Override "Already Imported" check for this run</strong>.</li>
-        <li>Click <strong>Manual Run</strong> — confirm the extra warning dialog only once you're sure.</li>
-        <li>Confirm the normal run dialog too. The Mode will show <strong>"(Override)"</strong> afterward.</li>
+        <li>Go to <strong>Settings</strong> and use <strong>Reset Imported-Invoice Tracking</strong> — either clear the whole currently-configured path's tracking, or, for just one run's invoices, delete that run from History & Logs instead.</li>
+        <li>Go to <strong>Manual Run</strong>, set Mode appropriately, and click <strong>Manual Run</strong> as normal — since tracking no longer shows it as imported, it's picked up and posted fresh.</li>
       </ol>
 
       <h3>Figure out why a run had failures</h3>
@@ -922,7 +912,7 @@
       <p>No — see <a href="#gap-fill">section 14</a>. That's the normal, healthy result most of the time.</p>
 
       <h3>An invoice was imported twice.</h3>
-      <p>Shouldn't happen under normal operation. Check <strong>Validate Invoice Extracted</strong> for that invoice's Request ID(s), and see the Settings tab's Reset Imported-Invoice Tracking section (and whether "Override Already Imported check" was used).</p>
+      <p>Shouldn't happen under normal operation. Check <strong>Validate Invoice Extracted</strong> for that invoice's Request ID(s), and see the Settings tab's Reset Imported-Invoice Tracking section for how the tracking works.</p>
 
       <h3>I deleted a run from History &amp; Logs by mistake — can I get it back?</h3>
       <p>No — deleting a run is permanent, by design. If the invoices it imported are still correctly in Sage 50, Sage 50 itself is unaffected — only this app's own history and bookkeeping.</p>
@@ -944,7 +934,6 @@
         <li><strong>Continuous (Pass-1)</strong> — the Automatic Service's main poll cycle, watermark-driven, based on each invoice's own creation date.</li>
         <li><strong>Find Gaps (Pass-2) / "Finding the Gap"</strong> — the automatic follow-up sweep double-checking for invoices the bulk list view might have missed. See <a href="#gap-fill">section 14</a>.</li>
         <li><strong>InvDate Changed (Pass-3)</strong> — not implemented. A planned future pass to catch an invoice edited after its own creation date; needs a Reverse + Insert capability that doesn't exist yet.</li>
-        <li><strong>Override Already Imported check</strong> — a Manual Run checkbox that lets a previously-imported invoice be re-processed for one run only. Never persisted; see <a href="#manual-run">section 4</a>.</li>
         <li><strong>Dry run</strong> — a mode that simulates a run without writing anything real to Sage 50. There are two independent Dry Run flags in the app: the shared one (Sage 50 tab / Manual Run tab) and Customer Refresh's own — see <a href="#customer-refresh">section 6</a>.</li>
         <li><strong>Trigger folder</strong> — the folder the running Service watches for new manual/trigger requests.</li>
         <li><strong>Request ID</strong> — the unique internal ID assigned to a single run, with a shorter "#" number for easier reference.</li>
