@@ -210,6 +210,13 @@ public partial class MainForm
         // Show All sets them to the true min/max across every entry and applies
         // immediately. Neither picker auto-applies on its own ValueChanged - only
         // these two buttons do.
+        // Every control's Margin.Top is picked so its vertical CENTER lines up
+        // along the row (requested 2026-08-29 - "center aligned"), not just its
+        // top edge: buttons/date pickers (~23px natural height) use 4, a bare
+        // Label (~15px) needs the extra ~8px difference split evenly (4+4=8) to
+        // land its own center at the same height.
+        const int rowControlMarginTop = 4;
+        const int rowLabelMarginTop = 8;
         var dateFilterBar = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
@@ -217,19 +224,20 @@ public partial class MainForm
             FlowDirection = FlowDirection.LeftToRight,
             Padding = new Padding(8, 6, 8, 0)
         };
-        void AddSpaced(Control c) { c.Margin = new Padding(4, 4, 4, 0); dateFilterBar.Controls.Add(c); }
-        AddSpaced(new Label { Text = "Prcs Start:", AutoSize = true, Margin = new Padding(4, 9, 4, 0) });
+        void AddSpaced(Control c, int marginTop = rowControlMarginTop) { c.Margin = new Padding(4, marginTop, 4, 0); dateFilterBar.Controls.Add(c); }
+        AddSpaced(new Label { Text = "Process Start:", AutoSize = true }, rowLabelMarginTop);
         AddSpaced(_historyProcessFrom);
-        AddSpaced(new Label { Text = "Prcs End:", AutoSize = true, Margin = new Padding(4, 9, 4, 0) });
+        AddSpaced(new Label { Text = "Process End:", AutoSize = true }, rowLabelMarginTop);
         AddSpaced(_historyProcessTo);
 
         var historySearchButton = new Button
         {
             Text = "Search",
             Width = 90,
+            Height = 23,
             FlatStyle = FlatStyle.Flat,
             Cursor = Cursors.Hand,
-            BackColor = Color.FromArgb(0, 102, 204),
+            BackColor = ActionButtonColor,
             ForeColor = Color.White
         };
         historySearchButton.FlatAppearance.BorderSize = 0;
@@ -241,7 +249,7 @@ public partial class MainForm
         };
         AddSpaced(historySearchButton);
 
-        var showAllButton = new Button { Text = "Show All", Width = 90 };
+        var showAllButton = new Button { Text = "Show All", Width = 90, Height = 23 };
         showAllButton.Click += (_, _) =>
         {
             var starts = _historyEntries.Select(e => e.Result?.StartedAtUtc ?? e.Request?.RequestedAtUtc)

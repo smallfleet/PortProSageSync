@@ -57,13 +57,13 @@ public partial class MainForm
 
     private TabPage BuildReconciliationTab()
     {
-        var page = new TabPage("Reconciliation");
+        var page = new TabPage("Invoice Reconciliation");
         // Process Start/End lead as columns 1 and 2 (requested 2026-08-28) - this
         // grid spans every run, unlike Invoice Transferred's single-run view, so
         // which run each row came from needs to be visible in the grid itself, not
         // just in the filter above it.
-        _reconciliationGrid.Columns.Add("ProcessStartDate", "Prcs Start Dt");
-        _reconciliationGrid.Columns.Add("ProcessEndDate", "Prcs End Dt");
+        _reconciliationGrid.Columns.Add("ProcessStartDate", "Process Start Dt");
+        _reconciliationGrid.Columns.Add("ProcessEndDate", "Process End Dt");
         _reconciliationGrid.Columns["ProcessStartDate"].FillWeight = 9;
         _reconciliationGrid.Columns["ProcessEndDate"].FillWeight = 9;
         SetupTransferredGridColumns(_reconciliationGrid);
@@ -77,6 +77,10 @@ public partial class MainForm
             Padding = new Padding(8)
         };
 
+        // Every control's Margin.Top is picked so its vertical CENTER lines up
+        // within the group (requested 2026-08-29 - "center aligned"): a bare
+        // Label (~15px natural height) gets 4px more than a DateTimePicker/
+        // ComboBox/TextBox/Button (~23px), splitting that ~8px difference evenly.
         FlowLayoutPanel Group(params Control[] controls)
         {
             var group = new FlowLayoutPanel
@@ -87,7 +91,7 @@ public partial class MainForm
             };
             foreach (var c in controls)
             {
-                c.Margin = new Padding(4, 6, 4, 0);
+                c.Margin = c is Label ? new Padding(4, 10, 4, 0) : new Padding(4, 6, 4, 0);
                 group.Controls.Add(c);
             }
             return group;
@@ -103,17 +107,17 @@ public partial class MainForm
             new Label { Text = "to", AutoSize = true }, _reconciliationInvoiceDateTo));
         filterPanel.Controls.Add(Group(_reconciliationMismatchOnly));
 
-        // Blue/white, matching History & Logs' "Delete Selected" red-button
-        // treatment for a primary action - requested 2026-08-28, plain "Search"
-        // (the "/Refresh" dropped) since it's one action either way.
+        // Blue/white (ActionButtonColor - the same shade every other "primary
+        // action" button in the app uses, not an ad-hoc similar-looking blue),
+        // plain "Search" (the "/Refresh" dropped) since it's one action either way.
         var searchButton = new Button
         {
             Text = "Search",
             Width = 90,
-            Height = 28,
+            Height = 23,
             FlatStyle = FlatStyle.Flat,
             Cursor = Cursors.Hand,
-            BackColor = Color.FromArgb(0, 102, 204),
+            BackColor = ActionButtonColor,
             ForeColor = Color.White
         };
         searchButton.FlatAppearance.BorderSize = 0;
@@ -127,7 +131,7 @@ public partial class MainForm
         // widens PortPro Invoice Date back to its own default, and unchecks the
         // mismatch-only filter. Then runs a fresh search (not just a re-filter),
         // per "Clear filter should bring back search... and search".
-        var clearSearchButton = new Button { Text = "Clear Search", Width = 100 };
+        var clearSearchButton = new Button { Text = "Clear Search", Width = 100, Height = 23 };
         clearSearchButton.Click += (_, _) =>
         {
             _reconciliationInvoiceSearch.Text = "";

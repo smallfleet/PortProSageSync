@@ -279,24 +279,32 @@ public partial class MainForm
 
         // Blue/white (requested 2026-08-29, replacing its old red) and moved into
         // the top scan bar right after Extract All Customer, instead of sitting
-        // alone at the bottom of the tab - same "primary action" treatment as
-        // Reconciliation's Search button.
+        // alone at the bottom of the tab. Matched to Extract All Customer exactly
+        // (same AutoSize/Height/BackColor/Margin.Top - confirmed live 2026-08-29
+        // the two buttons looked visibly different in both color and vertical
+        // position before this) - same ActionButtonColor every other "primary
+        // action" button in the app uses, not an ad-hoc similar-looking blue.
         _customerRefreshRunButton.Click += (_, _) => StartCustomerRefreshExecute();
-        _customerRefreshRunButton.BackColor = Color.FromArgb(0, 102, 204);
+        _customerRefreshRunButton.AutoSize = false;
+        _customerRefreshRunButton.Height = 30;
+        _customerRefreshRunButton.BackColor = ActionButtonColor;
         _customerRefreshRunButton.ForeColor = Color.White;
         _customerRefreshRunButton.FlatStyle = FlatStyle.Flat;
         _customerRefreshRunButton.FlatAppearance.BorderSize = 0;
         _customerRefreshRunButton.Cursor = Cursors.Hand;
+        _customerRefreshRunButton.Margin = new Padding(0, 5, 20, 0);
         var customerRefreshHelp = CreateHelpIcon("Customer Reconciliation", CustomerRefreshHelpText);
         var dryRunHelp = CreateHelpIcon("Dry run", CustomerRefreshDryRunHelpText);
 
         // Moved into the header row alongside the buttons (requested 2026-08-29) -
         // FlowLayoutPanel auto-positions these, so no manual Location needed
-        // (unlike their old home in the now-removed bottomBar).
-        _customerRefreshRunButton.Margin = new Padding(0, 12, 4, 0);
-        _customerRefreshDryRun.Margin = new Padding(20, 16, 4, 0);
-        dryRunHelp.Margin = new Padding(0, 12, 20, 0);
-        customerRefreshHelp.Margin = new Padding(0, 12, 0, 0);
+        // (unlike their old home in the now-removed bottomBar). Margin.Top values
+        // matched to the two buttons' own (5) plus each control's own natural
+        // height difference, so every control's vertical center lines up along
+        // the row instead of each sitting at its own default top offset.
+        _customerRefreshDryRun.Margin = new Padding(0, 10, 4, 0);
+        dryRunHelp.Margin = new Padding(0, 10, 20, 0);
+        customerRefreshHelp.Margin = new Padding(0, 10, 0, 0);
         leftFlow.Controls.Add(_customerRefreshRunButton);
         leftFlow.Controls.Add(_customerRefreshDryRun);
         leftFlow.Controls.Add(dryRunHelp);
@@ -305,14 +313,17 @@ public partial class MainForm
         // Moved up under the header row (requested 2026-08-29) - stays right next
         // to the button it warns about, instead of separated at the bottom of the
         // tab underneath the whole grid.
+        // Explicit two-line split (requested 2026-08-29) at the natural sentence
+        // break, instead of one long line that ran past the visible tab width -
+        // Height doubled to fit both lines.
         var warning = new Label
         {
             Text = "⚠ TRANSFER SELECTED TO SAGE50 WILL CREATE NEW CUSTOMERS IN SAGE 50 FOR ANY SELECTED ROW MARKED " +
                    "INSERT, AND OVERWRITE EXISTING CUSTOMER DATA FOR ANY ROW MARKED UPDATE, USING WHATEVER PORTPRO " +
-                   "CURRENTLY HAS ON FILE. ANY CHANGES MADE DIRECTLY IN SAGE 50 TO AN UPDATED CUSTOMER WILL BE LOST.",
+                   "CURRENTLY HAS ON FILE.\nANY CHANGES MADE DIRECTLY IN SAGE 50 TO AN UPDATED CUSTOMER WILL BE LOST.",
             AutoSize = false,
             Dock = DockStyle.Top,
-            Height = 32,
+            Height = 48,
             Font = new Font(Font, FontStyle.Bold),
             ForeColor = Color.FromArgb(150, 20, 20)
         };
