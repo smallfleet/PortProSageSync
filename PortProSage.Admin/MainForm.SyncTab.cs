@@ -83,9 +83,6 @@ public partial class MainForm
         WireShowCommandWindowControl(_syncShowCommandWindow);
         RefreshAllTabsFromConfig += RefreshShowCommandWindowControls;
 
-        BuildPreviousRunSection(grid, _syncPrevRunMode, _syncPrevRunFrom, _syncPrevRunTo, _syncPrevRunMaxInvoices,
-            _syncPrevRunFirstInvoiceProcessed, _syncPrevRunLastInvoiceProcessed, _syncPrevRunResult, _syncPrevRunInvoiceListUsed);
-
         var save = new Button { Text = "Save Automatic Sync settings", Width = 190, Height = 36 };
         save.Click += (_, _) => SaveSyncTab();
         // Same accent-color treatment as Manual Run's Save button - see

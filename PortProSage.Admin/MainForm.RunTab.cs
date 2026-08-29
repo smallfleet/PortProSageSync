@@ -33,7 +33,7 @@ public partial class MainForm
     // carry a stale choice into an unrelated later run - see UpdateRunModeFieldStates.
     private CheckBox _runAdvanceWatermark = new()
     {
-        Text = "Watermark will be updated with this run's End Date (not saved)",
+        Text = "Watermark will be updated with this run's End Date (selection will not be saved)",
         AutoSize = true
     };
     private NumericUpDown _runMaxInvoices = new() { Minimum = 0, Maximum = 100000, Width = 120 };
@@ -41,36 +41,6 @@ public partial class MainForm
     private Button _manualRunButton = new() { Text = "Manual Run", Width = 140, Height = 36 };
     private Button _manualRunStopButton = new() { Text = "Stop Manual Run", Width = 140, Height = 36, Enabled = false };
     private Button _manualRunSaveButton = new() { Text = "Save", Width = 90, Height = 36 };
-
-    // "Previous Run" section - a read-only snapshot of the most recently completed
-    // run's parameters, so it's directly visible (not just documented) that
-    // whichever mode was actually used, its values are retained/recorded rather
-    // than lost. Refreshed by RefreshPreviousRunSection(), called every time
-    // RefreshHistoryList() runs (MainForm.HistoryTab.cs) - initial load, after
-    // starting/stopping a Manual Run, and on the result-poll timer.
-    private TextBox _prevRunMode = new() { ReadOnly = true, Enabled = false, Width = 400 };
-    private TextBox _prevRunFrom = new() { ReadOnly = true, Enabled = false, Width = 220 };
-    private TextBox _prevRunTo = new() { ReadOnly = true, Enabled = false, Width = 220 };
-    private TextBox _prevRunMaxInvoices = new() { ReadOnly = true, Enabled = false, Width = 400 };
-    private TextBox _prevRunFirstInvoiceProcessed = new() { ReadOnly = true, Enabled = false, Width = 400 };
-    private TextBox _prevRunLastInvoiceProcessed = new() { ReadOnly = true, Enabled = false, Width = 400 };
-    private TextBox _prevRunResult = new() { ReadOnly = true, Enabled = false, Width = 650 };
-    private TextBox _prevRunInvoiceListUsed = new() { ReadOnly = true, Enabled = false, Width = 650 };
-
-    // Same "Previous Run" data, shown a second time on the Automatic Sync tab -
-    // it's not just a Manual Run concern, the automatic poll's most recent
-    // outcome is exactly as relevant there. Kept as a separate set of controls
-    // (not the same instances reused on two tabs, which WinForms doesn't allow -
-    // a control can only ever live under one parent) and refreshed in lockstep
-    // by RefreshPreviousRunSection.
-    private TextBox _syncPrevRunMode = new() { ReadOnly = true, Enabled = false, Width = 400 };
-    private TextBox _syncPrevRunFrom = new() { ReadOnly = true, Enabled = false, Width = 220 };
-    private TextBox _syncPrevRunTo = new() { ReadOnly = true, Enabled = false, Width = 220 };
-    private TextBox _syncPrevRunMaxInvoices = new() { ReadOnly = true, Enabled = false, Width = 400 };
-    private TextBox _syncPrevRunFirstInvoiceProcessed = new() { ReadOnly = true, Enabled = false, Width = 400 };
-    private TextBox _syncPrevRunLastInvoiceProcessed = new() { ReadOnly = true, Enabled = false, Width = 400 };
-    private TextBox _syncPrevRunResult = new() { ReadOnly = true, Enabled = false, Width = 650 };
-    private TextBox _syncPrevRunInvoiceListUsed = new() { ReadOnly = true, Enabled = false, Width = 650 };
 
     private const string ManualRunHelpText =
         "Runs the sync ONE TIME, right now, in its own dedicated process - it does not write a file for something " +
@@ -200,9 +170,6 @@ public partial class MainForm
         AddCheckRow(grid, _runDryRun, "(request - not a settings file)", "PortProSage:Sage50:DryRun", RunDryRunHelpText);
         WireDryRunControl(_runDryRun);
 
-        BuildPreviousRunSection(grid, _prevRunMode, _prevRunFrom, _prevRunTo, _prevRunMaxInvoices,
-            _prevRunFirstInvoiceProcessed, _prevRunLastInvoiceProcessed, _prevRunResult, _prevRunInvoiceListUsed);
-
         _manualRunButton.Click += (_, _) => StartManualRun();
         _manualRunStopButton.Click += (_, _) => StopManualRun();
         _manualRunSaveButton.Click += (_, _) =>
@@ -221,7 +188,11 @@ public partial class MainForm
         _manualRunSaveButton.Cursor = Cursors.Hand;
         var manualRunHelp = CreateHelpIcon("Manual Run", ManualRunHelpText);
 
-        var buttonPanel = new Panel { Dock = DockStyle.Bottom, Height = 50 };
+        // Docked Top, not Bottom (moved 2026-08-28) - sits right after the tab's
+        // own top edge so Start/Stop/Save are always visible without scrolling
+        // down through the field list, rather than requiring a scroll to the very
+        // bottom to find them.
+        var buttonPanel = new Panel { Dock = DockStyle.Top, Height = 50 };
         _manualRunButton.Location = new Point(12, 8);
         _manualRunStopButton.Location = new Point(160, 8);
         _manualRunSaveButton.Location = new Point(310, 8);
@@ -356,191 +327,6 @@ public partial class MainForm
         _runAdvanceWatermark.Visible = advanceApplicable;
         _runAdvanceWatermark.Enabled = advanceApplicable;
         _runAdvanceWatermark.Checked = advanceApplicable;
-    }
-
-    /// <summary>Adds the read-only "Previous Run" rows to the given grid - called
-    /// once per tab (Manual Run and Automatic Sync), each with its own set of
-    /// controls, since a WinForms control can only ever live under one parent.
-    /// Uses the same grid as the run parameters above rather than a separately-
-    /// docked panel - a TableLayoutPanel's rows always render in row-index order,
-    /// so this sidesteps WinForms' well-known "last-docked-control-ends-up-on-top"
-    /// ordering gotcha entirely.</summary>
-    private void BuildPreviousRunSection(TableLayoutPanel grid, TextBox modeBox, TextBox fromBox, TextBox toBox,
-        TextBox maxInvoicesBox, TextBox firstInvoiceBox, TextBox lastInvoiceBox, TextBox resultBox, TextBox invoiceListUsedBox)
-    {
-        var headingRow = grid.RowCount++;
-        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var heading = new Label
-        {
-            Text = "Previous run (excluding \"Find Gaps (Pass-2)\" run)",
-            AutoSize = true,
-            Font = new Font(Font, FontStyle.Bold),
-            Margin = new Padding(3, 18, 3, 2)
-        };
-        grid.Controls.Add(heading, 0, headingRow);
-        grid.SetColumnSpan(heading, 3);
-
-        AddPreviousRunRowWithCopy(grid, "Previous Run: Mode", modeBox, "RunHistoryEntry.Request.FilterType / UseWatermark");
-        AddPreviousRunRowWithCopy(grid, "Previous Run: Inv Start Date", fromBox, "RunHistoryEntry.Result.EffectiveFromUtc",
-            "The actual invoice-date window's start, as resolved and used by that run - not the persisted " +
-            "watermark, which is generally unrelated to what an explicit Invoice date run actually processed " +
-            "unless \"Watermark will be updated with this run's End Date\" was checked for it. Blank for Invoice " +
-            "number range/list modes, which have no date window at all.");
-        AddPreviousRunRowWithCopy(grid, "Previous Run: Inv End Date", toBox, "RunHistoryEntry.Result.EffectiveToUtc",
-            "The actual invoice-date window's end, as resolved and used by that run.");
-        AddPreviousRunRowWithCopy(grid, "Previous Run: Max invoices to process", maxInvoicesBox, "RunHistoryEntry.Request.MaxInvoicesToProcess");
-        AddPreviousRunRowWithCopy(grid, "Previous Run: First Invoice Processed", firstInvoiceBox, "Parsed from the run's log (TRANSFER lines)",
-            "The lowest-numbered invoice actually transferred to Sage 50 during the previous run - same data as the " +
-            "History tab's \"Invoice Transferred\" list, parsed from the log rather than result.json so this works " +
-            "for automatic-poll runs too (they never write a result.json).");
-        AddPreviousRunRowWithCopy(grid, "Previous Run: Last Invoice Processed", lastInvoiceBox, "Parsed from the run's log (TRANSFER lines)",
-            "The highest-numbered invoice actually transferred to Sage 50 during the previous run.");
-        AddPreviousRunRowWithCopy(grid, "Previous Run: Result", resultBox, "RunHistoryEntry.Result (Invoices* counts, IsFinal)",
-            "A clear pass/fail summary of the previous run, with counts - the same information shown in the pop-up " +
-            "when a Manual Run finishes, but kept here too since it applies just as much to the Automatic Service's " +
-            "own poll cycles, which run unattended with no pop-up to show.\n\n" +
-            "SUCCESS means it completed with no failures. FINISHED WITH ERRORS means it completed but at least one " +
-            "invoice failed validation or failed to write - check the Failed Transactions tab or Full Log. " +
-            "INTERRUPTED means the process stopped before finishing (crashed, was force-stopped, or hit a fatal " +
-            "Sage 50 write error) - the counts shown are as of its last checkpoint, not final.");
-        AddPreviousRunRowWithCopy(grid, "Previous Run: Invoice List Used", invoiceListUsedBox, "RunHistoryEntry.Result.ResolvedInvoiceNumberList",
-            "The actual comma-separated reference-number list this run used - only populated for Invoice number " +
-            "list mode or Find missing invoices in range (gap scan). For a gap scan, this is the REAL computed " +
-            "candidate list (everything in the scanned range not already recorded as imported) - the only place " +
-            "that list is visible, not just documented in the log. Blank for every other mode. Copy this to paste " +
-            "straight into the Invoice number list field above for a Manual Run.");
-    }
-
-    /// <summary>Like AddRow(stretchInput: false), but with a "Copy" button
-    /// (always enabled, regardless of whether the field is currently empty)
-    /// right after the field - confirmed live 2026-08-24 the operator wants to
-    /// copy a Previous Run value (most often the resolved Invoice List Used) out
-    /// to paste elsewhere, e.g. back into the Invoice number list field above to
-    /// re-run it, without needing to manually select the read-only text first.</summary>
-    private void AddPreviousRunRowWithCopy(TableLayoutPanel grid, string labelText, TextBox input, string jsonPath, string helpText = "")
-    {
-        var row = grid.RowCount++;
-        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var label = new Label { Text = labelText, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 8, 3, 3) };
-        input.Anchor = AnchorStyles.Left;
-        input.Margin = new Padding(3, 4, 3, 4);
-
-        var copyButton = new Button { Text = "Copy", AutoSize = true, Height = 23, Margin = new Padding(4, 4, 0, 3) };
-        copyButton.Click += (_, _) =>
-        {
-            // Clipboard.SetText throws on an empty string - silently do nothing
-            // rather than a jarring error for a field that just happens to be
-            // blank for this particular previous run (e.g. Invoice List Used on
-            // a date-range run).
-            if (!string.IsNullOrEmpty(input.Text)) Clipboard.SetText(input.Text);
-        };
-
-        var wrap = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, AutoSize = true };
-        wrap.Controls.Add(input);
-        wrap.Controls.Add(copyButton);
-        if (!string.IsNullOrEmpty(helpText))
-        {
-            wrap.Controls.Add(CreateHelpIcon(labelText.Replace("\n", " "), helpText));
-        }
-
-        grid.Controls.Add(label, 0, row);
-        grid.Controls.Add(wrap, 1, row);
-        WireSource(input, "(history - most recent completed run)", jsonPath);
-    }
-
-    /// <summary>Called every time RefreshHistoryList() runs (MainForm.HistoryTab.cs) -
-    /// initial load, after starting/stopping a Manual Run, and on the result-poll
-    /// timer - so this section always reflects the actual most recent run, not a
-    /// stale snapshot from when the tab was built. Updates both tabs' copies of the
-    /// controls together - the underlying data is identical, only the containing
-    /// tab differs.</summary>
-    private void RefreshPreviousRunSection()
-    {
-        // Excludes gap-fill sub-runs - every Manual Run automatically triggers its
-        // own gap-fill sweep immediately after (see GapFillRunner), which becomes
-        // "the most recent run" a moment later and buried what the operator
-        // actually ran underneath a narrow, derived range - confirmed live
-        // 2026-08-25. entry.Request retains its original FilterType.InvoiceNumberGapScan
-        // even though SyncOrchestrator.RunAsync rewrites its own in-memory copy to
-        // InvoiceNumberList once it starts (see RunHistoryService's Mode-column
-        // label, same check).
-        var entry = _historyEntries.FirstOrDefault(e =>
-            !e.IsPending && e.Result is not null && e.Request?.FilterType != FilterType.InvoiceNumberGapScan);
-
-        string modeText, fromText, toText, maxInvoicesText, firstInvoiceText, lastInvoiceText, resultText, invoiceListUsedText;
-        if (entry?.Result is null)
-        {
-            modeText = "(no completed run yet)";
-            fromText = toText = maxInvoicesText = firstInvoiceText = lastInvoiceText = resultText = invoiceListUsedText = "";
-        }
-        else
-        {
-            var request = entry.Request;
-            modeText = (request is null
-                ? "(automatic poll - continue from where we left off)"
-                : request.UseWatermark ? "Continue (from where we left off)" : request.FilterType.ToString())
-                + (request?.OverrideAlreadyImportedCheck == true ? " (Override)" : "")
-                + (request?.AdvanceWatermarkOnCompletion == true ? " (Watermark Advanced)" : "")
-                + (entry.Result.WasDryRun ? " (Dry Run)" : "");
-            // The actual resolved invoice-date window (see SyncResult.EffectiveFromUtc's
-            // doc comment), not the persisted watermark - the watermark is generally
-            // stale/unrelated to what an explicit-range run actually used (unless
-            // AdvanceWatermarkOnCompletion was checked for it), which is exactly what
-            // left this blank-or-wrong for the runs that prompted this fix.
-            fromText = entry.Result.EffectiveFromUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "(n/a - no date filter this run)";
-            toText = entry.Result.EffectiveToUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "(n/a - no date filter this run)";
-            maxInvoicesText = request?.MaxInvoicesToProcess?.ToString() ?? "(no limit)";
-
-            // Parsed from the log, not entry.Result.Outcomes - Outcomes is empty for
-            // automatic-poll entries (ReconstructFromLogs only recovers the summary
-            // counts, not the per-invoice list), so parsing the log is the only way
-            // this works identically for every run source.
-            var logLines = string.IsNullOrWhiteSpace(_logFolder)
-                ? new List<string>()
-                : LogExtractorService.ExtractForWindow(_logFolder, entry.Result.StartedAtUtc, entry.Result.FinishedAtUtc);
-            var refs = LogExtractorService.ExtractTransferredInvoices(logLines)
-                .Select(r => r.PortProReference)
-                .Where(r => !string.IsNullOrEmpty(r))
-                .OrderBy(r => r, StringComparer.Ordinal)
-                .ToList();
-
-            firstInvoiceText = refs.Count > 0 ? refs[0] : "(none)";
-            lastInvoiceText = refs.Count > 0 ? refs[^1] : "(none)";
-
-            // Same three-way classification as ShowRunCompletionMessage's pop-up
-            // (MainForm.HistoryTab.cs), condensed to one line - applies here too
-            // since this section covers automatic-poll runs, which have no pop-up
-            // to show (they run unattended).
-            var r = entry.Result;
-            var hasFailures = r.InvoicesFailedValidation > 0 || r.InvoicesFailedImport > 0;
-            var dryRunPrefix = r.WasDryRun ? "[DRY RUN - simulated, nothing written to Sage 50] " : "";
-            resultText = dryRunPrefix + (!r.IsFinal
-                ? $"INTERRUPTED before finishing - as of last checkpoint: imported={r.InvoicesImported}, " +
-                  $"alreadyImported={r.InvoicesSkippedAlreadyImported}, failedValidation={r.InvoicesFailedValidation}, " +
-                  $"failedImport={r.InvoicesFailedImport}. See Failed Transactions / Full Log."
-                : hasFailures
-                    ? $"FINISHED WITH ERRORS - imported={r.InvoicesImported}, alreadyImported={r.InvoicesSkippedAlreadyImported}, " +
-                      $"failedValidation={r.InvoicesFailedValidation}, failedImport={r.InvoicesFailedImport}. See Failed Transactions / Full Log."
-                    : $"SUCCESS - imported={r.InvoicesImported}, alreadyImported={r.InvoicesSkippedAlreadyImported}, notFound={r.InvoicesNotFound}.");
-
-            invoiceListUsedText = r.ResolvedInvoiceNumberList ?? "";
-        }
-
-        foreach (var (modeBox, fromBox, toBox, maxBox, firstBox, lastBox, resultBox, invoiceListBox) in new[]
-        {
-            (_prevRunMode, _prevRunFrom, _prevRunTo, _prevRunMaxInvoices, _prevRunFirstInvoiceProcessed, _prevRunLastInvoiceProcessed, _prevRunResult, _prevRunInvoiceListUsed),
-            (_syncPrevRunMode, _syncPrevRunFrom, _syncPrevRunTo, _syncPrevRunMaxInvoices, _syncPrevRunFirstInvoiceProcessed, _syncPrevRunLastInvoiceProcessed, _syncPrevRunResult, _syncPrevRunInvoiceListUsed)
-        })
-        {
-            modeBox.Text = modeText;
-            fromBox.Text = fromText;
-            toBox.Text = toText;
-            maxBox.Text = maxInvoicesText;
-            firstBox.Text = firstInvoiceText;
-            lastBox.Text = lastInvoiceText;
-            resultBox.Text = resultText;
-            invoiceListBox.Text = invoiceListUsedText;
-        }
     }
 
     /// <summary>Called after Sync tab (re)loads config - the Run/History tabs need the

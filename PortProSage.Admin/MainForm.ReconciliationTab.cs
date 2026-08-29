@@ -31,13 +31,14 @@ public partial class MainForm
     // says the invoice is dated" - Process reads first since it's the filter
     // most directly tied to "what happened, and when"). No enable checkbox
     // (removed 2026-08-28, same "always a concrete value" preference already
-    // applied to the Automatic Sync watermark field) - both ranges are always
-    // live filters, defaulted wide (6 months back through tomorrow) so the grid
-    // starts showing everything rather than nothing.
+    // applied to the Automatic Sync watermark field). Process Start/End default
+    // to today's midnight through right now - requested 2026-08-28 - so the tab
+    // opens scoped to "what happened today"; Clear Search resets back to this
+    // same pair (see the Clear Search button below).
     private readonly DateTimePicker _reconciliationProcessFrom = new()
-    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", Width = 145, Value = DateTime.Today.AddMonths(-6) };
+    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", Width = 145, Value = DateTime.Today };
     private readonly DateTimePicker _reconciliationProcessTo = new()
-    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", Width = 145, Value = DateTime.Today.AddDays(1) };
+    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", Width = 145, Value = DateTime.Now };
 
     private readonly DateTimePicker _reconciliationInvoiceDateFrom = new()
     { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd", Width = 110, Value = DateTime.Today.AddMonths(-6) };
@@ -121,26 +122,28 @@ public partial class MainForm
 
         // Resets every filter except Sage50 path (requested 2026-08-28 - the path
         // is treated as "which file am I working in", not part of the search
-        // itself) - clears the invoice number search, widens both date ranges
-        // back to their defaults, and unchecks the mismatch-only filter. Re-
-        // filters the already-loaded data; no need for a fresh scan.
+        // itself) - clears the invoice number search, resets Process Start/End
+        // back to today's midnight through right now (the same tab-init default),
+        // widens PortPro Invoice Date back to its own default, and unchecks the
+        // mismatch-only filter. Then runs a fresh search (not just a re-filter),
+        // per "Clear filter should bring back search... and search".
         var clearSearchButton = new Button { Text = "Clear Search", Width = 100 };
         clearSearchButton.Click += (_, _) =>
         {
             _reconciliationInvoiceSearch.Text = "";
-            _reconciliationProcessFrom.Value = DateTime.Today.AddMonths(-6);
-            _reconciliationProcessTo.Value = DateTime.Today.AddDays(1);
+            _reconciliationProcessFrom.Value = DateTime.Today;
+            _reconciliationProcessTo.Value = DateTime.Now;
             _reconciliationInvoiceDateFrom.Value = DateTime.Today.AddMonths(-6);
             _reconciliationInvoiceDateTo.Value = DateTime.Today.AddDays(1);
             _reconciliationMismatchOnly.Checked = false;
-            ApplyReconciliationFilters();
+            RunReconciliationScan();
         };
         filterPanel.Controls.Add(Group(clearSearchButton, _reconciliationStatusLabel));
 
-        _reconciliationProcessFrom.ValueChanged += (_, _) => ApplyReconciliationFilters();
-        _reconciliationProcessTo.ValueChanged += (_, _) => ApplyReconciliationFilters();
-        _reconciliationInvoiceDateFrom.ValueChanged += (_, _) => ApplyReconciliationFilters();
-        _reconciliationInvoiceDateTo.ValueChanged += (_, _) => ApplyReconciliationFilters();
+        // Deliberately NOT wired to auto-apply (requested 2026-08-28) - changing
+        // any of the four date fields only updates the pending value; nothing
+        // re-filters until the Search button is clicked, which picks up whatever
+        // the fields currently hold.
         _reconciliationMismatchOnly.CheckedChanged += (_, _) => ApplyReconciliationFilters();
         _reconciliationInvoiceSearch.TextChanged += (_, _) => ApplyReconciliationFilters();
         // Path changes trigger a fresh Search/Refresh, not just a re-filter of

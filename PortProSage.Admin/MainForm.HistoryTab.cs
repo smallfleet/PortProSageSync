@@ -44,6 +44,19 @@ public partial class MainForm
     // the filter - see MatchesHistoryPathFilter.
     private readonly ComboBox _historyPathDropdown = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 380 };
 
+    // Process Start/End filter (added 2026-08-28) - deliberately NOT wired to
+    // auto-refresh on ValueChanged; only committed into _historyDateFilterFrom/To
+    // (and applied) by the Search button, or by Show All (which also sets them to
+    // the true min/max across every entry). Both null means "no date filtering" -
+    // the tab's original behavior, preserved until the operator explicitly
+    // applies a range.
+    private readonly DateTimePicker _historyProcessFrom = new()
+    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", Width = 145, Value = DateTime.Today };
+    private readonly DateTimePicker _historyProcessTo = new()
+    { Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", Width = 145, Value = DateTime.Now };
+    private DateTimeOffset? _historyDateFilterFrom;
+    private DateTimeOffset? _historyDateFilterTo;
+
     private TabPage BuildResultsTab()
     {
         var page = new TabPage("History && Logs");
@@ -190,8 +203,73 @@ public partial class MainForm
         // (refreshButton added last so it lands at the true top edge, above
         // topPanel - see the "last-docked-control-ends-up-on-top" note
         // elsewhere in this app).
+        // Process Start/End filter bar (added 2026-08-28) - sits below refreshBar
+        // (added to page.Controls before it, so it claims the next Top slot
+        // inward - see the "last-docked-control-ends-up-on-top" note above).
+        // Search commits the two pickers' current values as the active filter;
+        // Show All sets them to the true min/max across every entry and applies
+        // immediately. Neither picker auto-applies on its own ValueChanged - only
+        // these two buttons do.
+        var dateFilterBar = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 40,
+            FlowDirection = FlowDirection.LeftToRight,
+            Padding = new Padding(8, 6, 8, 0)
+        };
+        void AddSpaced(Control c) { c.Margin = new Padding(4, 4, 4, 0); dateFilterBar.Controls.Add(c); }
+        AddSpaced(new Label { Text = "Prcs Start:", AutoSize = true, Margin = new Padding(4, 9, 4, 0) });
+        AddSpaced(_historyProcessFrom);
+        AddSpaced(new Label { Text = "Prcs End:", AutoSize = true, Margin = new Padding(4, 9, 4, 0) });
+        AddSpaced(_historyProcessTo);
+
+        var historySearchButton = new Button
+        {
+            Text = "Search",
+            Width = 90,
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand,
+            BackColor = Color.FromArgb(0, 102, 204),
+            ForeColor = Color.White
+        };
+        historySearchButton.FlatAppearance.BorderSize = 0;
+        historySearchButton.Click += (_, _) =>
+        {
+            _historyDateFilterFrom = _historyProcessFrom.Value;
+            _historyDateFilterTo = _historyProcessTo.Value;
+            RefreshHistoryList();
+        };
+        AddSpaced(historySearchButton);
+
+        var showAllButton = new Button { Text = "Show All", Width = 90 };
+        showAllButton.Click += (_, _) =>
+        {
+            var starts = _historyEntries.Select(e => e.Result?.StartedAtUtc ?? e.Request?.RequestedAtUtc)
+                .Where(d => d is not null).Select(d => d!.Value).ToList();
+            var ends = _historyEntries.Select(e => e.Result?.FinishedAtUtc ?? e.Result?.StartedAtUtc ?? e.Request?.RequestedAtUtc)
+                .Where(d => d is not null).Select(d => d!.Value).ToList();
+
+            if (starts.Count > 0 && ends.Count > 0)
+            {
+                var min = starts.Min();
+                var max = ends.Max();
+                _historyProcessFrom.Value = min.LocalDateTime;
+                _historyProcessTo.Value = max.LocalDateTime;
+                _historyDateFilterFrom = min;
+                _historyDateFilterTo = max;
+            }
+            else
+            {
+                _historyDateFilterFrom = null;
+                _historyDateFilterTo = null;
+            }
+            RefreshHistoryList();
+        };
+        AddSpaced(showAllButton);
+
         page.Controls.Add(detailTabs);
         page.Controls.Add(topPanel);
+        page.Controls.Add(dateFilterBar);
         page.Controls.Add(refreshBar);
 
         _historyGrid.SelectionChanged += (_, _) => ShowSelectedHistoryEntry();
@@ -279,6 +357,20 @@ public partial class MainForm
         if (string.IsNullOrEmpty(selected) || selected == NoPathDefinedPlaceholder) return true;
         if (entry.Result?.Sage50Path is not { } path) return true;
         return string.Equals(path, selected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Process Start/End filter (added 2026-08-28) - inactive (shows
+    /// everything) until the Search or Show All button commits a range into
+    /// _historyDateFilterFrom/To; either being null means no filtering at all,
+    /// which is the tab's original, unfiltered default. An entry with no known
+    /// start time (shouldn't normally happen) always shows rather than being
+    /// silently hidden.</summary>
+    private bool MatchesHistoryDateFilter(RunHistoryEntry entry)
+    {
+        if (_historyDateFilterFrom is null || _historyDateFilterTo is null) return true;
+        var start = entry.Result?.StartedAtUtc ?? entry.Request?.RequestedAtUtc;
+        if (start is null) return true;
+        return start.Value >= _historyDateFilterFrom.Value && start.Value <= _historyDateFilterTo.Value;
     }
 
     // Pinned to known, fixed values (not left to font/DPI-dependent defaults)
@@ -599,7 +691,6 @@ public partial class MainForm
         _historyEntries = RunHistoryService.ListRuns(_triggerFolder, _processedTriggerFolder, _logFolder, _manualRunFolder, _autoPollFolder);
         _historyGrid.Rows.Clear();
         _historySelectAllCheckbox.Checked = false; // a rebuilt grid's rows always start unchecked too
-        RefreshPreviousRunSection();
 
         // A short, stable reference number for each run, cheaper to say/type than
         // the full Request ID GUID - assigned by chronological (ascending) order so
@@ -628,6 +719,7 @@ public partial class MainForm
             // the single most recent thing in ALL history" liveness checks stay
             // correct regardless of which rows are actually visible.
             if (!MatchesHistoryPathFilter(entry)) continue;
+            if (!MatchesHistoryDateFilter(entry)) continue;
 
             // Three flavors of "pending with no result", all needing a live-process
             // check: a Manual Run (its own dedicated --run-once process, matched by
