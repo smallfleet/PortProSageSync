@@ -771,7 +771,6 @@ public partial class MainForm
         _customerRefreshLastScannedLabel.Text = "";
 
         _manualRunButton.Enabled = false;
-        _customerRefreshScanButton.Enabled = false;
         UpdateCustomerRefreshRunButtonEnabled(false);
         _manualRunStopButton.Enabled = true;
         _startServiceButton.Enabled = false;
@@ -878,7 +877,6 @@ public partial class MainForm
         _resultPollTimer.Start();
 
         _manualRunButton.Enabled = false;
-        _customerRefreshScanButton.Enabled = false;
         UpdateCustomerRefreshRunButtonEnabled(false);
         _manualRunStopButton.Enabled = true;
         _startServiceButton.Enabled = false;
