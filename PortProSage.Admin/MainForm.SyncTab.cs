@@ -5,8 +5,12 @@ namespace PortProSage.Admin;
 
 public partial class MainForm
 {
-    private NumericUpDown _syncPollingIntervalMinutes = new() { Minimum = 1, Maximum = 1440 };
     private NumericUpDown _syncProcessingDelayDays = new() { Minimum = 0, Maximum = 3650 };
+
+    // Hourly time-of-day picker replacing the old Polling Interval (minutes) -
+    // see AddScheduledRunTimesRow. Populated 12:00 AM..11:00 PM in BuildSyncTab.
+    private CheckedListBox _syncScheduledRunTimes = new() { CheckOnClick = true, Width = 160, Height = 140, IntegralHeight = false };
+    private Label _syncScheduledRunTimesSummaryLabel = new() { AutoSize = true, MaximumSize = new Size(260, 0), ForeColor = SystemColors.GrayText, Margin = new Padding(10, 8, 3, 3) };
 
     // Single editable field, replacing the old separate Watermark tab (removed
     // 2026-08-25 - both the Automatic Service and Manual Run's watermark-driven
@@ -71,10 +75,7 @@ public partial class MainForm
 
         AddWatermarkRow(grid);
         AddProcessingDelayRow(grid, f);
-        AddRow(grid, "Automatic Sync - Polling Interval (minutes)", _syncPollingIntervalMinutes, f, "PortProSage:Sync:PollingIntervalMinutes",
-            "How often the automatic background poll checks PortPro for changed invoices, when the Service is running " +
-            "continuously (not counting manual triggers, which are checked every 15 seconds regardless of this).\n\n" +
-            "Example: 15 means PortPro is checked for new/changed invoices once every 15 minutes.");
+        AddScheduledRunTimesRow(grid, f);
         AddRow(grid, "Cutoff (Lower) Invoice Date", _syncCutoffInvoiceDate, f, "PortProSage:Sync:CutoffInvoiceDate",
             CutoffInvoiceDateHelpText, stretchInput: false);
         WireCutoffInvoiceDateControl(_syncCutoffInvoiceDate);
@@ -129,8 +130,14 @@ public partial class MainForm
     private void RefreshSyncTab()
     {
         if (_appSettings is null) return;
-        _syncPollingIntervalMinutes.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.PollingIntervalMinutes", 15), _syncPollingIntervalMinutes.Minimum, _syncPollingIntervalMinutes.Maximum);
         _syncProcessingDelayDays.Value = Math.Clamp(_appSettings.GetInt("PortProSage.Sync.ProcessingDelayDays", 4), _syncProcessingDelayDays.Minimum, _syncProcessingDelayDays.Maximum);
+
+        var scheduledHours = _appSettings.GetIntArray("PortProSage.Sync.ScheduledRunHours");
+        for (var h = 0; h < _syncScheduledRunTimes.Items.Count; h++)
+        {
+            _syncScheduledRunTimes.SetItemChecked(h, scheduledHours.Contains(h));
+        }
+        UpdateScheduledRunTimesSummaryLabel();
     }
 
     /// <summary>Returns true if everything (including the watermark) genuinely
@@ -161,7 +168,7 @@ public partial class MainForm
             return false;
         }
 
-        _appSettings.SetInt("PortProSage.Sync.PollingIntervalMinutes", (int)_syncPollingIntervalMinutes.Value);
+        _appSettings.SetIntArray("PortProSage.Sync.ScheduledRunHours", _syncScheduledRunTimes.CheckedIndices.Cast<int>());
         _appSettings.SetInt("PortProSage.Sync.ProcessingDelayDays", (int)_syncProcessingDelayDays.Value);
         _appSettings.Save();
 
@@ -180,7 +187,7 @@ public partial class MainForm
         if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(sage50Path))
         {
             MessageBox.Show(this,
-                "Polling Interval and Processing Delay were saved, but the watermark was NOT - " +
+                "Scheduled run times and Processing Delay were saved, but the watermark was NOT - " +
                 (string.IsNullOrWhiteSpace(path) ? "the state database path isn't known yet." : "no Sage 50 path is saved yet (go to the Sage 50 tab and Save first)."),
                 "Watermark not saved", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
@@ -323,6 +330,80 @@ public partial class MainForm
         var days = (int)_syncProcessingDelayDays.Value;
         var cutoffDate = DateTime.Today.AddDays(-days);
         _syncUpperCutoffDateLabel.Text = $"Upper cutoff date: {cutoffDate:yyyy-MM-dd}" + (days == 0 ? " (today)" : $" (today - {days} day(s))");
+    }
+
+    private static string FormatHour(int hour) => new DateTime(2000, 1, 1, hour, 0, 0).ToString("h:mm tt");
+
+    /// <summary>Like AddRow, but for the hourly schedule checklist: needs its own
+    /// live "Runs at: ..." summary label next to it (same idea as
+    /// AddProcessingDelayRow's "Upper cutoff date" readout), so the operator can
+    /// see the resulting schedule as plain text without having to scroll/read
+    /// every checked box themselves. Replaces the old Polling Interval (minutes)
+    /// field (removed 2026-09-29) - the Automatic Service now fires once per
+    /// selected hour per day instead of on a fixed elapsed timer; manual/trigger
+    /// requests are unaffected either way (still checked every 15 seconds).</summary>
+    private void AddScheduledRunTimesRow(TableLayoutPanel grid, string fileName)
+    {
+        const string jsonPath = "PortProSage:Sync:ScheduledRunHours";
+        const string helpText =
+            "The hours of the day (your computer's local time) at which the Automatic Service checks PortPro for " +
+            "changed invoices - check one or more. Each checked hour fires once per day; unrelated to the delay " +
+            "above, which still applies to what gets processed once a run fires.\n\n" +
+            "Example: checking 6:00 AM, 12:00 PM, and 6:00 PM runs the sync three times a day, at those times.\n\n" +
+            "The Service sits idle between checked times rather than running continuously - on start (or right " +
+            "after finishing a run) it works out the next checked time and simply waits for it, so it uses no " +
+            "meaningful CPU/network in between. Manual requests dropped into the trigger folder are still always " +
+            "picked up within about 15 seconds regardless, and can never overlap an automatic run - one always " +
+            "finishes before the other starts.\n\n" +
+            "Checking none means the Automatic Service will never sync on its own - only manual/trigger requests " +
+            "will still be processed.";
+
+        for (var h = 0; h < 24; h++)
+        {
+            _syncScheduledRunTimes.Items.Add(FormatHour(h));
+        }
+
+        var row = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var label = new Label
+        {
+            Text = "Automatic Sync - Scheduled Run Times",
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(3, 8, 3, 3)
+        };
+
+        _syncScheduledRunTimes.Anchor = AnchorStyles.Left | AnchorStyles.Top;
+        _syncScheduledRunTimes.Margin = new Padding(3, 4, 3, 4);
+
+        var wrap = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            AutoSize = true
+        };
+        wrap.Controls.Add(_syncScheduledRunTimes);
+        wrap.Controls.Add(_syncScheduledRunTimesSummaryLabel);
+        wrap.Controls.Add(CreateHelpIcon(label.Text, helpText));
+
+        grid.Controls.Add(label, 0, row);
+        grid.Controls.Add(wrap, 1, row);
+        WireSource(_syncScheduledRunTimes, fileName, jsonPath);
+
+        // ItemCheck fires BEFORE CheckedIndices reflects the click that's in
+        // progress - deferring the summary refresh with BeginInvoke lets it run
+        // right after, once the new state is actually visible.
+        _syncScheduledRunTimes.ItemCheck += (_, _) => BeginInvoke(new Action(UpdateScheduledRunTimesSummaryLabel));
+        UpdateScheduledRunTimesSummaryLabel();
+    }
+
+    private void UpdateScheduledRunTimesSummaryLabel()
+    {
+        var checkedHours = _syncScheduledRunTimes.CheckedIndices.Cast<int>().OrderBy(h => h).ToList();
+        _syncScheduledRunTimesSummaryLabel.Text = checkedHours.Count == 0
+            ? "Runs at: (none selected - won't run on its own)"
+            : "Runs at: " + string.Join(", ", checkedHours.Select(FormatHour));
     }
 
     /// <summary>Like AddRow, but for a folder/file-path field: the textbox sits at

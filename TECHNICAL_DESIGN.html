@@ -779,7 +779,7 @@ CREATE TABLE admin_sage50_config_snapshot (
           <tbody>
             <tr><td>PortPro</td><td>BaseUrl, InvoiceEndpoint, CustomerEndpoint, AccessTokenEndpoint, NewTokenEndpoint, AccessToken*, RefreshToken*, PageSize, TimeoutSeconds</td></tr>
             <tr><td>Sage50</td><td>CompanyDataPath, UserName, Password*, AppName, AppId, ExpectedSdkVersion, DefaultRevenueAccount, DefaultReceivableAccount (no effect), DefaultNetTermDays, AutoCreateCustomers, SyncCustomerUpdatesFromPortPro, AutoCreateItems, DryRun, IgnoreAccountMismatchUseDefault, AccountsUnverifiableBySdk[], TaxCodesByAbbreviation{}, ChargeAccountMap[]</td></tr>
-            <tr><td>Sync</td><td>PollingIntervalMinutes, ProcessingDelayDays, CutoffInvoiceDate, TriggerFolder, ProcessedTriggerFolder, StateDatabasePath, LogFolder, FailedTransactionsFolder, MinimumLogLevel, LogRetentionDays, ShowCommandWindow</td></tr>
+            <tr><td>Sync</td><td>ScheduledRunHours[], ProcessingDelayDays, CutoffInvoiceDate, TriggerFolder, ProcessedTriggerFolder, StateDatabasePath, LogFolder, FailedTransactionsFolder, MinimumLogLevel, LogRetentionDays, ShowCommandWindow</td></tr>
             <tr><td>Email</td><td>SmtpHost, SmtpPort, UseSsl, FromAddress, Username, Password*, RecipientAddressesCsv, Enabled</td></tr>
             <tr><td>Fixyee</td><td>BaseUrl, ApiKey*, Enabled — placeholder, unused</td></tr>
           </tbody>

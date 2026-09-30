@@ -15,10 +15,12 @@ accounts.
 
 ## How it works
 
-1. **Automatic sync** — every `Sync:PollingIntervalMinutes` (default 15), the
-   service asks PortPro for invoices whose `updatedAt` ("last changed") falls
-   between a stored watermark and now, imports whatever validates, and advances
-   the watermark. State lives in a local SQLite file (`Sync:StateDatabasePath`),
+1. **Automatic sync** — at each hour listed in `Sync:ScheduledRunHours`
+   (local time; empty by default - at least one hour must be picked in the
+   Admin app before Automatic Sync can be started), the service asks PortPro for
+   invoices whose `updatedAt` ("last changed") falls between a stored
+   watermark and now, imports whatever validates, and advances the
+   watermark. State lives in a local SQLite file (`Sync:StateDatabasePath`),
    so a service restart doesn't re-scan from scratch or lose track of what's
    already been imported.
 
@@ -123,7 +125,7 @@ non-secret settings. At minimum:
 
 - `Sage50.CompanyDataPath`, `UserName`, `AppId` / `AppName`
 - `Sage50.DefaultRevenueAccount`, `DefaultReceivableAccount`
-- `Sync.TriggerFolder`, `StateDatabasePath`, `LogFolder`, `PollingIntervalMinutes`
+- `Sync.TriggerFolder`, `StateDatabasePath`, `LogFolder`, `ScheduledRunHours`
 
 **Real secrets never go in `appsettings.json`.** `PortPro.AccessToken` /
 `RefreshToken` and `Sage50.Password` are intentionally blank there. Instead,
@@ -187,10 +189,10 @@ flip it for step 5.
    invoice. Verify the resulting invoice in Sage 50 directly (customer,
    lines, amounts, accounts) before trusting a larger batch.
 
-6. **Automatic polling.** Leave the service running and let its normal
-   `PollingIntervalMinutes` cycle pick up a newly changed invoice from
-   PortPro, to confirm the watermark/auto-poll path (not just manual
-   triggers) works end to end.
+6. **Automatic polling.** Leave the service running and let it reach one of
+   its `ScheduledRunHours` to pick up a newly changed invoice from PortPro,
+   to confirm the watermark/auto-poll path (not just manual triggers) works
+   end to end.
 
 ## Build & run
 

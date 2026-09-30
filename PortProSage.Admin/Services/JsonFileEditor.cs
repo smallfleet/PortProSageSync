@@ -5,7 +5,7 @@ namespace PortProSage.Admin.Services;
 
 /// <summary>
 /// Thin wrapper over System.Text.Json.Nodes.JsonNode for editing one settings
-/// file by dotted path (e.g. "PortProSage.Sync.PollingIntervalMinutes").
+/// file by dotted path (e.g. "PortProSage.Sync.ScheduledRunHours").
 /// Deliberately NOT a strongly-typed POCO round-trip - a field this app
 /// doesn't know about (e.g. "_comment", "_chargeAccountMapComment", or any
 /// future setting) is read from the tree and written back to the SAME tree
@@ -89,6 +89,19 @@ public class JsonFileEditor
         {
             if (string.IsNullOrWhiteSpace(v)) continue;
             array.Add(JsonValue.Create(v.Trim()));
+        }
+        SetLeaf(path, array);
+    }
+
+    public List<int> GetIntArray(string path) =>
+        GetArray(path).Select(n => n?.GetValue<int>() ?? 0).ToList();
+
+    public void SetIntArray(string path, IEnumerable<int> values)
+    {
+        var array = new JsonArray();
+        foreach (var v in values.Distinct().OrderBy(v => v))
+        {
+            array.Add(JsonValue.Create(v));
         }
         SetLeaf(path, array);
     }

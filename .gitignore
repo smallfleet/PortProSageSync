@@ -19,6 +19,7 @@ out/
 *.db-wal
 *.csv
 /failed-transactions/
+automatic-sync-status.json
 
 # Trigger request/result JSON dropped by manual runs and the Admin app -
 # runtime data (per-run request IDs, timestamps), not source.

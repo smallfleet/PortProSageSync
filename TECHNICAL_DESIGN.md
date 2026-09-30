@@ -581,7 +581,7 @@ Single `appsettings.json` (no Development/Production split, no `DOTNET_ENVIRONME
 |---|---|
 | `PortPro` | `BaseUrl`, `InvoiceEndpoint`, `CustomerEndpoint`, `AccessTokenEndpoint`, `NewTokenEndpoint`, `AccessToken`*, `RefreshToken`*, `PageSize`, `TimeoutSeconds` |
 | `Sage50` | `CompanyDataPath`, `UserName`, `Password`*, `AppName`, `AppId`, `ExpectedSdkVersion`, `DefaultRevenueAccount`, `DefaultReceivableAccount` (no functional effect — §5.3), `DefaultNetTermDays`, `AutoCreateCustomers`, `SyncCustomerUpdatesFromPortPro`, `AutoCreateItems`, `DryRun`, `IgnoreAccountMismatchUseDefault`, `AccountsUnverifiableBySdk[]`, `TaxCodesByAbbreviation{}`, `ChargeAccountMap[]` |
-| `Sync` | `PollingIntervalMinutes`, `ProcessingDelayDays`, `CutoffInvoiceDate`, `TriggerFolder`, `ProcessedTriggerFolder`, `StateDatabasePath`, `LogFolder`, `FailedTransactionsFolder`, `MinimumLogLevel`, `LogRetentionDays`, `ShowCommandWindow` |
+| `Sync` | `ScheduledRunHours[]`, `ProcessingDelayDays`, `CutoffInvoiceDate`, `TriggerFolder`, `ProcessedTriggerFolder`, `StateDatabasePath`, `LogFolder`, `FailedTransactionsFolder`, `MinimumLogLevel`, `LogRetentionDays`, `ShowCommandWindow` |
 | `Email` | `SmtpHost`, `SmtpPort`, `UseSsl`, `FromAddress`, `Username`, `Password`*, `RecipientAddressesCsv`, `Enabled` |
 | `Fixyee` | `BaseUrl`, `ApiKey`*, `Enabled` — placeholder, unused (§ README) |
 

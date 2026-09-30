@@ -308,8 +308,14 @@ public class SyncSettings
     /// </summary>
     public DateTimeOffset? CutoffInvoiceDate { get; set; }
 
-    /// <summary>How often the automatic "last changed date" sync runs, in minutes.</summary>
-    public int PollingIntervalMinutes { get; set; } = 15;
+    /// <summary>
+    /// Hours of the day (0-23, local machine time) at which the Automatic
+    /// Service's continuous sync (Pass-1) fires, once each, every day - e.g.
+    /// [6, 12, 18] runs at 6 AM, noon, and 6 PM. Empty means automatic
+    /// scheduling never fires on its own - manual/trigger-file requests are
+    /// still processed regardless (see Worker.TriggerPollInterval).
+    /// </summary>
+    public List<int> ScheduledRunHours { get; set; } = new();
 
     /// <summary>
     /// Serves two roles under one number, both driven by the same "hold back N

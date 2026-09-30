@@ -176,11 +176,25 @@ public partial class MainForm
         switch (state)
         {
             case ServiceRunState.AutomaticRunning:
-                _serviceStatusLabel.Text = $"AUTOMATIC RUNNING (PID {process!.Id})";
+                var automaticStatus = ReadAutomaticSyncStatus();
+                if (automaticStatus is { State: "Idle" } idle)
+                {
+                    var nextRunText = idle.NextScheduledRunLocal is { } next
+                        ? $"next scheduled run {next:yyyy-MM-dd h:mm tt}"
+                        : "no scheduled run times selected";
+                    _serviceStatusLabel.Text = $"WAITING - {nextRunText} (PID {process!.Id})";
+                    _headerStatusLabel.Text = $"Automatic Sync waiting - {nextRunText} (PID {process.Id})";
+                    SetHeaderActivityIndicatorAnimated(false);
+                }
+                else
+                {
+                    _serviceStatusLabel.Text = $"AUTOMATIC RUNNING (PID {process!.Id})";
+                    _headerStatusLabel.Text = $"Automatic Sync running - PID {process.Id}, since {FormatStartTime(process)}";
+                    SetHeaderActivityIndicatorAnimated(true);
+                }
                 _serviceStatusLabel.ForeColor = Color.DarkGreen;
                 _startServiceButton.Enabled = false;
                 _stopServiceButton.Enabled = true;
-                _headerStatusLabel.Text = $"Automatic Sync running - PID {process.Id}, since {FormatStartTime(process)}";
                 _headerStatusLabel.ForeColor = Color.DarkGreen;
                 _headerStopButton.Enabled = true;
                 _headerActivityIndicator.Visible = true;
@@ -193,6 +207,7 @@ public partial class MainForm
                 _headerStatusLabel.Text = $"Manual Run running - PID {process.Id}, since {FormatStartTime(process)}";
                 _headerStatusLabel.ForeColor = Color.DarkOrange;
                 _headerStopButton.Enabled = true;
+                SetHeaderActivityIndicatorAnimated(true);
                 _headerActivityIndicator.Visible = true;
                 break;
             default:
@@ -206,6 +221,15 @@ public partial class MainForm
                 _headerActivityIndicator.Visible = false;
                 break;
         }
+
+        // The header status text can now be as long as "Automatic Sync waiting -
+        // next scheduled run 2026-10-01 1:00 AM (PID 12345)" - considerably longer
+        // than the old fixed-width text this bar was originally sized for.
+        // Repositioning the activity indicator/Stop button off the label's own
+        // (AutoSize) actual width, every refresh, guarantees there's always room
+        // for the full date/time regardless of how long the text gets, instead of
+        // the bar sitting at a fixed X that a long string can grow past.
+        RepositionHeaderStatusControls();
 
         UpdateManualRunButtonStates(state, process);
 
@@ -231,6 +255,80 @@ public partial class MainForm
         if (running)
         {
             RefreshWatermarkDisplay();
+        }
+    }
+
+    /// <summary>Keeps the header's activity indicator and Stop button right after
+    /// _headerStatusLabel's actual (AutoSize) width instead of the fixed pixel
+    /// offsets this bar originally shipped with - those assumed a short, roughly
+    /// constant-length string ("Automatic Sync running - PID 12345, since ...")
+    /// and would otherwise get overlapped by the now-longer "waiting, next
+    /// scheduled run" text. Y stays fixed (these two controls' own vertical
+    /// position on the header bar never changes) - only X follows the label.</summary>
+    private void RepositionHeaderStatusControls()
+    {
+        const int gap = 16;
+        _headerActivityIndicator.Location = new Point(_headerStatusLabel.Right + gap, _headerActivityIndicator.Top);
+        _headerStopButton.Location = new Point(_headerActivityIndicator.Right + gap, _headerStopButton.Top);
+    }
+
+    /// <summary>Marquee (scrolling animation) means "actively working right now" -
+    /// a Manual Run, or the Automatic Service mid-cycle. A solid, static, fully-
+    /// filled bar means "alive and healthy, but idle" - the Automatic Service
+    /// sleeping between scheduled run times. Switching Style also resets Value,
+    /// so Continuous needs Value pinned back to Maximum every time to render as a
+    /// solid bar rather than an empty one.</summary>
+    private void SetHeaderActivityIndicatorAnimated(bool animated)
+    {
+        if (animated)
+        {
+            _headerActivityIndicator.Style = ProgressBarStyle.Marquee;
+        }
+        else
+        {
+            _headerActivityIndicator.Style = ProgressBarStyle.Continuous;
+            _headerActivityIndicator.Value = _headerActivityIndicator.Maximum;
+        }
+    }
+
+    /// <summary>Reads the Service's automatic-sync-status.json breadcrumb (see
+    /// Worker.WriteAutomaticSyncStatus) to tell "actively processing right now"
+    /// apart from "alive, but sleeping until the next scheduled time" - both look
+    /// identical from GetServiceRunState's own process-is-alive check alone. Best-
+    /// effort: any failure (file not written yet, mid-write from the Service at
+    /// the exact same moment, config not saved yet) returns null, and callers fall
+    /// back to the older, coarser "PID is running" text rather than showing
+    /// something wrong.</summary>
+    private (string State, DateTime? NextScheduledRunLocal)? ReadAutomaticSyncStatus()
+    {
+        try
+        {
+            var dbPath = _appSettings?.GetString("PortProSage.Sync.StateDatabasePath");
+            if (string.IsNullOrWhiteSpace(dbPath)) return null;
+
+            var dir = Path.GetDirectoryName(Path.GetFullPath(dbPath));
+            if (string.IsNullOrEmpty(dir)) return null;
+
+            var path = Path.Combine(dir, "automatic-sync-status.json");
+            if (!File.Exists(path)) return null;
+
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var node = System.Text.Json.Nodes.JsonNode.Parse(stream);
+            var state = node?["State"]?.GetValue<string>();
+            if (state is null) return null;
+
+            DateTime? nextRun = null;
+            if (node?["NextScheduledRunLocal"]?.GetValue<string>() is { } nextText &&
+                DateTime.TryParse(nextText, out var parsed))
+            {
+                nextRun = parsed;
+            }
+
+            return (state, nextRun);
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -281,6 +379,15 @@ public partial class MainForm
         {
             MessageBox.Show(this, "Something is already running (automatic or manual) - see the status above.",
                 "Already running", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (_syncScheduledRunTimes.CheckedIndices.Count == 0)
+        {
+            MessageBox.Show(this,
+                "At least one Scheduled Run Time must be checked before starting Automatic Sync - otherwise it " +
+                "would never run on its own. Check one or more times on the Automatic Sync tab, then try again.",
+                "No scheduled run times selected", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
@@ -340,7 +447,7 @@ public partial class MainForm
             $"Sage 50 path- {CurrentConfiguredSage50Path ?? "(not saved yet - go to the Sage 50 tab and Save first)"}",
             $"Write mode: {(_sage50DryRun.Checked ? "DRY RUN" : "REAL WRITE")}",
             "",
-            $"Polling interval: every {_syncPollingIntervalMinutes.Value} minute(s)",
+            $"Scheduled run times: {(_syncScheduledRunTimes.CheckedIndices.Count == 0 ? "(none selected - won't run on its own)" : string.Join(", ", _syncScheduledRunTimes.CheckedIndices.Cast<int>().OrderBy(h => h).Select(FormatHour)))}",
             $"Watermark: {watermarkText}"
         };
         return string.Join(Environment.NewLine, lines);

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PortProSage.Core.Config;
@@ -31,28 +32,105 @@ public class Worker : BackgroundService
         Directory.CreateDirectory(_syncSettings.TriggerFolder);
         Directory.CreateDirectory(_syncSettings.ProcessedTriggerFolder);
 
-        var lastAutoPoll = DateTimeOffset.MinValue;
-        var pollInterval = TimeSpan.FromMinutes(Math.Max(1, _syncSettings.PollingIntervalMinutes));
+        // Replaces the old elapsed-interval poll (fire every N minutes) with a
+        // fixed daily schedule driven off one absolute "next run" instant,
+        // computed fresh from ScheduledRunHours: on startup, and again after
+        // each run completes. ComputeNextScheduledRun always returns a time
+        // strictly after "now", so even starting the Service in the middle of a
+        // scheduled hour waits for that hour's NEXT occurrence rather than
+        // firing immediately. Local time, matching how hours are displayed/
+        // picked in the Admin app's Automatic Sync tab. Because the next run is
+        // only ever computed AFTER the previous one finishes, a slow run that
+        // crosses one or more scheduled hours is never "caught up" - it simply
+        // resumes counting from whatever time it actually finished at, and the
+        // sequential await here (no Task.Run/fire-and-forget) already
+        // guarantees an automatic run and a manual trigger can never overlap.
+        var nextScheduledRun = ComputeNextScheduledRun(DateTime.Now, _syncSettings.ScheduledRunHours);
+        _logger.LogInformation("Next scheduled automatic sync: {NextRun}", nextScheduledRun);
+        WriteAutomaticSyncStatus("Idle", nextScheduledRunLocal: nextScheduledRun);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await ProcessManualTriggersAsync(stoppingToken);
-
-                if (DateTimeOffset.UtcNow - lastAutoPoll >= pollInterval)
+                // Cheap existence check first - avoids flipping the status file to
+                // "Running" and back for every single 15s tick when the trigger
+                // folder is (as it usually is) empty; only genuinely busy ticks
+                // report themselves as running.
+                if (Directory.EnumerateFileSystemEntries(_syncSettings.TriggerFolder).Any())
                 {
+                    WriteAutomaticSyncStatus("Running", currentRunStartedLocal: DateTime.Now);
+                    await ProcessManualTriggersAsync(stoppingToken);
+                    WriteAutomaticSyncStatus("Idle", nextScheduledRunLocal: nextScheduledRun);
+                }
+
+                if (DateTime.Now >= nextScheduledRun)
+                {
+                    WriteAutomaticSyncStatus("Running", currentRunStartedLocal: DateTime.Now);
                     await RunAutomaticContinuousSyncAsync(stoppingToken);
-                    lastAutoPoll = DateTimeOffset.UtcNow;
+                    nextScheduledRun = ComputeNextScheduledRun(DateTime.Now, _syncSettings.ScheduledRunHours);
+                    _logger.LogInformation("Next scheduled automatic sync: {NextRun}", nextScheduledRun);
+                    WriteAutomaticSyncStatus("Idle", nextScheduledRunLocal: nextScheduledRun);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unhandled error in worker loop - will retry after the poll interval.");
+                _logger.LogError(ex, "Unhandled error in worker loop - will retry on the next check.");
             }
 
             await Task.Delay(TriggerPollInterval, stoppingToken);
         }
+    }
+
+    /// <summary>Small on-disk breadcrumb (next to state.db, so both this process and
+    /// the Admin app can find it from the same already-known StateDatabasePath
+    /// setting with no new config needed) letting the Admin app's status bar tell
+    /// "actively processing right now" apart from "alive, but sleeping until the
+    /// next scheduled time" - both look identical from the outside (the OS process
+    /// is simply running) without this. Best-effort: a write failure only degrades
+    /// the Admin app's display to its older, coarser "process is alive" text, never
+    /// something worth stopping the actual sync over.</summary>
+    private void WriteAutomaticSyncStatus(string state, DateTime? nextScheduledRunLocal = null, DateTime? currentRunStartedLocal = null)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(Path.GetFullPath(_syncSettings.StateDatabasePath));
+            if (string.IsNullOrEmpty(dir)) return;
+            var path = Path.Combine(dir, "automatic-sync-status.json");
+
+            var json = JsonSerializer.Serialize(new
+            {
+                State = state,
+                NextScheduledRunLocal = nextScheduledRunLocal?.ToString("o"),
+                CurrentRunStartedLocal = currentRunStartedLocal?.ToString("o"),
+                UpdatedAtLocal = DateTime.Now.ToString("o")
+            });
+            File.WriteAllText(path, json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not write automatic-sync-status.json - the Admin app's status display may fall back to a coarser \"running\" text.");
+        }
+    }
+
+    /// <summary>The next absolute local DateTime, strictly after <paramref name="from"/>,
+    /// at which one of scheduledHours occurs - today if an unpassed hour remains,
+    /// otherwise the earliest hour tomorrow. Empty scheduledHours (no times
+    /// selected in the Admin app yet) means automatic scheduling never fires -
+    /// returns DateTime.MaxValue so the `>=` check in ExecuteAsync is never true,
+    /// while manual/trigger-file requests keep being processed regardless.</summary>
+    private static DateTime ComputeNextScheduledRun(DateTime from, List<int> scheduledHours)
+    {
+        if (scheduledHours.Count == 0) return DateTime.MaxValue;
+
+        var sortedHours = scheduledHours.Distinct().OrderBy(h => h).ToList();
+        foreach (var hour in sortedHours)
+        {
+            var candidate = from.Date.AddHours(hour);
+            if (candidate > from) return candidate;
+        }
+
+        return from.Date.AddDays(1).AddHours(sortedHours[0]);
     }
 
     /// <summary>Pass-1 ("Continuous") of the Automatic Service's poll cycle -

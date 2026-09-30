@@ -28,6 +28,8 @@ Open this guide any time from inside the app: click the **Help** button in the t
 16. [Walkthroughs: common tasks step by step](#16-walkthroughs-common-tasks-step-by-step)
 17. [Troubleshooting / FAQ](#17-troubleshooting--faq)
 18. [Glossary](#18-glossary)
+19. [Uninstalling the Windows Service](#19-uninstalling-the-windows-service)
+20. [Installing as a Windows Service (Production)](#20-installing-as-a-windows-service-production)
 
 ---
 
@@ -42,7 +44,7 @@ So editing a field and NOT clicking that tab's **Save** button does nothing — 
 
 Every field in the app has a small circular blue **"?"** icon next to it — click it for a plain-language explanation and a worked example, right where you're looking. This guide covers the same ground in more depth, plus how the tabs work together.
 
-At the very bottom of the window is a status bar that shows something like `Source: appsettings.json → Sync:PollingIntervalMinutes` whenever you click into a field — so you always know exactly which file, and which setting inside it, you're editing.
+At the very bottom of the window is a status bar that shows something like `Source: appsettings.json → Sync:ScheduledRunHours` whenever you click into a field — so you always know exactly which file, and which setting inside it, you're editing.
 
 ---
 
@@ -72,7 +74,7 @@ Visible above every tab, at all times:
   - **Reload** — re-read settings from whatever folder is currently typed in the box, without opening the picker. Use this if you edited the settings files by hand outside the app.
 - **Target Sage50: `<path>`** — always visible, shown in bold below the Service folder row on every tab. This is the exact Sage 50 company file every write in the app will go to *right now*, using whatever's currently saved on the Sage 50 tab — not something you need to switch tabs to check. Reads **"Target Sage50: (no path specified yet - set it on the Sage 50 tab)"** until a path has ever been configured. See [section 15](#15-working-with-more-than-one-sage-50-company-file) for why this matters beyond just "which file" — it's also what splits Customer Reconciliation and History & Logs data apart per company file.
 - **Help** — opens this User Guide (the `USER_GUIDE.html` version) in your default web browser. This file (`USER_GUIDE.md`) is the same content in plain text, kept as the editable source.
-- **v2.17.0** (top-right, gray) — the exact build number of the Admin app you're currently running. Useful when confirming "did the new build actually install" — compare this against what you were told to expect.
+- **v2.18.0** (top-right, gray) — the exact build number of the Admin app you're currently running. Useful when confirming "did the new build actually install" — compare this against what you were told to expect.
 - **Process:** — always shows the real, current state:
   - **Not running** (red) — nothing is active; either button is free to use.
   - **Automatic Sync running - PID 1234, since 9:03 AM** (green).
@@ -168,20 +170,20 @@ The saved "continue from" position Pass-1 (and Manual Run's own watermark-advanc
 ### Fields
 
 - **Automatic Sync - Processing Delay (Days)** — holds back the most recent N days before they're eligible to sync. A live readout next to the field ("Upper cutoff date: today − 7 day(s)") shows exactly what date that currently resolves to. This is a rolling delay, not a permanent skip — a held-back invoice simply becomes eligible once it's old enough. Set to 0 to disable the delay entirely.
-- **Automatic Sync - Polling Interval (minutes)** — how often the service checks PortPro for changed invoices on its own. (Manual requests dropped into the trigger folder are always picked up within about 15 seconds, regardless of this setting.)
+- **Automatic Sync - Scheduled Run Times** — check one or more hours of the day (12:00 AM–11:00 PM, your computer's local time) at which the service checks PortPro for changed invoices; a "Runs at: ..." readout next to the checklist shows the resulting schedule in plain text. Each checked hour fires once per day. All unchecked by default — **at least one must be checked before Automatic Sync can be started**, since Start Automatic Sync refuses to run with none selected. The Service sits idle between checked times rather than running continuously: on start (or right after finishing a run) it works out the next checked time and simply waits for it, so it uses no meaningful CPU/network in between. Manual requests dropped into the trigger folder are still always picked up within about 15 seconds regardless, and can never overlap an automatic run — one always finishes before the other starts. Replaces the old "Polling Interval (minutes)" field.
 - **Cutoff (Lower) Invoice Date** and **Show command window while running** — the same two shared fields described under Manual Run above; changing either here changes it everywhere, and both save instantly.
 
 ### Buttons (top of the tab, matching Manual Run's layout)
 
 Start/Stop/Save sit right at the top of the tab (moved there 2026-08-29, alongside the same move for Manual Run's own buttons) — always visible without scrolling. The old "Previous Run" section that used to sit further down this tab was removed the same day; see History & Logs ([section 7](#7-history--logs-tab)) for the same information instead.
 
-- **Start Automatic Sync** — same pre-flight checks as Manual Run (nothing else running, Sage 50 not already open elsewhere), shows a confirmation summarizing write mode, company file, polling interval, and the current watermark, then starts the long-running background process. (Renamed from "Start Automatic Service" — same button, same behavior.)
+- **Start Automatic Sync** — same pre-flight checks as Manual Run (nothing else running, Sage 50 not already open elsewhere), plus a check that at least one Scheduled Run Time is checked (blocked with an explanatory message if not); then shows a confirmation summarizing write mode, company file, scheduled run times, and the current watermark, then starts the long-running background process. (Renamed from "Start Automatic Service" — same button, same behavior.)
 - **Stop Automatic Sync** — confirms, then gracefully stops it (falling back to a forced stop only if it doesn't respond).
-- **Save Automatic Sync settings** — saves the Polling Interval, Processing Delay, **and the Watermark Invoice Date** (validated against the Cutoff Date first) together in one action. Starting Automatic Sync now saves this automatically first, so the confirmation dialog and the actual run always reflect exactly what's on screen, not a stale prior save.
+- **Save Automatic Sync settings** — saves the Scheduled Run Times, Processing Delay, **and the Watermark Invoice Date** (validated against the Cutoff Date first) together in one action. Starting Automatic Sync now saves this automatically first, so the confirmation dialog and the actual run always reflect exactly what's on screen, not a stale prior save.
 
 ### Important: settings changes need a restart
 
-If the Automatic Service is already running and you change/Save a setting anywhere in the app (polling interval, cutoff date, account mappings, anything), **the running process keeps using the old values** until you stop and restart it. The app reminds you of this after every Save.
+If the Automatic Service is already running and you change/Save a setting anywhere in the app (scheduled run times, cutoff date, account mappings, anything), **the running process keeps using the old values** until you stop and restart it. The app reminds you of this after every Save.
 
 ---
 
@@ -627,3 +629,137 @@ A: Configured on the **Settings** tab, under Email. If Enabled is unchecked, no 
 - **Cutoff (Lower) Invoice Date** — the hard floor date below which no invoice is ever processed, to preempt Sage 50 rejecting old-dated transactions.
 - **Processing Delay (Days)** — how many of the most recent days are held back from Pass-1/watermark-driven processing, on a rolling basis.
 - **Sage 50 path scoping** — the app tracks already-imported invoices, the watermark, and Customer Reconciliation results separately for each distinct Sage 50 company-file path, so switching between company files (e.g. DEV vs PROD) never mixes up their tracking. See [section 15](#15-working-with-more-than-one-sage-50-company-file).
+
+---
+
+## 19. Uninstalling the Windows Service
+
+If the Automatic Service was registered as a real Windows Service (via `Install-Production.ps1` or the installer script, rather than just started/stopped as an ad-hoc process from the Admin app's Automatic Sync tab), there is currently **no uninstaller and no Programs-and-Features entry**. Registering the service with `New-Service` does not add one — Windows only shows an uninstaller for software that ships its own (an MSI, an Inno/NSIS setup, etc.), which this project does not use. Removing the service means removing its registration manually, using the two built-in Windows tools below. This does **not** require reinstalling anything and takes under a minute.
+
+### What you need
+
+No extra download or script — just an elevated PowerShell window. Two built-in commands do the whole job:
+
+- `Stop-Service` — a native PowerShell cmdlet that stops a running service.
+- `sc.exe delete` — a native Windows command-line tool that deletes a service's registration from the Service Control Manager.
+
+### Step 1 — Open PowerShell as Administrator
+
+Service registration is a machine-wide change, so this must be run **elevated**:
+
+1. Click Start, type `PowerShell`.
+2. Right-click **Windows PowerShell** → **Run as administrator**.
+3. Approve the UAC prompt.
+
+### Step 2 — Stop and delete the service
+
+Run these two commands, in order (the real, confirmed service name used by this project is `PortProSageSync`):
+
+```powershell
+Stop-Service -Name PortProSageSync -Force
+sc.exe delete PortProSageSync
+```
+
+Expected output from `sc.exe delete` on success:
+
+```
+[SC] DeleteService SUCCESS
+```
+
+### Step 3 — Verify it's gone
+
+```powershell
+Get-Service -Name PortProSageSync -ErrorAction SilentlyContinue
+```
+
+No output means the service is fully unregistered. If it still prints a service entry, it did not delete — see Troubleshooting below.
+
+### Worked example
+
+```powershell
+PS C:\> Stop-Service -Name PortProSageSync -Force
+PS C:\> sc.exe delete PortProSageSync
+[SC] DeleteService SUCCESS
+PS C:\> Get-Service -Name PortProSageSync -ErrorAction SilentlyContinue
+PS C:\>
+```
+
+The blank line after the last command confirms the service no longer exists.
+
+### What this does — and doesn't — remove
+
+- **Removed:** the Windows Service registration itself. The service will no longer appear in `services.msc`, will not start on boot, and `Get-Service` will no longer find it.
+- **Not removed (left on disk, untouched):** the installed program files (e.g. `PortProSage.Service.exe` and its folder), the `state.db` database (watermark, already-imported tracking, run history), `appsettings.Local.json` (your PortPro/Sage 50 credentials and settings), and any log files. Deleting the service registration only stops Windows from launching it — your data and configuration are safe and untouched.
+- If you also want to remove the program files themselves, do that afterward with normal file deletion (e.g. delete the install folder in File Explorer) — there is nothing service-specific left to clean up once step 2 succeeds.
+- The Admin app itself (`PortProSage.Admin.exe`) is a separate, ordinary desktop program, not a service — this procedure does not affect it. Uninstall it the normal way (delete its folder / remove its shortcut) if you want to remove it too.
+
+### Troubleshooting
+
+- **"Access is denied"** — the PowerShell window isn't elevated. Close it and redo Step 1, making sure to choose "Run as administrator."
+- **`sc.exe delete` returns `[SC] DeleteService FAILED 1072: The specified service has been marked for deletion.`** — this means Windows already queued the deletion (usually because something, like `services.msc`, still has the service's properties window open). Close `services.msc` and any Service Control Manager windows, then re-run the verification command in Step 3 — it should show the service gone within a few seconds.
+- **`Stop-Service` says the service wasn't running** — that's fine, it just means there's nothing to stop. Continue on to `sc.exe delete`.
+
+---
+
+## 20. Installing as a Windows Service (Production)
+
+Up to this point, "Start Automatic Sync"/"Stop Automatic Sync" on the Automatic Sync tab launch `PortProSage.Service.exe` as an **ad-hoc process** — it runs, but Windows doesn't know about it as a service: it won't survive a reboot on its own, doesn't show in `services.msc`, and has no Programs-and-Features-style registration (see [section 19](#19-uninstalling-the-windows-service) for why that matters when removing one). Installing it as a **real Windows Service** fixes that: it starts automatically on boot, keeps running in the background with no one logged in, and Windows restarts it if it crashes.
+
+### What you need
+
+- An elevated PowerShell window (see [section 19, Step 1](#19-uninstalling-the-windows-service) for how to open one).
+- `Install-Production.ps1`, in the repo root, run from that same folder.
+- The `lib\Sage50SDK` folder populated with the Sage 50 SDK — required before publishing, since those DLLs get bundled into the published output.
+
+### Before you run it: check your secrets are current
+
+The installer only ever scaffolds a **blank placeholder** `appsettings.Local.json` into a brand-new install folder — it can't know your real PortPro/Sage 50/Email credentials. If you've been running ad-hoc from the Admin app for a while, the *live* credentials (including a PortPro access token that refreshes itself automatically over time) usually end up living only in whatever folder the Admin app's "Service folder" field points at — **not** necessarily the copy sitting in the source tree's `PortProSage.Service\appsettings.Local.json`, which can quietly go stale. Compare the two before proceeding, and know which one is actually current — the steps below assume you'll copy the genuinely-live one into the new install location, not necessarily the source-tree copy.
+
+### Steps
+
+1. **Stop the ad-hoc process first** — Automatic Sync tab → "Stop Automatic Sync" — so nothing is holding a Sage 50 connection during the cutover.
+
+2. **Publish and register the service** (this does not start it yet):
+   ```powershell
+   .\Install-Production.ps1 -InstallPath "C:\PortProSageSync" -IncludeAdmin
+   ```
+   This publishes Release builds of the Service (and, with `-IncludeAdmin`, the Admin app too) into `<InstallPath>\Service` and `<InstallPath>\Admin`, creates the `requests\`, `logs\`, and `failed-transactions\` runtime folders if they don't already exist (existing ones — and your existing `state.db`/history — are reused, not replaced), and registers the `PortProSageSync` Windows Service with Automatic startup. Safe to re-run later for updates: it never overwrites an existing `appsettings.Local.json`, and updates an already-registered service's binary path instead of failing.
+
+3. **Copy your real secrets** into the new install folder — see the check above for which copy is actually current:
+   ```powershell
+   Copy-Item "<path to your current appsettings.Local.json>" "C:\PortProSageSync\Service\appsettings.Local.json" -Force
+   ```
+
+4. **Pick your Scheduled Run Times.** A freshly published `appsettings.json` always starts with nothing checked (`ScheduledRunHours` empty) — open the Admin app, point its "Service folder" field at the new `<InstallPath>\Service`, Reload, then on the Automatic Sync tab check the hour(s) you want and click "Save Automatic Sync settings" ([section 5](#5-automatic-sync-tab)).
+
+5. **Start the service:**
+   ```powershell
+   Start-Service -Name PortProSageSync
+   ```
+   (`Install-Production.ps1` also has a `-StartService` switch that does this for you, but only if it doesn't detect leftover placeholder values in `appsettings.Local.json` — so it's safe to combine with step 2 once step 3 is already done.)
+
+6. **Verify:**
+   ```powershell
+   Get-Service -Name PortProSageSync
+   ```
+   should show `Status: Running`, `StartType: Automatic`. Check the newest file in `logs\` for a `Next scheduled automatic sync: ...` line, and the Admin app's header status bar (pointed at the new Service folder) should settle into the green "WAITING - next scheduled run ..." state described in [section 5](#5-automatic-sync-tab).
+
+### After installing: how to control it going forward
+
+**Stop using the Automatic Sync tab's Start/Stop buttons for the automatic pipeline** — those launch a *separate* ad-hoc process, independent of the registered service, and running both at once is redundant (the Service does guard against two copies of itself opening Sage 50 at the same instant, but there's no reason to run two). Once it's a real Windows Service, control it the normal Windows way instead:
+
+```powershell
+Stop-Service -Name PortProSageSync
+Start-Service -Name PortProSageSync
+Restart-Service -Name PortProSageSync
+```
+
+or via `services.msc` (find "PortPro to Sage 50 Invoice Sync" in the list). The Admin app is still exactly the right tool for Manual Run, Settings, History & Logs, Invoice Reconciliation, and Customer Reconciliation — and, once its Service folder points at the installed copy, for monitoring the Windows Service's live status too.
+
+**Any settings change still needs a restart to take effect** — same rule as always ([section 5](#5-automatic-sync-tab)), just done with `Restart-Service -Name PortProSageSync` now instead of the Admin app's Stop/Start buttons.
+
+**Redeploying a future update** re-runs the same command:
+```powershell
+.\Install-Production.ps1 -InstallPath "C:\PortProSageSync" -StartService
+```
+One caveat worth knowing: this re-publishes `appsettings.json` fresh from the source tree every time, which resets `ScheduledRunHours` back to empty — re-check your Scheduled Run Times in the Admin app after any redeploy, the same way Start Automatic Sync already refuses to start with none selected as a safety net.
